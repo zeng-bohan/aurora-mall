@@ -1,0 +1,203 @@
+name: aurora-mall
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: aurora-mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: aurora123
+      MYSQL_DATABASE: aurora_mall
+      TZ: Asia/Shanghai
+    ports:
+      # host 3306/6379 belong to other long-running projects on this machine;
+      # services running on the host connect via localhost:13306 / localhost:16379
+      - "13306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-paurora123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: aurora-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  nacos:
+    image: nacos/nacos-server:v2.4.3
+    container_name: aurora-nacos
+    environment:
+      MODE: standalone
+      NACOS_AUTH_ENABLE: "false"
+      JVM_XMS: 256m
+      JVM_XMX: 256m
+      TZ: Asia/Shanghai
+    ports:
+      - "8848:8848"
+      - "9848:9848"
+    volumes:
+      - nacos-data:/home/nacos/data
+      - nacos-logs:/home/nacos/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8848/nacos/v1/console/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  rocketmq-namesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: aurora-rocketmq-namesrv
+    # image ships no /home/rocketmq/logs dir, so volume mounts land root-owned;
+    # run as root instead of uid 3000 to keep the store/log paths writable
+    user: "0"
+    command: sh mqnamesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - rocketmq-namesrv-logs:/home/rocketmq/logs
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m"
+      TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin clusterList -n localhost:9876 >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+
+  rocketmq-broker:
+    image: apache/rocketmq:5.3.1
+    container_name: aurora-rocketmq-broker
+    user: "0"
+    command: sh mqbroker -c /home/rocketmq/conf/broker.conf
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    ports:
+      # brokerIP1 advertises 127.0.0.1 so clients running on the host (IDE/mvn) can connect;
+      # in-compose callers of the broker are not expected until M4+.
+      - "10909:10909"
+      - "10911:10911"
+    volumes:
+      - ./rocketmq/broker.conf:/home/rocketmq/conf/broker.conf:ro
+      - rocketmq-broker-store:/home/rocketmq/store
+      - rocketmq-broker-logs:/home/rocketmq/logs
+    environment:
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+      TZ: Asia/Shanghai
+
+  rocketmq-dashboard:
+    image: apacherocketmq/rocketmq-dashboard:latest
+    container_name: aurora-rocketmq-dashboard
+    depends_on:
+      rocketmq-namesrv:
+        condition: service_healthy
+    environment:
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Xms128m -Xmx128m"
+    ports:
+      - "8180:8080"
+
+  # 9.7 line: H2 storage keeps the dev stack single-container and light;
+  # SkyWalking 10 dropped H2 (would need BanyanDB/ES) — revisit at M4
+  skywalking-oap:
+    image: apache/skywalking-oap-server:9.7.0
+    container_name: aurora-skywalking-oap
+    environment:
+      SW_STORAGE: h2
+      SW_TELEMETRY: prometheus
+      JAVA_OPTS: "-Xms1g -Xmx1g"
+      TZ: Asia/Shanghai
+    ports:
+      - "11800:11800"
+      - "12800:12800"
+    healthcheck:
+      # OAP 9.7 has no /healthcheck HTTP route and the image ships wget, not curl;
+      # a 200 on the prometheus telemetry port proves the server is fully started
+      test: ["CMD-SHELL", "wget -qO- http://localhost:1234/metrics >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  skywalking-ui:
+    image: apache/skywalking-ui:9.7.0
+    container_name: aurora-skywalking-ui
+    depends_on:
+      skywalking-oap:
+        condition: service_healthy
+    environment:
+      SW_OAP_ADDRESS: http://skywalking-oap:12800
+    ports:
+      - "8090:8080"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: aurora-prometheus
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: aurora-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: aurora123
+      TZ: Asia/Shanghai
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  loki:
+    image: grafana/loki:3.4.2
+    container_name: aurora-loki
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+volumes:
+  mysql-data:
+  redis-data:
+  nacos-data:
+  nacos-logs:
+  rocketmq-namesrv-logs:
+  rocketmq-broker-store:
+  rocketmq-broker-logs:
+  prometheus-data:
+  grafana-data:
+  loki-data:
