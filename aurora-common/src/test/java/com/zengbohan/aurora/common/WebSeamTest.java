@@ -48,6 +48,14 @@ class WebSeamTest {
     }
 
     @Test
+    void unknownPathReturns404Envelope() throws Exception {
+        mockMvc.perform(get("/probe/does-not-exist"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value(40400))
+                .andExpect(jsonPath("$.message").value("资源不存在"));
+    }
+
+    @Test
     void traceIdGeneratedWhenHeaderAbsent() throws Exception {
         MvcResult result = mockMvc.perform(get("/probe/trace-id"))
                 .andExpect(status().isOk())

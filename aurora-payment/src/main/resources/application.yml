@@ -1,0 +1,16 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: aurora-payment
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

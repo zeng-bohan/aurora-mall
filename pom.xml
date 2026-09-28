@@ -20,6 +20,13 @@
 
     <modules>
         <module>aurora-common</module>
+        <module>aurora-gateway</module>
+        <module>aurora-user</module>
+        <module>aurora-product</module>
+        <module>aurora-cart</module>
+        <module>aurora-order</module>
+        <module>aurora-inventory</module>
+        <module>aurora-payment</module>
     </modules>
 
     <properties>
