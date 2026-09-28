@@ -9,6 +9,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 public class ProductController {
 
@@ -27,5 +29,10 @@ public class ProductController {
     public Result<Page<Sku>> page(@RequestParam(defaultValue = "1") long current,
                                   @RequestParam(defaultValue = "10") long size) {
         return Result.ok(queryService.page(current, size));
+    }
+
+    @GetMapping("/products/batch")
+    public Result<List<Sku>> batch(@RequestParam List<Long> ids) {
+        return Result.ok(queryService.batch(ids));
     }
 }

@@ -23,10 +23,12 @@ spring.data.redis:
   host: ${REDIS_HOST:localhost}
   port: ${REDIS_PORT:16379}
 
-# dev-only value; moves to nacos config center in T5
+# dev-only values; move to nacos config center in T5
 aurora:
   jwt:
     secret: dev-only-secret-0123456789abcdef-0123456789
+  internal:
+    secret: dev-only-internal-secret-0123456789abcdef
 
 management:
   endpoints:
