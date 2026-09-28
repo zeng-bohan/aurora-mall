@@ -60,6 +60,16 @@ class CartServiceTest {
     }
 
     @Test
+    void upstreamSystemErrorIsAnOutageNotABadSku() {
+        when(productClient.detail(1L)).thenReturn(Result.fail(ErrorCode.SYSTEM_ERROR));
+
+        assertThatThrownBy(() -> service.add(7L, new CartItemRequest(1L, 1)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.SYSTEM_ERROR.getCode());
+        assertThat(store.entries(7L)).isEmpty();
+    }
+
+    @Test
     void productServiceDownThrowsSystemErrorWithoutWritingCart() {
         when(productClient.detail(anyLong())).thenThrow(new RuntimeException("connect refused"));
 

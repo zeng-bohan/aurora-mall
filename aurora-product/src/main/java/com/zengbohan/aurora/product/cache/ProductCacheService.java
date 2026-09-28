@@ -104,17 +104,27 @@ public class ProductCacheService {
                 store.delete(MUTEX_PREFIX + id);
             }
         }
-        // someone else is loading; short wait then serve whatever is in cache now
-        try {
-            TimeUnit.MILLISECONDS.sleep(50);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+        // lost the mutex race: poll for the winner's write before deciding
+        for (int i = 0; i < 4; i++) {
+            try {
+                TimeUnit.MILLISECONDS.sleep(50);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            CacheWrapper<Sku> wrapper = readWrapper(key);
+            if (wrapper != null) {
+                if (wrapper.getData() == null) {
+                    // the winner cached a real miss
+                    throw new BusinessException(ErrorCode.NOT_FOUND);
+                }
+                return wrapper.getData();
+            }
         }
-        CacheWrapper<Sku> wrapper = readWrapper(key);
-        if (wrapper != null && wrapper.getData() != null) {
-            return wrapper.getData();
-        }
-        throw new BusinessException(ErrorCode.NOT_FOUND);
+        // winner is slow or its mutex is stale: a duplicate DB load beats a
+        // false 404 for a product that exists
+        Sku sku = dbLoader.apply(id);
+        writeWrapper(key, sku);
+        return skuOrThrow(sku);
     }
 
     private Sku refreshIfAllowed(String key, long id, CacheWrapper<Sku> wrapper, Function<Long, Sku> dbLoader) {

@@ -31,6 +31,12 @@ public class ProductQueryService {
                         .orderByDesc(Sku::getId));
     }
 
+    /** Admin view: every status, so off-shelf items stay manageable. */
+    public Page<Sku> adminPage(long current, long size) {
+        return skuMapper.selectPage(new Page<>(current, Math.min(size, 100)),
+                new LambdaQueryWrapper<Sku>().orderByDesc(Sku::getId));
+    }
+
     /** Batch lookup for cart snapshots; unknown ids are simply absent from the result. */
     public List<Sku> batch(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {

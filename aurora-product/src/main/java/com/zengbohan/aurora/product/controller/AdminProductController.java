@@ -5,15 +5,18 @@ import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.product.entity.Sku;
 import com.zengbohan.aurora.product.service.ProductAdminService;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
@@ -23,9 +26,12 @@ import java.math.BigDecimal;
 public class AdminProductController {
 
     private final ProductAdminService adminService;
+    private final com.zengbohan.aurora.product.service.ProductQueryService queryService;
 
-    public AdminProductController(ProductAdminService adminService) {
+    public AdminProductController(ProductAdminService adminService,
+                                  com.zengbohan.aurora.product.service.ProductQueryService queryService) {
         this.adminService = adminService;
+        this.queryService = queryService;
     }
 
     public record CreateRequest(@NotBlank String title,
@@ -33,9 +39,19 @@ public class AdminProductController {
                                 int stock) {
     }
 
+    /** Admin view includes off-shelf items, unlike the public list. */
+    @GetMapping
+    public Result<com.baomidou.mybatisplus.extension.plugins.pagination.Page<com.zengbohan.aurora.product.entity.Sku>> page(
+            @RequestHeader(value = "X-User-Role", required = false) String role,
+            @RequestParam(defaultValue = "1") long current,
+            @RequestParam(defaultValue = "10") long size) {
+        requireAdmin(role);
+        return Result.ok(queryService.adminPage(current, size));
+    }
+
     @PostMapping
     public Result<Long> create(@RequestHeader(value = "X-User-Role", required = false) String role,
-                               @RequestBody CreateRequest request) {
+                               @Valid @RequestBody CreateRequest request) {
         requireAdmin(role);
         Sku sku = new Sku();
         sku.setTitle(request.title());
@@ -48,7 +64,7 @@ public class AdminProductController {
     @PutMapping("/{id}")
     public Result<Void> update(@RequestHeader(value = "X-User-Role", required = false) String role,
                                @PathVariable long id,
-                               @RequestBody CreateRequest request) {
+                               @Valid @RequestBody CreateRequest request) {
         requireAdmin(role);
         Sku sku = new Sku();
         sku.setId(id);

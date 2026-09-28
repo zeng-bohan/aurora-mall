@@ -142,6 +142,19 @@ class ProductCacheServiceTest {
     }
 
     @Test
+    void staleMutexFallsBackToDbInsteadOfFalse404() {
+        // simulate a dead rebuilder: mutex held, cache empty
+        store.setIfAbsent("aurora:product:mutex:1", "1", java.time.Duration.ofSeconds(10));
+
+        Sku loaded = service.getById(1L, this::loadSku);
+
+        assertThat(loaded.getTitle()).isEqualTo("sku-1");
+        assertThat(dbCalls.get()).isEqualTo(1);
+        // the foreign mutex is not ours to release
+        assertThat(store.has("aurora:product:mutex:1")).isTrue();
+    }
+
+    @Test
     void doubleDeleteRunsDelayedSecondEvict() throws Exception {
         service.getById(1L, this::loadSku);
 

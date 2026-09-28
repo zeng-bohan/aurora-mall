@@ -92,13 +92,17 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
 
     private boolean isPublic(ServerHttpRequest request) {
         String path = request.getURI().getPath();
+        // health stays open so the smoke seam can probe through the gateway
         if (path.endsWith("/actuator/health")) {
             return true;
         }
         if (PUBLIC_POST.contains(path)) {
             return HttpMethod.POST.equals(request.getMethod());
         }
-        return HttpMethod.GET.equals(request.getMethod()) && path.startsWith("/api/product/");
+        // guest-read products, but admin views still need a token + ADMIN role
+        return HttpMethod.GET.equals(request.getMethod())
+                && path.startsWith("/api/product/")
+                && !path.contains("/admin");
     }
 
     private Mono<Void> unauthorized(ServerWebExchange exchange) {
