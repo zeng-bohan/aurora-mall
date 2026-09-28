@@ -34,6 +34,7 @@
         <!-- Matrix pinned against SCA 2025.0.x branch POM (SCA 2025.0.0.0 <-> Spring Cloud 2025.0.0 <-> Boot 3.5.0) -->
         <spring-cloud.version>2025.0.0</spring-cloud.version>
         <spring-cloud-alibaba.version>2025.0.0.0</spring-cloud-alibaba.version>
+        <mybatis-plus.version>3.5.12</mybatis-plus.version>
     </properties>
 
     <dependencyManagement>
@@ -56,6 +57,11 @@
                 <groupId>com.zengbohan.aurora</groupId>
                 <artifactId>aurora-common</artifactId>
                 <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+                <version>${mybatis-plus.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
