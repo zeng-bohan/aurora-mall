@@ -19,6 +19,10 @@ mybatis-plus:
   global-config:
     banner: false
 
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:16379}
+
 # dev-only value; moves to nacos config center in T5
 aurora:
   jwt:
