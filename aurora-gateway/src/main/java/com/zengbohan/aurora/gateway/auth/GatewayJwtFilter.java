@@ -52,7 +52,11 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         ServerHttpRequest request = exchange.getRequest();
         if (isPublic(request)) {
-            return chain.filter(exchange);
+            // public paths skip auth but still get the internal secret: services
+            // reject any request that did not come through the gateway
+            return chain.filter(exchange.mutate()
+                    .request(r -> r.headers(h -> h.set(INTERNAL_SECRET_HEADER, internalSecret)))
+                    .build());
         }
         String authorization = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
         if (authorization == null || !authorization.startsWith(BEARER)) {

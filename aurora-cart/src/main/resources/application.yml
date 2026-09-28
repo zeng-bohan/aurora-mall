@@ -9,6 +9,15 @@ spring:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
 
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:16379}
+
+# dev-only values; move to nacos config center in T5
+aurora:
+  internal:
+    secret: dev-only-internal-secret-0123456789abcdef
+
 management:
   endpoints:
     web:
