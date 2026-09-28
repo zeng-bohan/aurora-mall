@@ -9,7 +9,7 @@
 ## Decision
 
 - JDK 21（LTS；虚拟线程作为后续亮点素材）
-- Spring Boot 3.x 最新稳定版，配套官方兼容矩阵中的 Spring Cloud Alibaba 版本（具体版本号在 M0 首个工单中钉死并回填本 ADR）
+- **Spring Boot 3.5.0 + Spring Cloud 2025.0.0 + Spring Cloud Alibaba 2025.0.0.0**（T1 已钉死并经 `mvn clean verify` 在 JDK 21 上验证；依据 SCA 官方 2025.0.x 分支 POM 的版本属性，见 <https://github.com/alibaba/spring-cloud-alibaba/tree/2025.0.x>）
 - Nacos（注册 + 配置中心）、Sentinel（限流熔断）、Seata（分布式事务对照）、OpenFeign（声明式服务调用）
 - RocketMQ 5.x（事务消息 + 延迟消息为订单场景刚需）、MyBatis-Plus、MySQL 8、Redis 7、Spring Cloud Gateway
 

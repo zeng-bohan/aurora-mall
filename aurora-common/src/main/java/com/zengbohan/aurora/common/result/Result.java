@@ -1,0 +1,26 @@
+package com.zengbohan.aurora.common.result;
+
+import com.zengbohan.aurora.common.exception.ErrorCode;
+
+/**
+ * Unified API response envelope. Business errors ride HTTP 200 with a non-zero
+ * code; infrastructure failures return HTTP 5xx via GlobalExceptionHandler.
+ */
+public record Result<T>(int code, String message, T data) {
+
+    public static <T> Result<T> ok() {
+        return ok(null);
+    }
+
+    public static <T> Result<T> ok(T data) {
+        return new Result<>(ErrorCode.SUCCESS.getCode(), ErrorCode.SUCCESS.getMessage(), data);
+    }
+
+    public static <T> Result<T> fail(ErrorCode errorCode) {
+        return new Result<>(errorCode.getCode(), errorCode.getMessage(), null);
+    }
+
+    public static <T> Result<T> fail(int code, String message) {
+        return new Result<>(code, message, null);
+    }
+}
