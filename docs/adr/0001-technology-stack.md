@@ -4,7 +4,7 @@
 
 ## Context
 
-从 0 构建高级工程师级微服务作品，需在 Dubbo 生态与 Spring Cloud Alibaba（SCA）生态间选择，并确定 JVM / 框架版本基线。
+从 0 构建微服务系统，需在 Dubbo 生态与 Spring Cloud Alibaba（SCA）生态间选择，并确定 JVM / 框架版本基线。
 
 ## Decision
 
@@ -15,6 +15,6 @@
 
 ## Consequences
 
-- 放弃 Dubbo 生态：大厂使用多，但 SCA 求职面试覆盖面更广，且与手写 RPC（ADR-0008）形成对照更自然
-- Boot 3.x 与国内存量 2.x 的差异作为面试讲述点，而非风险
+- 放弃 Dubbo 生态：SCA 生态在国内使用更广泛，且与手写 RPC（ADR-0008）形成对照更自然
+- Boot 3.x 与国内存量 2.x 的差异作为技术演进对照点，而非风险
 - 不引入 Spring Security / Sa-Token，鉴权方案见 ADR-0006
