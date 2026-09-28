@@ -1,0 +1,57 @@
+server:
+  # host 8080 belongs to another long-running project on this dev machine
+  port: 8000
+
+spring:
+  application:
+    name: aurora-gateway
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: user
+              uri: lb://aurora-user
+              predicates:
+                - Path=/api/user/**
+              filters:
+                - StripPrefix=2
+            - id: product
+              uri: lb://aurora-product
+              predicates:
+                - Path=/api/product/**
+              filters:
+                - StripPrefix=2
+            - id: cart
+              uri: lb://aurora-cart
+              predicates:
+                - Path=/api/cart/**
+              filters:
+                - StripPrefix=2
+            - id: order
+              uri: lb://aurora-order
+              predicates:
+                - Path=/api/order/**
+              filters:
+                - StripPrefix=2
+            - id: inventory
+              uri: lb://aurora-inventory
+              predicates:
+                - Path=/api/inventory/**
+              filters:
+                - StripPrefix=2
+            - id: payment
+              uri: lb://aurora-payment
+              predicates:
+                - Path=/api/payment/**
+              filters:
+                - StripPrefix=2
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
