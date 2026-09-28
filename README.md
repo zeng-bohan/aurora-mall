@@ -1,6 +1,6 @@
 # aurora-mall
 
-从 0 构建的 Java 微服务电商系统 —— 高级工程师级实践作品。
+从 0 构建的 Java 微服务电商系统。
 
 技术基线：**JDK 21 · Spring Boot 3.5.0 · Spring Cloud 2025.0.0 · Spring Cloud Alibaba 2025.0.0.0**（版本对钉死自 SCA 官方矩阵，见 [ADR-0001](docs/adr/0001-technology-stack.md)）。
 
