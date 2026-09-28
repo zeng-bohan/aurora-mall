@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
@@ -24,6 +25,7 @@ import java.util.function.Function;
  * physical TTL; admin writes do delete-then-delayed-double-delete.
  */
 @Service
+@RefreshScope
 public class ProductCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(ProductCacheService.class);
@@ -53,6 +55,9 @@ public class ProductCacheService {
         this.rebuildExecutor = rebuildExecutor;
         this.doubleDeleteScheduler = doubleDeleteScheduler;
         this.physicalTtlSeconds = physicalTtlSeconds;
+        // logged on every (re)creation: a config-center TTL change rebuilds this
+        // @RefreshScope bean and prints the new value here
+        log.info("product cache ready: physical ttl {}s", physicalTtlSeconds);
     }
 
     public Sku getById(long id, Function<Long, Sku> dbLoader) {

@@ -11,27 +11,31 @@ import com.zengbohan.aurora.user.dto.RegisterRequest;
 import com.zengbohan.aurora.user.dto.TokenResponse;
 import com.zengbohan.aurora.user.entity.User;
 import com.zengbohan.aurora.user.mapper.UserMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
 @Service
 public class UserService {
 
-    static final Duration ACCESS_TTL = Duration.ofMinutes(30);
-    static final Duration REFRESH_TTL = Duration.ofDays(7);
     static final String ROLE_USER = "USER";
 
     private final UserMapper userMapper;
     private final JwtCodec jwtCodec;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
+    private final long accessTtlSeconds;
+    private final long refreshTtlSeconds;
 
-    public UserService(UserMapper userMapper, JwtCodec jwtCodec) {
+    public UserService(UserMapper userMapper, JwtCodec jwtCodec,
+                       @Value("${aurora.jwt.access-ttl-seconds:1800}") long accessTtlSeconds,
+                       @Value("${aurora.jwt.refresh-ttl-seconds:604800}") long refreshTtlSeconds) {
         this.userMapper = userMapper;
         this.jwtCodec = jwtCodec;
+        this.accessTtlSeconds = accessTtlSeconds;
+        this.refreshTtlSeconds = refreshTtlSeconds;
     }
 
     public Long register(RegisterRequest request) {
@@ -80,10 +84,10 @@ public class UserService {
         Instant now = Instant.now();
         String access = jwtCodec.encode(new JwtCodec.Claims(
                 String.valueOf(user.getId()), user.getRole(), UUID.randomUUID().toString(),
-                JwtCodec.TYP_ACCESS, now, now.plus(ACCESS_TTL)));
+                JwtCodec.TYP_ACCESS, now, now.plusSeconds(accessTtlSeconds)));
         String refresh = jwtCodec.encode(new JwtCodec.Claims(
                 String.valueOf(user.getId()), user.getRole(), UUID.randomUUID().toString(),
-                JwtCodec.TYP_REFRESH, now, now.plus(REFRESH_TTL)));
-        return new TokenResponse(access, refresh, ACCESS_TTL.toSeconds());
+                JwtCodec.TYP_REFRESH, now, now.plusSeconds(refreshTtlSeconds)));
+        return new TokenResponse(access, refresh, accessTtlSeconds);
     }
 }

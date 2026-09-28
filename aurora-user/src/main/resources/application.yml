@@ -23,12 +23,11 @@ spring.data.redis:
   host: ${REDIS_HOST:localhost}
   port: ${REDIS_PORT:16379}
 
-# dev-only values; move to nacos config center in T5
+# secrets live in the nacos config center (see application-default.yml);
+# ConfigPresenceVerifier fails startup naming any required key that is missing
 aurora:
-  jwt:
-    secret: dev-only-secret-0123456789abcdef-0123456789
-  internal:
-    secret: dev-only-internal-secret-0123456789abcdef
+  config:
+    required-keys: aurora.internal.secret,aurora.jwt.secret
 
 management:
   endpoints:

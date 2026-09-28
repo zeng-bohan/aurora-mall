@@ -19,3 +19,8 @@ logging:
   pattern:
     # traceId rides every log line via the MDC key set by TraceIdFilter
     level: "%5p [${spring.application.name:},%X{traceId:-}]"
+
+# secret from the nacos config center (see application-default.yml)
+aurora:
+  config:
+    required-keys: aurora.internal.secret

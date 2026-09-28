@@ -23,12 +23,11 @@ mybatis-plus:
   global-config:
     banner: false
 
-# dev-only values; move to nacos config center in T5
+# secret from the nacos config center; aurora.cache.physical-ttl-seconds
+# also lives there (aurora-product.yml) so it can be refreshed at runtime
 aurora:
-  internal:
-    secret: dev-only-internal-secret-0123456789abcdef
-  cache:
-    physical-ttl-seconds: 86400
+  config:
+    required-keys: aurora.internal.secret
 
 management:
   endpoints:

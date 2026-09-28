@@ -27,7 +27,7 @@ class UserServiceTest {
     @BeforeEach
     void setUp() {
         userMapper = mock(UserMapper.class);
-        userService = new UserService(userMapper, jwtCodec);
+        userService = new UserService(userMapper, jwtCodec, 1800, 604800);
     }
 
     private User activeUser() {
