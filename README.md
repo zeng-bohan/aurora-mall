@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart LR
-    C[客户端] --> G[aurora-gateway :8000<br/>路由 / 手写JWT(M1) / 限流(M4)]
+    C[客户端] --> G[aurora-gateway :8000<br/>路由 + 手写JWT校验/黑名单/内部签名注入]
 
     G --> U[aurora-user]
     G --> P[aurora-product]
@@ -17,22 +17,24 @@ flowchart LR
     G --> I[aurora-inventory]
     G --> PA[aurora-payment]
 
-    subgraph 业务服务均注册至
-      N[(Nacos<br/>注册+配置)]
+    CA -. OpenFeign 行项目快照 .-> P
+
+    subgraph 注册与配置
+      N[(Nacos<br/>注册 + 配置中心 dev<br/>密钥/TTL 配置化)]
     end
 
     U & P & CA & O & I & PA --> N
 
     O -. 事务消息/延迟消息 .-> MQ[(RocketMQ 5.3)]
-    U & P & O & I & PA -.-> SQL[(MySQL 8)]
-    P & O & I -.-> R[(Redis 7)]
+    U & P & O & I & PA -.-> SQL[(MySQL 8<br/>库表按服务隔离)]
+    U & P & CA -.-> R[(Redis 7<br/>黑名单/缓存/购物车)]
 
     subgraph 可观测性[M4 起接入]
       SW[SkyWalking OAP+UI] & PR[Prometheus] & LK[Loki] --> GR[Grafana]
     end
 ```
 
-设计决策（为什么不用 Dubbo / Spring Security、事务与缓存方案、手写组件边界）全部记录在 [docs/adr/](docs/adr/)，共 8 篇。
+链路约定：业务请求一律经网关（白名单放行≠直连放行——服务侧校验 `X-Internal-Secret`）；服务间调用走 Nacos 发现 + Feign。设计决策（为什么不用 Dubbo / Spring Security、事务与缓存方案、手写组件边界）全部记录在 [docs/adr/](docs/adr/)，共 8 篇。
 
 ## 10 分钟跑起来
 
@@ -59,13 +61,24 @@ for svc in gateway user product cart order inventory payment; do
 done
 ```
 
-**3. 验收**：经网关全链路打通
+**3. 验收**：两级接缝
 
 ```bash
-bash docker/smoke-services.sh
+bash docker/smoke-services.sh   # 网关 + 6 服务健康端点全 200
+bash docker/smoke-flows.sh      # 金路径 36 断言：注册→登录→浏览→加购→改量→刷新→登出→401→越权 403
 ```
 
-看到 `service smoke OK: gateway + 6 services reachable through routes` 即验收通过。
+两个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 每次运行自建用户与商品，可重复执行。
+
+### 业务端点速查（经网关）
+
+| 分组 | 端点 | 说明 |
+| --- | --- | --- |
+| 认证（公开） | `POST /api/user/register` `login` `refresh` | 注册/登录/续期，返回双 token |
+| 认证（需 token） | `POST /api/user/logout` · `GET /api/user/me` | 登出即黑名单，旧 token 立即 401 |
+| 商品（公开读） | `GET /api/product/products` · `GET .../products/{id}` · `GET .../products/batch` | 游客可读，详情走缓存三防 |
+| 商品（admin） | `POST/PUT/DELETE /api/product/admin/products...` | 需 `role=ADMIN`，写路径延迟双删 |
+| 购物车（需 token） | `GET/POST/PUT/DELETE /api/cart/carts...` | Redis Hash，行项目含商品快照 |
 
 ### 端点速查
 
@@ -86,8 +99,8 @@ bash docker/smoke-services.sh
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| M0 | 工程骨架：版本矩阵 + 中间件全家桶 + 7 服务注册 + 网关路由 + CI | 🚧 进行中 |
-| M1 | 用户 / 商品 / 购物车（JWT 鉴权、Cache Aside 三防） | 未开始 |
+| M0 | 工程骨架：版本矩阵 + 中间件全家桶 + 7 服务注册 + 网关路由 + CI | ✅ 完成 |
+| M1 | 用户 / 商品 / 购物车（JWT 鉴权、Cache Aside 三防、配置中心） | ✅ 完成 |
 | M2 | 订单 / 库存 / 支付（RocketMQ 事务消息、Seata 对照、统一幂等组件） | 未开始 |
 | M3 | 手写组件三部曲：ID 生成器 / 限流熔断 / RPC（与 OpenFeign 切换） | 未开始 |
 | M4 | 可观测性 + 网关强化 + JMeter 压测报告 | 未开始 |
@@ -102,7 +115,7 @@ bash docker/smoke-services.sh
 - [CONTEXT.md](CONTEXT.md) — 项目定位、领域词汇表、工程约定
 - [docs/adr/](docs/adr/) — 架构决策记录（0001 技术栈 → 0008 手写组件）
 - [docs/agents/](docs/agents/) — AI 协作配置（issue tracker / 标签 / 领域文档）
-- `docker/smoke.sh` / `docker/smoke-services.sh` — 两级验收接缝脚本
+- `docker/smoke.sh` — 中间件接缝 · `docker/smoke-services.sh` — 服务健康接缝 · `docker/smoke-flows.sh` — 业务金路径接缝
 
 ## CI
 
