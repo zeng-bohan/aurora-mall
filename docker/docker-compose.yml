@@ -99,7 +99,15 @@ services:
     environment:
       JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
       TZ: Asia/Shanghai
+    healthcheck:
+      test: ["CMD-SHELL", "sh mqadmin brokerStatus -b 127.0.0.1:10911 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 15s
+      retries: 10
+      start_period: 40s
 
+  # dev convenience beyond the spec's service list: namesrv/broker visualization
+  # (image ships no curl/wget/bash, so smoke.sh probes it host-side instead)
   rocketmq-dashboard:
     image: apacherocketmq/rocketmq-dashboard:latest
     container_name: aurora-rocketmq-dashboard
@@ -143,6 +151,12 @@ services:
       SW_OAP_ADDRESS: http://skywalking-oap:12800
     ports:
       - "8090:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   prometheus:
     image: prom/prometheus:v2.54.1
