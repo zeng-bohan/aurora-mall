@@ -79,8 +79,16 @@ public class CartService {
         } catch (RuntimeException e) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
         }
-        if (result == null || result.code() != ErrorCode.SUCCESS.getCode() || result.data() == null) {
+        if (result == null) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
+        }
+        if (result.code() == ErrorCode.SUCCESS.getCode() && result.data() != null) {
+            return;
+        }
+        if (result.code() == ErrorCode.NOT_FOUND.getCode()) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "商品不存在");
         }
+        // any other envelope (system error upstream) is an outage, not a bad sku
+        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
     }
 }

@@ -131,6 +131,18 @@ TOKEN2=$(grep -oE '"accessToken":"[^"]+"' <<<"$RESP" | head -1 | cut -d'"' -f4)
 req POST /api/product/admin/products "${TOKEN2:-none}" '{"title":"x","price":1.00,"stock":1}'
 assert_body '"code":40300' "non-admin -> 40300"
 
+step "admin price update converges (delayed double delete) + admin list"
+req PUT "/api/product/admin/products/$SKU" "$NEW_TOKEN" "{\"title\":\"$TITLE\",\"price\":24.90,\"stock\":50}"
+assert_status 200 && assert_body '"code":0' "price update ok"
+req GET "/api/product/products/$SKU"
+assert_body '"price":24.90' "first read shows new price (cache evicted)"
+sleep 1
+req GET "/api/product/products/$SKU"
+assert_body '"price":24.90' "still new price after delayed double delete"
+req GET "/api/product/admin/products" "$NEW_TOKEN"
+assert_status 200 "admin list requires token"
+assert_body "\"title\":\"$TITLE\"" "admin list includes the product"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
   echo "smoke-flows OK: $PASS assertions green"

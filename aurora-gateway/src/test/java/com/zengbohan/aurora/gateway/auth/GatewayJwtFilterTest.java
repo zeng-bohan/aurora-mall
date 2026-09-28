@@ -67,7 +67,13 @@ class GatewayJwtFilterTest {
         if (captured.get() != null) {
             return 200;
         }
-        return exchange.getResponse().getStatusCode() == HttpStatus.UNAUTHORIZED ? 401 : 500;
+        if (exchange.getResponse().getStatusCode() == HttpStatus.UNAUTHORIZED) {
+            // T2 AC: every 401 carries the unified envelope, not a bare status
+            String body = exchange.getResponse().getBodyAsString().block();
+            assertThat(body).contains("\"code\":40100");
+            return 401;
+        }
+        return 500;
     }
 
     @Test
@@ -133,5 +139,15 @@ class GatewayJwtFilterTest {
         MockServerHttpRequest post = MockServerHttpRequest.post("/api/product").build();
         MockServerWebExchange exchange = MockServerWebExchange.from(post);
         assertThat(run(exchange)).isEqualTo(401);
+    }
+
+    @Test
+    void adminProductGetRequiresTokenDespiteProductPrefix() {
+        assertThat(run(exchange("/api/product/admin/products", null))).isEqualTo(401);
+    }
+
+    @Test
+    void adminProductGetPassesWithToken() {
+        assertThat(run(exchange("/api/product/admin/products", accessToken("jti-2")))).isEqualTo(200);
     }
 }
