@@ -21,6 +21,8 @@ public class JwtCodec {
 
     public static final String TYP_ACCESS = "access";
     public static final String TYP_REFRESH = "refresh";
+    /** Shared redis key namespace for revoked-token blacklist (gateway writes checks, user writes entries). */
+    public static final String BLACKLIST_KEY_PREFIX = "aurora:jwt:blacklist:";
 
     private static final Base64.Encoder B64 = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder B64D = Base64.getUrlDecoder();
@@ -35,12 +37,17 @@ public class JwtCodec {
         this(secret, Clock.systemUTC());
     }
 
-    JwtCodec(String secret, Clock clock) {
+    public JwtCodec(String secret, Clock clock) {
         if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
             throw new IllegalArgumentException("jwt secret must be at least 32 bytes");
         }
         this.secret = secret.getBytes(StandardCharsets.UTF_8);
         this.clock = clock;
+    }
+
+    /** Current instant per this codec's clock — consumers use it so TTL math and decode agree. */
+    public Instant now() {
+        return clock.instant();
     }
 
     public String encode(Claims claims) {
