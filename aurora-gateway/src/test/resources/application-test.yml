@@ -3,3 +3,15 @@ spring:
     nacos:
       discovery:
         enabled: false
+      config:
+        # starter is on the classpath but tests never import config data;
+        # this only silences spring-cloud's "no spring.config.import" check
+        import-check:
+          enabled: false
+
+# clearly-fake test fixtures: tests never talk to the config center
+aurora:
+  internal:
+    secret: test-only-internal-secret-not-real
+  jwt:
+    secret: test-only-jwt-secret-not-real-0123456789abcdef

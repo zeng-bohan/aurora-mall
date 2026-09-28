@@ -56,12 +56,8 @@ management:
       exposure:
         include: health,info
 
-# dev-only values; move to nacos config center in T5
-aurora:
-  jwt:
-    secret: dev-only-secret-0123456789abcdef-0123456789
-  internal:
-    secret: dev-only-internal-secret-0123456789abcdef
+# aurora.jwt.secret / aurora.internal.secret come from the nacos config center
+# (application-default.yml import); startup fails fast when they are missing
 
 spring.data.redis:
   host: ${REDIS_HOST:localhost}

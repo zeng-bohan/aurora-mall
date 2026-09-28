@@ -1,0 +1,16 @@
+# Active only under the default profile (i.e. services started with no explicit
+# profile). The test profile never loads this file, so unit/context tests run
+# without a config center. Values are imported into namespace dev by
+# docker/nacos/import.sh before first start; without them startup fails fast -
+# either the import itself (missing dataId) or ConfigPresenceVerifier / @Value
+# refusing to boot when a required key is unresolved (unreachable server).
+spring:
+  cloud:
+    nacos:
+      config:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        namespace: dev
+  config:
+    import:
+      - nacos:aurora-common.yml
+      - nacos:aurora-user.yml

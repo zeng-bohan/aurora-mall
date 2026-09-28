@@ -45,10 +45,10 @@ git clone https://github.com/zeng-bohan/aurora-mall.git && cd aurora-mall
 **1. 起基础设施全家桶**（MySQL/Redis/Nacos/RocketMQ/SkyWalking/Prometheus/Grafana/Loki）：
 
 ```bash
-cd docker && docker compose up -d && bash smoke.sh
+cd docker && docker compose up -d && bash smoke.sh && bash nacos/import.sh
 ```
 
-看到 `smoke OK` 即中间件就绪（首次拉镜像约 10 分钟）。
+看到 `smoke OK` 即中间件就绪（首次拉镜像约 10 分钟）。`nacos/import.sh` 把密钥与各服务配置导入 Nacos（命名空间 dev，密钥本地生成不进 git）——**必须在启动服务前执行**，否则服务启动即失败（fail-fast）。详见 [docker/README.md](docker/README.md)。
 
 **2. 构建并启动 7 个服务**（网关 :8000，业务服务 :8081-8086）：
 
