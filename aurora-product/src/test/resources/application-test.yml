@@ -9,7 +9,13 @@ spring:
         import-check:
           enabled: false
 
-# clearly-fake test fixtures: tests never talk to the config center
+# clearly-fake test fixtures: tests never talk to the config center.
+# seed-on-startup=false is the test seam for CI context-load runs: no
+# database there, so the bloom stays empty (detail lookups in tests must
+# seed ids themselves).
 aurora:
   internal:
     secret: test-only-internal-secret-not-real
+  cache:
+    bloom:
+      seed-on-startup: false

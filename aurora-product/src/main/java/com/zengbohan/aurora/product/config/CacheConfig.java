@@ -49,13 +49,18 @@ public class CacheConfig {
 
     /**
      * Seeded with every sku id at startup; admin creates extend it.
-     * Sized for 100k ids at 1% false positives.
+     * Sized for 100k ids at 1% false positives. The seed query is skipped when
+     * aurora.cache.bloom.seed-on-startup=false (test seam: context-load tests
+     * run on CI runners with no database).
      */
     @Bean
-    public StringBloomFilter skuBloomFilter(SkuMapper skuMapper) {
+    public StringBloomFilter skuBloomFilter(SkuMapper skuMapper,
+                                            @org.springframework.beans.factory.annotation.Value("${aurora.cache.bloom.seed-on-startup:true}") boolean seedOnStartup) {
         StringBloomFilter filter = new StringBloomFilter(100_000, 0.01);
-        for (Sku sku : skuMapper.selectList(new LambdaQueryWrapper<Sku>().select(Sku::getId))) {
-            filter.put(String.valueOf(sku.getId()));
+        if (seedOnStartup) {
+            for (Sku sku : skuMapper.selectList(new LambdaQueryWrapper<Sku>().select(Sku::getId))) {
+                filter.put(String.valueOf(sku.getId()));
+            }
         }
         return filter;
     }
