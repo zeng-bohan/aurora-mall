@@ -8,6 +8,21 @@ spring:
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
+  datasource:
+    url: jdbc:mysql://${MYSQL_ADDR:localhost:13306}/aurora_user?characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${MYSQL_PASSWORD:aurora123}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+# dev-only value; moves to nacos config center in T5
+aurora:
+  jwt:
+    secret: dev-only-secret-0123456789abcdef-0123456789
 
 management:
   endpoints:
