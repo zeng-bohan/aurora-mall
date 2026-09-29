@@ -73,7 +73,7 @@ class OrderServiceTest {
         when(inventoryClient.rollback(eq(1L), any())).thenReturn(Result.ok());
 
         service = new OrderService(idGenerator, productGuard, inventoryClient,
-                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "mq");
+                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "mq", false);
     }
 
     @Test
@@ -144,7 +144,7 @@ class OrderServiceTest {
     @Test
     void atModeDelegatesToTheAtPlacerWithoutMqSideEffects() {
         OrderService atService = new OrderService(idGenerator, productGuard, inventoryClient,
-                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at");
+                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at", true);
         when(atOrderPlacer.placeAt(eq(7L), any())).thenReturn(9999L);
 
         long orderId = atService.placeOrder(7L, new PlaceOrderRequest(1L, 1), "req-at");
@@ -153,6 +153,14 @@ class OrderServiceTest {
         verify(publisher, never()).sendStockReservedTransactionally(anyString(), anyString());
         verify(publisher, never()).sendCloseTimeout(org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyInt());
+    }
+
+    @Test
+    void atModeWithoutSeataEnabledRefusesToBoot() {
+        assertThatThrownBy(() -> new OrderService(idGenerator, productGuard, inventoryClient,
+                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at", false))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("seata.enabled");
     }
 
     @Test
@@ -165,24 +173,63 @@ class OrderServiceTest {
     }
 
     @Test
-    void closePendingOrderRollsStockBack() {
+    void closePendingOrderRollsStockBackAndMarksReleased() {
         when(orderMapper.transition(1001L, Order.STATUS_CREATED, Order.STATUS_CLOSED)).thenReturn(1);
         Order order = new Order();
         order.setId(1001L);
         order.setSkuId(1L);
         order.setQuantity(2);
+        order.setStatus(Order.STATUS_CREATED);
+        order.setTxMode("mq");
         when(orderMapper.selectById(1001L)).thenReturn(order);
 
         assertThat(service.closeIfPending(1001L)).isTrue();
         verify(inventoryClient).rollback(eq(1L), any());
+        verify(orderMapper).markStockReleased(1001L);
     }
 
     @Test
-    void closingPaidOrClosedOrderChangesNothing() {
+    void closingPaidOrderChangesNothing() {
+        Order paid = new Order();
+        paid.setId(1001L);
+        paid.setStatus(Order.STATUS_PAID);
+        when(orderMapper.selectById(1001L)).thenReturn(paid);
         when(orderMapper.transition(1001L, Order.STATUS_CREATED, Order.STATUS_CLOSED)).thenReturn(0);
 
         assertThat(service.closeIfPending(1001L)).isFalse();
         verify(inventoryClient, never()).rollback(anyLong(), any());
+        verify(orderMapper, never()).markStockReleased(anyLong());
+    }
+
+    @Test
+    void closedButUnreleasedOrderIsCompensatedOnReentry() {
+        Order stranded = new Order();
+        stranded.setId(1001L);
+        stranded.setSkuId(1L);
+        stranded.setQuantity(2);
+        stranded.setStatus(Order.STATUS_CLOSED);
+        stranded.setTxMode("mq");
+        when(orderMapper.selectById(1001L)).thenReturn(stranded);
+        when(orderMapper.transition(1001L, Order.STATUS_CREATED, Order.STATUS_CLOSED)).thenReturn(0);
+
+        assertThat(service.closeIfPending(1001L)).isFalse();
+        verify(inventoryClient).rollback(eq(1L), any());
+        verify(orderMapper).markStockReleased(1001L);
+    }
+
+    @Test
+    void releaseFailureKeepsTheMarkerUnsetSoRetriesCanFinish() {
+        when(orderMapper.transition(1001L, Order.STATUS_CREATED, Order.STATUS_CLOSED)).thenReturn(1);
+        Order order = new Order();
+        order.setId(1001L);
+        order.setSkuId(1L);
+        order.setQuantity(2);
+        order.setStatus(Order.STATUS_CREATED);
+        when(orderMapper.selectById(1001L)).thenReturn(order);
+        when(inventoryClient.rollback(eq(1L), any())).thenThrow(new RuntimeException("inventory down"));
+
+        assertThatThrownBy(() -> service.closeIfPending(1001L)).isInstanceOf(RuntimeException.class);
+        verify(orderMapper, never()).markStockReleased(anyLong());
     }
 
     @Test

@@ -23,6 +23,16 @@ public class JdbcDedupStore implements DedupStore {
     }
 
     @Override
+    public void remove(String bizType, String bizKey) {
+        JdbcTemplate jdbc = jdbcProvider.getIfAvailable();
+        if (jdbc == null) {
+            throw new IllegalStateException(
+                    "@Idempotent(DB_DEDUP) needs a JdbcTemplate bean; add spring-jdbc and a datasource");
+        }
+        jdbc.update("DELETE FROM " + table + " WHERE biz_type = ? AND biz_key = ?", bizType, bizKey);
+    }
+
+    @Override
     public boolean tryInsert(String bizType, String bizKey) {
         JdbcTemplate jdbc = jdbcProvider.getIfAvailable();
         if (jdbc == null) {

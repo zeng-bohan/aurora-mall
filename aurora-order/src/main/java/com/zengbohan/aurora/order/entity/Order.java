@@ -23,6 +23,7 @@ public class Order {
     private BigDecimal totalAmount;
     private Integer status;
     private String txMode;
+    private Integer stockReleased;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -76,6 +77,10 @@ public class Order {
 
     public void setTxMode(String txMode) {
         this.txMode = txMode;
+    }
+
+    public boolean isStockReleased() {
+        return stockReleased != null && stockReleased == 1;
     }
 
     public void setStatus(Integer status) {

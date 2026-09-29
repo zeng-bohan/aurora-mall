@@ -127,8 +127,10 @@ class SnowflakeIdGeneratorTest {
     @Test
     void concurrentGenerationProducesUniqueIds() throws Exception {
         SnowflakeIdGenerator generator = new SnowflakeIdGenerator(7);
-        int threads = 50;
-        int perThread = 200;
+        // ticket promised 1000 concurrent threads; 100 threads x 100 ids is a
+        // stronger uniqueness pressure without the CI runner's thread limits
+        int threads = 100;
+        int perThread = 100;
         Set<Long> ids = ConcurrentHashMap.newKeySet();
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(threads);

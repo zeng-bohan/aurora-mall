@@ -21,4 +21,11 @@ public interface OrderMapper extends BaseMapper<Order> {
 
     @Select("SELECT * FROM orders WHERE status = 0 AND created_at <= #{before} LIMIT 200")
     List<Order> findTimedOut(@Param("before") java.time.LocalDateTime before);
+
+    /** Compensation scan: closed orders whose stock release never completed. */
+    @Update("UPDATE orders SET stock_released = 1 WHERE id = #{id} AND stock_released = 0")
+    int markStockReleased(@Param("id") long id);
+
+    @Select("SELECT * FROM orders WHERE status = 2 AND stock_released = 0 LIMIT 200")
+    List<Order> findUnreleasedClosed();
 }

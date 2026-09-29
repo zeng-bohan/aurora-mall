@@ -90,6 +90,11 @@ class IdempotentAspectTest {
         public boolean tryInsert(String bizType, String bizKey) {
             return rows.add(bizType + ":" + bizKey);
         }
+
+        @Override
+        public void remove(String bizType, String bizKey) {
+            rows.remove(bizType + ":" + bizKey);
+        }
     }
 
     /** Target methods the aspect is reflected against. */
@@ -177,6 +182,20 @@ class IdempotentAspectTest {
         assertThat(aspect.guard(second, annotated(Strategy.DB_DEDUP, "stock-sync", "#messageId", 0))).isNull();
         assertThat(calls.get()).isEqualTo(1);
         assertThat(dedup.rows).containsExactly("stock-sync:msg-1");
+    }
+
+    @Test
+    void failedDedupGuardedCallClearsTheGuardSoRedeliveryPasses() throws Throwable {
+        ProceedingJoinPoint failing = joinPoint("onMessage", "msg-9");
+        when(failing.proceed()).thenThrow(new IllegalStateException("downstream down"));
+
+        assertThatThrownBy(() -> aspect.guard(failing, annotated(Strategy.DB_DEDUP, "sync", "#messageId", 0)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(dedup.rows).isEmpty();
+
+        ProceedingJoinPoint redelivery = joinPoint("onMessage", "msg-9");
+        assertThat(aspect.guard(redelivery, annotated(Strategy.DB_DEDUP, "sync", "#messageId", 0)))
+                .isEqualTo("result");
     }
 
     @Test

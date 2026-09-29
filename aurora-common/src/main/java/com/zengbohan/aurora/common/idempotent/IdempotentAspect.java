@@ -59,7 +59,20 @@ public class IdempotentAspect {
             case DB_DEDUP -> {
                 DedupStore store = require(dedupStores,
                         "DedupStore (needs spring-jdbc + datasource) for @Idempotent(DB_DEDUP)");
-                yield store.tryInsert(bizType, key) ? pjp.proceed() : null;
+                if (!store.tryInsert(bizType, key)) {
+                    yield null;
+                }
+                try {
+                    yield pjp.proceed();
+                } catch (Throwable failure) {
+                    // symmetric with the REDIS branch: a failed call must not
+                    // leave the guard behind, or redelivery gets skipped and
+                    // the message is silently lost. (Inside a caller-owned
+                    // transaction the rollback already removed the row; this
+                    // covers the bare-annotation case.)
+                    store.remove(bizType, key);
+                    throw failure;
+                }
             }
         };
     }
