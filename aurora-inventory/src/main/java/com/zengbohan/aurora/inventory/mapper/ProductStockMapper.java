@@ -15,4 +15,9 @@ public interface ProductStockMapper extends BaseMapper<ProductStock> {
      *  available = quantity + reserved, in one statement. */
     @Update("UPDATE product_stock SET available = #{quantity} + reserved WHERE sku_id = #{skuId}")
     int resetAvailable(@Param("skuId") long skuId, @Param("quantity") int quantity);
+
+    /** Releases a reservation; guarded so reserved can never go negative. */
+    @Update("UPDATE product_stock SET reserved = reserved - #{quantity} "
+            + "WHERE sku_id = #{skuId} AND reserved >= #{quantity}")
+    int decrementReserved(@Param("skuId") long skuId, @Param("quantity") int quantity);
 }

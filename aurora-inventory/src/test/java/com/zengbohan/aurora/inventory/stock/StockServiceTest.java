@@ -120,11 +120,14 @@ class StockServiceTest {
     }
 
     @Test
-    void rollbackExecutesLua() {
+    void rollbackExecutesLuaAndReleasesDbReservation() {
+        when(mapper.decrementReserved(1L, 3)).thenReturn(1);
+
         service.rollback(1L, 3);
 
         verify(redis).execute(Mockito.same(lua.rollback),
                 Mockito.eq(List.of(StockLuaScripts.key(1L))), Mockito.eq("3"));
+        verify(mapper).decrementReserved(1L, 3);
     }
 
     @Test

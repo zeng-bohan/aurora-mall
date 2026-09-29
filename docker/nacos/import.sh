@@ -77,10 +77,18 @@ aurora:
     physical-ttl-seconds: 86400
 YAML
 )
+ORDER_CFG=$(cat <<'YAML'
+aurora:
+  order:
+    close-delay-level: 16
+    close-timeout-seconds: 1800
+YAML
+)
 
 echo "publishing configs into namespace '$NS'..."
 publish aurora-common.yml "$COMMON"
 publish aurora-user.yml "$USER_CFG"
 publish aurora-product.yml "$PRODUCT_CFG"
+publish aurora-order.yml "$ORDER_CFG"
 
 echo "done. secrets stay in $SECRETS_FILE and nacos, never in git."
