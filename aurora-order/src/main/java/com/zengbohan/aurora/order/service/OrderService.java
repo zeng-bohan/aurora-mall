@@ -53,6 +53,7 @@ public class OrderService {
     private final int closeDelayLevel;
     private final long closeTimeoutSeconds;
     private final String txMode;
+    private final boolean seataEnabled;
 
     public OrderService(SegmentIdGenerator idGenerator,
                         ProductGuard productGuard,
@@ -64,7 +65,8 @@ public class OrderService {
                         AtOrderPlacer atOrderPlacer,
                         @Value("${aurora.order.close-delay-level:16}") int closeDelayLevel,
                         @Value("${aurora.order.close-timeout-seconds:1800}") long closeTimeoutSeconds,
-                        @Value("${aurora.tx.mode:mq}") String txMode) {
+                        @Value("${aurora.tx.mode:mq}") String txMode,
+                        @Value("${seata.enabled:false}") boolean seataEnabled) {
         this.idGenerator = idGenerator;
         this.productGuard = productGuard;
         this.inventoryClient = inventoryClient;
@@ -76,6 +78,15 @@ public class OrderService {
         this.closeDelayLevel = closeDelayLevel;
         this.closeTimeoutSeconds = closeTimeoutSeconds;
         this.txMode = txMode;
+        this.seataEnabled = seataEnabled;
+        if ("at".equals(txMode) && !seataEnabled) {
+            // mode=at without the seata starter enabled would run plain local
+            // transactions and leave a committed order behind on branch
+            // failure - refuse to boot instead of failing silently
+            throw new IllegalStateException(
+                    "aurora.tx.mode=at requires seata.enabled=true; otherwise the global transaction is inert"
+                            + " and a failed branch leaves the order committed without rollback");
+        }
     }
 
     /** Read-only accessor for the close scan job's deadline math. */
@@ -159,26 +170,41 @@ public class OrderService {
     }
 
     /**
-     * Delayed-message and scan entry point: CREATED -> CLOSED + stock rollback.
-     * Paid or already-closed orders are refused by the state machine, so
-     * duplicate deliveries and racing payments both resolve correctly.
+     * Delayed-message, scan and compensation entry point. Idempotent and
+     * re-entrant: CREATED -> CLOSED, then the stock release, then a
+     * stock_released marker. A release failure throws WITHOUT the marker, so
+     * redelivery (MQ retry) or the compensation scan re-enters here and
+     * finishes the release - a closed order can never keep the stock locked
+     * forever. Paid or fully-released orders resolve to no-ops.
      */
     public boolean closeIfPending(long orderId) {
-        if (orderMapper.transition(orderId, Order.STATUS_CREATED, Order.STATUS_CLOSED) == 0) {
-            log.info("close skipped for order {} (not pending)", orderId);
+        Order order = orderMapper.selectById(orderId);
+        if (order == null) {
+            log.warn("close skipped: order {} not found", orderId);
             return false;
         }
-        Order order = orderMapper.selectById(orderId);
-        if (order != null) {
+        boolean newlyClosed = orderMapper.transition(orderId, Order.STATUS_CREATED, Order.STATUS_CLOSED) > 0;
+        if (!newlyClosed) {
+            if (order.getStatus() != Order.STATUS_CLOSED || order.isStockReleased()) {
+                log.info("close skipped for order {} (not pending / already released)", orderId);
+                return false;
+            }
+            log.info("order {} already closed but stock unreleased; compensating", orderId);
+        }
+        try {
             if ("at".equals(order.getTxMode())) {
                 // AT orders never touched redis; release the db reservation only
                 inventoryClient.releaseDb(order.getSkuId(), new InventoryClient.StockRequest(order.getQuantity()));
             } else {
                 inventoryClient.rollback(order.getSkuId(), new InventoryClient.StockRequest(order.getQuantity()));
             }
+        } catch (RuntimeException e) {
+            log.error("stock release failed for order {}; redelivery or the compensation scan will retry", orderId, e);
+            throw e;
         }
+        orderMapper.markStockReleased(orderId);
         log.info("order {} closed, stock released", orderId);
-        return true;
+        return newlyClosed;
     }
 
     private void reserveStock(long skuId, int quantity) {

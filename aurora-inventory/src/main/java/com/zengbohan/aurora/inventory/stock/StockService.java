@@ -163,25 +163,35 @@ public class StockService {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
         long sellable = row.getAvailable() - row.getReserved();
-        redis.opsForValue().set(StockLuaScripts.key(skuId), String.valueOf(sellable));
+        // SETNX: only fills a missing key. A blind SET here would clobber a
+        // reservation that landed between the lua miss and this write.
+        redis.opsForValue().setIfAbsent(StockLuaScripts.key(skuId), String.valueOf(sellable));
         log.info("rebuilt stock key for sku {} from db (sellable {})", skuId, sellable);
     }
 
-    /** Delta log between redis and the db view; missing keys are rebuilt. */
+    /** Delta log between redis and the db view; missing keys are rebuilt.
+     *  A malformed value is warned and skipped - one bad key must not abort
+     *  the whole sweep (the same defensive parse the cart store uses). */
     public void reconcile() {
         for (ProductStock row : stockMapper.selectList(null)) {
             String key = StockLuaScripts.key(row.getSkuId());
             String redisValue = redis.opsForValue().get(key);
             long dbSellable = row.getAvailable() - row.getReserved();
             if (redisValue == null) {
-                redis.opsForValue().set(key, String.valueOf(dbSellable));
+                redis.opsForValue().setIfAbsent(key, String.valueOf(dbSellable));
                 log.warn("reconcile: rebuilt missing key {} from db", key);
-            } else {
-                long redisStock = Long.parseLong(redisValue);
-                if (redisStock != dbSellable) {
-                    log.warn("reconcile: sku {} redis={} db-sellable={} (in-flight reserved events explain this window)",
-                            row.getSkuId(), redisStock, dbSellable);
-                }
+                continue;
+            }
+            long redisStock;
+            try {
+                redisStock = Long.parseLong(redisValue);
+            } catch (NumberFormatException e) {
+                log.warn("reconcile: sku {} has malformed redis value '{}', skipping", row.getSkuId(), redisValue);
+                continue;
+            }
+            if (redisStock != dbSellable) {
+                log.warn("reconcile: sku {} redis={} db-sellable={} (in-flight reserved events explain this window)",
+                        row.getSkuId(), redisStock, dbSellable);
             }
         }
     }

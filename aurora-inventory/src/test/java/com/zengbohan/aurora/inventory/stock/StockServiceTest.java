@@ -54,6 +54,11 @@ class StockServiceTest {
         public boolean tryInsert(String bizType, String bizKey) {
             return rows.add(bizType + ":" + bizKey);
         }
+
+        @Override
+        public void remove(String bizType, String bizKey) {
+            rows.remove(bizType + ":" + bizKey);
+        }
     }
 
     private void luaReserveReturns(long value) {
@@ -97,7 +102,7 @@ class StockServiceTest {
 
         service.reserve(1L, 2);
 
-        verify(valueOps).set(StockLuaScripts.key(1L), "80");
+        verify(valueOps).setIfAbsent(StockLuaScripts.key(1L), "80");
     }
 
     @Test
@@ -179,7 +184,7 @@ class StockServiceTest {
         service.reconcile();
         service.reconcile();
 
-        verify(valueOps, Mockito.atLeastOnce()).set(StockLuaScripts.key(1L), "80");
+        verify(valueOps, Mockito.atLeastOnce()).setIfAbsent(StockLuaScripts.key(1L), "80");
         assertThat(seeded.getAvailable() - seeded.getReserved()).isEqualTo(80);
     }
 }

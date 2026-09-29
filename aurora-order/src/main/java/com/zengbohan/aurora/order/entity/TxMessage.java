@@ -26,6 +26,10 @@ public class TxMessage {
         return id;
     }
 
+    public void setId(Long id) {
+        this.id = id;
+    }
+
     public String getBizKey() {
         return bizKey;
     }

@@ -26,5 +26,9 @@ public class CloseTimeoutJob {
         for (Order overdue : orderMapper.findTimedOut(deadline)) {
             orderService.closeIfPending(overdue.getId());
         }
+        // compensation sweep: closed orders whose stock release failed earlier
+        for (Order stranded : orderMapper.findUnreleasedClosed()) {
+            orderService.closeIfPending(stranded.getId());
+        }
     }
 }

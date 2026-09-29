@@ -36,6 +36,8 @@
 - **at 只覆盖 order+inventory 两分支**，支付/关单仍复用 mq 基础设施（对照实验刻意的"小而精"）
 - **at 单不触碰 Redis**：其 DB 预占与 redis sellable 之间会有对账 WARN（reconcile job 只重建缺失键、不覆盖差异键）；对照实验期间建议一机一模式，不与 mq 单混跑同一 sku
 - **模式是全局开关**（经配置中心 `aurora.tx.mode` + 重启生效）：AT 的 RM 数据源代理在启动期装配
+- seata-server 也会把自己注册进 Nacos（仅保留作观测/未来集群发现用途），客户端实际走 file registry 直连 `grouplist`——Nacos 里那份 172.x 容器地址宿主不可达，不影响链路
+- **两个开关必须成对**：`aurora.tx.mode=at` 而 `seata.enabled=false` 会让 `@GlobalTransactional` 空转、分支失败留下已提交订单——服务已内置启动校验，此组合直接拒绝启动（拒绝静默不一致）
 - 生产实践取向：**订单主链路用 mq 最终一致**（吞吐与解耦优先），AT 适合短链路强一致场景（如账户扣减的正交操作）
 
 ## 复现实操
