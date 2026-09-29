@@ -13,3 +13,10 @@ spring:
   config:
     import:
       - nacos:aurora-common.yml
+      - nacos:aurora-order.yml
+
+rocketmq:
+  name-server: ${ROCKETMQ_ADDR:localhost:9876}
+  producer:
+    group: aurora-order-producer
+    send-message-timeout: 3000
