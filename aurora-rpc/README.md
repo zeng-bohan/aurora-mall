@@ -16,6 +16,15 @@
 - **处理器异常以 status 回传**：业务处理器抛异常时，服务端以 `status=ERROR` + 消息回传而**不**断连；调用方收到 `RpcRemoteException`（"对端业务失败"），与 `RpcUnavailableException`（"对端不可达"）语义区分；响应回显请求的 serializerCode（两端按请求协商实现）
 - 消息类型：pipeline 以 `ByteBuf` 为消息类型（`LengthFieldBasedFrameDecoder` 之后），出站写入用 `Unpooled.wrappedBuffer` 包装；拆包配置统一走 `ProtocolCodec.newFrameDecoder()`（body 上限可配）
 
+### 注册发现与负载均衡
+
+- **`RegistryService` SPI**：register / unregister / subscribe / unsubscribe 四个方法。订阅语义 = 立即回调当前全量快照，此后每次变更推全量——消费端无需 discover+subscribe 两步，也无增量合并逻辑
+- **`InMemoryRegistry`**：测试与 CI 用，零外部依赖；COW 列表保证快照构建免锁，重复注册幂等（record 值语义去重）
+- **`NacosRegistry`**：nacos-client 直连（SCA BOM 管版本）；**只推送 enabled + healthy 的实例**（注册中心侧挡掉不健康节点）；每服务一条 nacos 适配订阅、后面挂任意多个消费 listener，最后一个取消才真正注销
+- **`ServiceDiscovery`**：消费端缓存——快照是不可变列表、监听线程整体替换（写时复制），读路径无锁，并发读写无数据竞争（并发压测锁定）；`pick(service, lb)` 空快照抛 `RpcUnavailableException`
+- **`LoadBalancer` SPI**：随机（ThreadLocalRandom 免竞争）+ 轮询（原子计数取模，严格轮转）；新增策略只需实现接口
+- **为什么不复用 Spring Cloud Discovery 抽象**：那个抽象绑定 Spring 生态与 LoadBalancer Client，无法承载本库「纯 Java 核心 + 可选胶水」的分层；四方法 SPI + 两个实现即足以证明够用。生产上 Nacos 实例元数据/权重/集群路由等高级特性是本实现的已知边界
+
 **踩坑记录**：`connect().sync()` 不能在 client 的 event-loop 线程上调用——那个线程正是完成连接的线程，会自锁；改用异步 connect + listener 设置 channel。另有一个隐蔽 bug：`decodeHeader` 只解头、body 原为占位（供拆包器先看长度），传输层若误用它拿到的 body 与真实数据不符——为此专门提供 `decode()` 切出真实 body，并有单测锁住两者区别（仅解头的帧不按声明长度分配内存，坏帧头声明 10MB 也不会被放大成实际分配）。
 
 ### 自定义协议：定长 18 字节头 + body
@@ -41,12 +50,12 @@ offset 18  body
 
 取舍记录在设计要点：为什么默认 JSON 而不是 Hessian/Kryo/Protobuf——**JDK 原生序列化禁用**（gadget 反序列化漏洞），JSON 胜在可读与跨语言，代价是体积与 CPU；Hessian/Kryo 是二进制高性能但引第三方信任与版本坑，Protobuf 强 schema 但需要先定义 .proto 且 Java 侧可读性差。
 
-## 测试覆盖（25 例，`mvn -pl aurora-rpc test`，CI 可跑、零外部依赖）
+## 测试覆盖（42 例，`mvn -pl aurora-rpc test`，除 Nacos 集成外 CI 可跑、零外部依赖）
 
 | 场景 | 说明 |
 | --- | --- |
-| 头往返 | 编码→解码头字段全对，长度 = 18 + body |
-| decode 切真实 body | decodeHeader 只解头（body 空、声明长度如实报告），decode 切出真实 body（单测锁定两者区别） |
+| 头往返 | 编码→解出头元数据全对，长度 = 18 + body |
+| decode 切真实 body | decodeHeader 只产头元数据，decode 切出真实 body（单测锁定两者区别） |
 | decode 截断 body | body 未收全返回 null |
 | 坏魔数/超长 body | 破坏 magic、bodyLength 正溢出（>上限）与负数三路都拒绝 |
 | 配置防御 | type/body 为 null、未知 serializer code fail-fast |
@@ -65,6 +74,17 @@ offset 18  body
 | 传输：心跳失联检测 | 连到"只收不发"的死端，读空闲后主动断开 |
 | 传输：过载拒绝 | 业务池 1 线程 + 队列 1：第 3 个起 OVERLOADED 拒绝、不断连，释放后照常服务 |
 | 传输：stop 失败在途 | stop() 立即失败挂起调用（远早于 10s 超时） |
+| 注册：订阅即送达 | 先推当前快照，上线/下线各推一次全量 |
+| 注册：重复注册幂等 | 同实例二次注册不推送 |
+| 注册：服务隔离 | 互不串台 |
+| 注册：注销停推 | unsubscribe 后不再收到推送 |
+| Nacos 适配：健康过滤 | enabled+healthy 之外的实例不进发现结果（mock NamingService） |
+| Nacos 适配：订阅去重 | 同 listener 重复订阅只挂一次 nacos |
+| Nacos 适配：最后注销 | 仅最后一个 listener 取消才调 nacos unsubscribe |
+| 负载均衡：轮询严格轮转 / 缩列表适配 / 随机全覆盖 | 分布单测 |
+| 发现缓存：并发无撕裂 | 8 读线程 × 2000 次 pick 对抗写线程反复上下线，只见已知实例 |
+| 发现缓存：空快照 | pick 抛 RpcUnavailableException、snapshot 显式为空 |
+| Nacos 集成（auto-skip） | 真 Nacos 注册→订阅推送→注销推送（无 Nacos 自动跳过） |
 
 ## 设计要点回顾
 
