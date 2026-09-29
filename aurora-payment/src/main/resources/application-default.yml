@@ -13,3 +13,9 @@ spring:
   config:
     import:
       - nacos:aurora-common.yml
+
+rocketmq:
+  name-server: ${ROCKETMQ_ADDR:localhost:9876}
+  producer:
+    group: aurora-payment-producer
+    send-message-timeout: 3000

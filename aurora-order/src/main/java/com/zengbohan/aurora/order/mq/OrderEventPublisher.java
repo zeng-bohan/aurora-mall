@@ -21,6 +21,7 @@ public class OrderEventPublisher {
     public static final String TOPIC_TRADE = "aurora-trade";
     public static final String TAG_STOCK_RESERVED = "tag-stock-reserved";
     public static final String TAG_ORDER_CLOSE_TIMEOUT = "tag-order-close-timeout";
+    public static final String TAG_ORDER_PAID = "tag-order-paid";
 
     private static final Logger log = LoggerFactory.getLogger(OrderEventPublisher.class);
 

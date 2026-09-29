@@ -8,6 +8,20 @@ spring:
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
+  datasource:
+    url: jdbc:mysql://${MYSQL_ADDR:localhost:13306}/aurora_payment?characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${MYSQL_PASSWORD:aurora123}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+aurora:
+  config:
+    required-keys: aurora.internal.secret
 
 management:
   endpoints:
@@ -19,8 +33,3 @@ logging:
   pattern:
     # traceId rides every log line via the MDC key set by TraceIdFilter
     level: "%5p [${spring.application.name:},%X{traceId:-}]"
-
-# secret from the nacos config center (see application-default.yml)
-aurora:
-  config:
-    required-keys: aurora.internal.secret

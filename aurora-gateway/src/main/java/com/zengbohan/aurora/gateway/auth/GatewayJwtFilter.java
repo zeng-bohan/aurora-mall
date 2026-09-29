@@ -29,7 +29,10 @@ import java.util.List;
 public class GatewayJwtFilter implements GlobalFilter, Ordered {
 
     private static final List<String> PUBLIC_POST = List.of(
-            "/api/user/register", "/api/user/login", "/api/user/refresh");
+            "/api/user/register", "/api/user/login", "/api/user/refresh",
+            // "third-party" payment callback: authenticated by channel signature in
+            // production, not by a user token (mock channel: reachable for replay)
+            "/api/payment/payments/mock-callback");
     private static final String BEARER = "Bearer ";
     private static final String USER_ID_HEADER = "X-User-Id";
     private static final String USER_ROLE_HEADER = "X-User-Role";
