@@ -123,6 +123,28 @@ public final class ProtocolCodec {
                 buffer.get(OFF_SERIALIZER), buffer.get(OFF_STATUS), bodyLength);
     }
 
+    /**
+     * 解码完整帧（头 + body）：把真实 body 从缓冲区切出来。
+     * <p>
+     * 与 {@link #decodeHeader} 的区别：那个只解头、body 是占位零填充（供拆包器先看长度），
+     * 这个把 body 一并解出，供拿到完整帧字节后直接使用。
+     *
+     * @return 完整帧；魔数/版本/type/body 长度不合法时返回 null
+     */
+    public static RpcFrame decode(byte[] fullFrame) {
+        RpcFrame header = decodeHeader(fullFrame);
+        if (header == null) {
+            return null;
+        }
+        int bodyLength = header.bodyLength();
+        if (fullFrame.length < HEADER_LENGTH + bodyLength) {
+            return null; // body 未收全
+        }
+        byte[] body = new byte[bodyLength];
+        System.arraycopy(fullFrame, HEADER_LENGTH, body, 0, bodyLength);
+        return RpcFrame.withBody(header, body);
+    }
+
     /** 仅测试用：写魔数到指定偏移。 */
     static void writeMagic(byte[] target) {
         ByteBuffer.wrap(target).putShort(OFF_MAGIC, MAGIC);

@@ -26,6 +26,28 @@ class ProtocolCodecTest {
     }
 
     @Test
+    void decodeExtractsTheRealBodyNotAPlaceholder() throws Exception {
+        // decodeHeader 只解头（body 是零填充占位），decode 才切出真实 body——
+        // 传输层必须用 decode，否则握手/业务数据全是 0 字节
+        byte[] body = new byte[]{9, 8, 7};
+        byte[] full = ProtocolCodec.encode(RpcFrame.request(5L, MessageType.REQUEST, (byte) 1, body));
+
+        RpcFrame headerOnly = ProtocolCodec.decodeHeader(full);
+        assertThat(headerOnly.body()).containsExactly(0, 0, 0); // 占位
+
+        RpcFrame decoded = ProtocolCodec.decode(full);
+        assertThat(decoded.body()).containsExactly(9, 8, 7);
+        assertThat(decoded.requestId()).isEqualTo(5L);
+    }
+
+    @Test
+    void decodeRejectsTruncatedBody() {
+        byte[] full = ProtocolCodec.encode(RpcFrame.request(1L, MessageType.REQUEST, (byte) 1, new byte[]{1, 2, 3}));
+        byte[] truncated = java.util.Arrays.copyOf(full, full.length - 1);
+        assertThat(ProtocolCodec.decode(truncated)).isNull();
+    }
+
+    @Test
     void rejectsInvalidConfiguration() {
         assertThatIllegalArgumentException()
                 .isThrownBy(() -> RpcFrame.response(1L, (byte) 1, (byte) 0, null));
