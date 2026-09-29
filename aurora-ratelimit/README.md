@@ -4,6 +4,16 @@
 
 ## 设计
 
+### `CircuitBreaker` — CLOSED / OPEN / HALF_OPEN 状态机
+
+- 以**装饰器**形式包裹任意 `Callable`：熔断判定 → 执行 → 统计，业务异常原样穿透（不被熔断吞掉）
+- **CLOSED**：环形桶滑动窗口统计失败率与慢调用率，任一超阈值转 OPEN
+- **OPEN**：不触达被包裹调用，直接抛 `CircuitOpenException` 快速失败；持续时长到达转 HALF_OPEN
+- **HALF_OPEN**：放行有限次试探（并发下严格有界），全部成功回 CLOSED，任一失败回 OPEN
+- **触发源二选一/并用**：失败率阈值、慢调用率阈值（单次耗时 > `slowCallDurationMillis` 算慢调用），两者独立判定，任一达到即熔断
+- **最小请求数** `minRequestThreshold`：窗口内请求数低于此值不判定，避免小样本抖动误熔断
+- 状态变更经 `Listener` 事件钩子外抛（为 M4 指标留缝，不引依赖）
+
 ### `SlidingWindowRateLimiter` — 环形桶分段计数
 
 - 窗口切成 `bucketCount`（默认 10）个等长时间槽，当前时刻落在哪个槽就计数在哪个槽
@@ -26,9 +36,17 @@ RateLimiter bucket = new TokenBucketRateLimiter(50, 100); // 50/s，突发 100
 if (!window.tryAcquire()) {
     throw new TooManyRequestsException(); // 立即返回，不阻塞等待
 }
+
+CircuitBreaker breaker = new CircuitBreaker(CircuitBreakerConfig.builder()
+        .failureRateThreshold(50)          // 失败率 50% 熔断
+        .slowCallDuration(Duration.ofMillis(500)) // >500ms 算慢调用
+        .minRequestThreshold(10)           // 少于 10 次不判定
+        .openDuration(Duration.ofSeconds(10))
+        .build());
+T result = breaker.execute(() -> callRemote()); // 熔断打开时快速失败
 ```
 
-## 测试覆盖（15 例，`mvn -pl aurora-ratelimit test`）
+## 测试覆盖（23 例，`mvn -pl aurora-ratelimit test`）
 
 | 场景 | 说明 |
 | --- | --- |
@@ -46,6 +64,14 @@ if (!window.tryAcquire()) {
 | 并发不超发 | 20 线程 × 10 次抢 50 令牌，恰好 50 成功 |
 | 与 Guava 同场基准 | 见下 |
 | 固定窗口翻倍 | 一秒内最多放行配额数，不因窗口对齐翻倍 |
+| 熔断：低于阈值 | 4 次请求 1 失败（25% < 50%）保持 CLOSED |
+| 熔断：达阈值打开 | 4 次失败（75% ≥ 50%）转 OPEN |
+| 熔断：快速失败 | OPEN 期间抛 CircuitOpenException，被包裹调用零执行 |
+| 熔断：半开恢复 | 时长到达转 HALF_OPEN，试探成功回 CLOSED |
+| 熔断：半开失败 | 试探失败回 OPEN |
+| 熔断：慢调用触发 | 3 慢 + 1 快 = 75% 慢调用率独立触发 OPEN |
+| 熔断：并发试探有界 | 10 线程试探仅 2 个进入，其余快速失败（阻塞验证真实上界） |
+| 熔断：事件钩子 | 状态迁移事件按预期发布 OPEN/CLOSED 各一次 |
 
 ## 实测基准
 
@@ -63,3 +89,6 @@ if (!window.tryAcquire()) {
 2. **环形桶 vs 定时清理**：惰性补充（令牌桶）与惰性清零（滑动窗口）都省掉了后台线程——限流器是被高频调用的热路径，后台线程的调度抖动会直接反映到限流精度上。
 3. **加锁 vs 无锁**：滑动窗口加锁换取严格不超发，与 Guava 同级取舍；如果追求更高并发可以改 CAS 累加，但会牺牲严格性。
 4. **惰性补充的时间基准**：用纳秒时钟而非毫秒，避免毫秒精度下高频补充的舍入误差累积（单测覆盖小数精度）。
+5. **熔断为什么要有 HALF_OPEN 而不是直接回 CLOSED**：直接回 CLOSED 会在依赖刚好恢复的瞬间把全部流量一次性放过去再打崩一次；放行有限次试探并要求全部成功，是用少量流量换恢复确定性。
+6. **并发试探上界为什么不能是 1**：单次试探成功不代表依赖真的恢复（可能只是那一个请求命中了缓存）；配置为 N 次全部成功才回 CLOSED，N 太小易误恢复、太大等于没限流。
+7. **失败率与慢调用率两个触发源**：只看失败率会漏掉"没报错但慢到拖垮线程池"的雪崩路径——这类调用在结果上仍是成功的，必须单独用慢调用率兜住。
