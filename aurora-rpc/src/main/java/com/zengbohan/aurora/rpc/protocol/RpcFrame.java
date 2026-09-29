@@ -54,6 +54,11 @@ public final class RpcFrame {
         return new RpcFrame(requestId, type, serializerCode, status, placeholder);
     }
 
+    /** 用解出的真实 body 重建帧（decode 的后半段）。 */
+    static RpcFrame withBody(RpcFrame header, byte[] body) {
+        return new RpcFrame(header.requestId, header.type, header.serializerCode, header.status, body);
+    }
+
     public long requestId() {
         return requestId;
     }

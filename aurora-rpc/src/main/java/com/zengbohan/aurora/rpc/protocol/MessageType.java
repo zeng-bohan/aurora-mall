@@ -6,7 +6,9 @@ package com.zengbohan.aurora.rpc.protocol;
 public enum MessageType {
 
     REQUEST((byte) 1),
-    RESPONSE((byte) 2);
+    RESPONSE((byte) 2),
+    /** 控制帧：握手（内部密钥）、心跳 ping/pong。 */
+    CONTROL((byte) 3);
 
     private final byte code;
 
