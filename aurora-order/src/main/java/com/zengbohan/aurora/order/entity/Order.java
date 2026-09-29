@@ -22,6 +22,7 @@ public class Order {
     private Integer quantity;
     private BigDecimal totalAmount;
     private Integer status;
+    private String txMode;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -67,6 +68,14 @@ public class Order {
 
     public Integer getStatus() {
         return status;
+    }
+
+    public String getTxMode() {
+        return txMode;
+    }
+
+    public void setTxMode(String txMode) {
+        this.txMode = txMode;
     }
 
     public void setStatus(Integer status) {

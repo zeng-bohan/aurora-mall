@@ -32,6 +32,13 @@ public class GlobalExceptionHandler {
         return Result.fail(ErrorCode.PARAM_ERROR.getCode(), detail);
     }
 
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    @ResponseStatus(HttpStatus.METHOD_NOT_ALLOWED)
+    public Result<Void> handleMethodNotSupported(
+            org.springframework.web.HttpRequestMethodNotSupportedException e) {
+        return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "请求方法不支持: " + e.getMethod());
+    }
+
     @ExceptionHandler(NoResourceFoundException.class)
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public Result<Void> handleNoResource(NoResourceFoundException e) {

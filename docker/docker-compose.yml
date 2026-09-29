@@ -109,6 +109,22 @@ services:
       retries: 10
       start_period: 40s
 
+  seata-server:
+    image: apache/seata-server:2.5.0
+    container_name: aurora-seata-server
+    environment:
+      TZ: Asia/Shanghai
+      # host-reachable address: services on the host resolve this via nacos
+      SEATA_IP: "127.0.0.1"
+      # inject registry config without replacing the image's default yml
+      # (a full-file mount broke web-application-type/logback defaults)
+      SPRING_APPLICATION_JSON: '{"seata":{"registry":{"type":"nacos","nacos":{"application":"seata-server","server-addr":"nacos:8848","group":"DEFAULT_GROUP","cluster":"default"}}}}'
+    ports:
+      - "8091:8091"
+    depends_on:
+      nacos:
+        condition: service_healthy
+
   # dev convenience beyond the spec's service list: namesrv/broker visualization
   # (image ships no curl/wget/bash, so smoke.sh probes it host-side instead)
   rocketmq-dashboard:

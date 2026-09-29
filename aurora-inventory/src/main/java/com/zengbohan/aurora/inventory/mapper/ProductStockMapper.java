@@ -21,6 +21,11 @@ public interface ProductStockMapper extends BaseMapper<ProductStock> {
             + "WHERE sku_id = #{skuId} AND reserved >= #{quantity}")
     int decrementReserved(@Param("skuId") long skuId, @Param("quantity") int quantity);
 
+    /** AT 对照：DB 直接预占（守卫式，可被 seata undo_log 回滚撤销）。 */
+    @Update("UPDATE product_stock SET reserved = reserved + #{quantity} "
+            + "WHERE sku_id = #{skuId} AND available - reserved >= #{quantity}")
+    int reserveDbGuarded(@Param("skuId") long skuId, @Param("quantity") int quantity);
+
     /** Payment confirmed: the reservation converts to a real deduction. */
     @Update("UPDATE product_stock SET available = available - #{quantity}, reserved = reserved - #{quantity} "
             + "WHERE sku_id = #{skuId} AND reserved >= #{quantity}")

@@ -18,4 +18,12 @@ public interface InventoryClient {
 
     @PostMapping("/stocks/{skuId}/rollback")
     Result<Void> rollback(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
+
+    /** AT comparison: db-only reservation inside the global transaction. */
+    @PostMapping("/stocks/{skuId}/reserve-db")
+    Result<Void> reserveDb(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
+
+    /** AT order close: release the db reservation only (no redis was touched). */
+    @PostMapping("/stocks/{skuId}/release-db")
+    Result<Void> releaseDb(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
 }
