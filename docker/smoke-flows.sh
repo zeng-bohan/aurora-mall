@@ -9,11 +9,12 @@ PASS=0
 FAIL=0
 STEP=0
 
-req() { # method path [token] [json-body] -> body in RESP, http code in STATUS
-  local method="$1" path="$2" token="${3:-}" body="${4:-}"
+req() { # method path [token] [json-body] [extra-header]
+  local method="$1" path="$2" token="${3:-}" body="${4:-}" extra="${5:-}"
   local args=(-sS -X "$method" -o- -w $'\n%{http_code}' -H 'Content-Type: application/json')
   [[ -n "$token" ]] && args+=(-H "Authorization: Bearer $token")
   [[ -n "$body" ]] && args+=(--data "$body")
+  [[ -n "$extra" ]] && args+=(-H "$extra")
   local out
   out=$(curl "${args[@]}" "$BASE$path" 2>/dev/null) || out=$'\n000'
   STATUS="${out##*$'\n'}"
@@ -142,6 +143,89 @@ assert_body '"price":24.90' "still new price after delayed double delete"
 req GET "/api/product/admin/products" "$NEW_TOKEN"
 assert_status 200 "admin list requires token"
 assert_body "\"title\":\"$TITLE\"" "admin list includes the product"
+
+# ---- M2: trade chains ----------------------------------------------------
+
+seed_stock() { # skuId quantity: reset the db row and drop the redis key so the
+               # reserve path rebuilds from the db view
+  docker exec aurora-mysql mysql -uroot -p"${MYSQL_PASSWORD:-aurora123}" -e \
+    "INSERT INTO aurora_inventory.product_stock (sku_id, available, reserved) VALUES ($1, $2, 0) ON DUPLICATE KEY UPDATE available=$2, reserved=0;" 2>/dev/null
+  docker exec aurora-redis redis-cli DEL "aurora:stock:$1" > /dev/null
+}
+
+assert_eq() { # expected actual label
+  [[ "$1" == "$2" ]] && ok "$3" || bad "$3 (want '$1', got '$2')"
+}
+
+db_scalar() { # sql -> first cell
+  docker exec aurora-mysql mysql -uroot -p"${MYSQL_PASSWORD:-aurora123}" -N -e "$1" 2>/dev/null | tr -d '\r'
+}
+
+redis_get() {
+  docker exec aurora-redis redis-cli GET "aurora:stock:$1" | tr -d '\r'
+}
+
+nacos_publish_order() { # delayLevel timeoutSeconds
+  local content="aurora:
+  order:
+    close-delay-level: $1
+    close-timeout-seconds: $2
+  tx:
+    mode: mq"
+  curl -fs -X POST "http://${NACOS_ADDR:-localhost:8848}/nacos/v1/cs/configs" \
+    --data-urlencode "dataId=aurora-order.yml" \
+    --data-urlencode "group=DEFAULT_GROUP" \
+    --data-urlencode "tenant=dev" \
+    --data-urlencode "type=yml" \
+    --data-urlencode "content=$content" > /dev/null
+}
+
+ACTOR_TOKEN="${NEW_TOKEN:-$TOKEN}"
+
+step "chain A: seed, place, duplicate 40900, pay, converge, replay no-op"
+seed_stock "$SKU" 100
+CA_KEY="chainA-$STAMP"
+req POST /api/order/orders "$ACTOR_TOKEN" "{\"skuId\":$SKU,\"quantity\":3}" "Idempotency-Key: $CA_KEY"
+assert_status 200 "place http 200"
+assert_body '"code":0' "place envelope ok"
+OID_A=$(grep -oE '"data":[0-9]+' <<<"$RESP" | head -1 | cut -d: -f2)
+[[ -n "$OID_A" ]] && ok "order id=$OID_A" || bad "order id missing"
+req POST /api/order/orders "$ACTOR_TOKEN" "{\"skuId\":$SKU,\"quantity\":3}" "Idempotency-Key: $CA_KEY"
+assert_body '"code":40900' "duplicate key -> 40900"
+req POST /api/payment/payments "$ACTOR_TOKEN" "{\"orderId\":$OID_A}"
+assert_body '"code":0' "payment initiated"
+req POST /api/payment/payments "$ACTOR_TOKEN" "{\"orderId\":$OID_A}"
+assert_body '"code":0' "repeat initiate returns the same payment"
+req POST /api/payment/payments/mock-callback "" "{\"orderId\":$OID_A}"
+assert_body '"status":1' "callback flips payment to PAID"
+sleep 3
+req GET "/api/order/orders/$OID_A" "$ACTOR_TOKEN"
+assert_body '"status":1' "order advanced to PAID"
+assert_eq "97" "$(db_scalar "SELECT available FROM aurora_inventory.product_stock WHERE sku_id=$SKU")" "db available is 97"
+assert_eq "0" "$(db_scalar "SELECT reserved FROM aurora_inventory.product_stock WHERE sku_id=$SKU")" "db reserved is 0"
+req POST /api/payment/payments/mock-callback "" "{\"orderId\":$OID_A}"
+sleep 1
+assert_eq "97" "$(db_scalar "SELECT available FROM aurora_inventory.product_stock WHERE sku_id=$SKU")" "replayed callback: stock unchanged"
+req GET "/api/order/orders/$OID_A" "$ACTOR_TOKEN"
+assert_body '"status":1' "order still PAID after replay"
+
+step "chain B: shrink close delay via nacos, overdue order closes and restores stock"
+nacos_publish_order 3 10 && ok "nacos: close-delay-level=3, timeout=10s"
+sleep 2
+seed_stock "$SKU" 100
+CB_KEY="chainB-$STAMP"
+req POST /api/order/orders "$ACTOR_TOKEN" "{\"skuId\":$SKU,\"quantity\":2}" "Idempotency-Key: $CB_KEY"
+assert_body '"code":0' "place ok"
+OID_B=$(grep -oE '"data":[0-9]+' <<<"$RESP" | head -1 | cut -d: -f2)
+assert_eq "98" "$(redis_get "$SKU")" "redis reserved 2 (100 -> 98)"
+req GET "/api/order/orders/$OID_B" "$ACTOR_TOKEN"
+assert_body '"status":0' "order is CREATED"
+echo "  ... waiting 16s for the delayed close ..."
+sleep 16
+req GET "/api/order/orders/$OID_B" "$ACTOR_TOKEN"
+assert_body '"status":2' "order CLOSED by delayed message"
+assert_eq "100" "$(redis_get "$SKU")" "redis restored to 100"
+nacos_publish_order 16 1800 && ok "nacos: close config restored (level 16)"
 
 echo
 if [[ $FAIL -eq 0 ]]; then

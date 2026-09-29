@@ -25,16 +25,21 @@ flowchart LR
 
     U & P & CA & O & I & PA --> N
 
-    O -. 事务消息/延迟消息 .-> MQ[(RocketMQ 5.3)]
-    U & P & O & I & PA -.-> SQL[(MySQL 8<br/>库表按服务隔离)]
-    U & P & CA -.-> R[(Redis 7<br/>黑名单/缓存/购物车)]
+    O -. 事务消息/延迟关单 .-> MQ[(RocketMQ 5.3)]
+    MQ -. stock-reserved/order-paid/close .-> I & PA & O
+    O -. OpenFeign 预扣/回滚/release-db .-> I
+    PA -. OpenFeign 订单金额 .-> O
+    O -. 对照实验 @GlobalTransactional .-> SE[(Seata AT<br/>undo_log)]
+
+    U & P & O & I & PA -.-> SQL[(MySQL 8<br/>库表按服务隔离 + 本地消息表)]
+    U & P & CA & O & I -.-> R[(Redis 7<br/>黑名单/缓存/购物车/库存预扣)]
 
     subgraph 可观测性[M4 起接入]
       SW[SkyWalking OAP+UI] & PR[Prometheus] & LK[Loki] --> GR[Grafana]
     end
 ```
 
-链路约定：业务请求一律经网关（白名单放行≠直连放行——服务侧校验 `X-Internal-Secret`）；服务间调用走 Nacos 发现 + Feign。设计决策（为什么不用 Dubbo / Spring Security、事务与缓存方案、手写组件边界）全部记录在 [docs/adr/](docs/adr/)，共 8 篇。
+链路约定：业务请求一律经网关（白名单放行≠直连放行——服务侧校验 `X-Internal-Secret`）；服务间调用走 Nacos 发现 + Feign。交易主链路采用 **RocketMQ 事务消息 + 延迟关单** 的最终一致性（ADR-0003），并提供 `aurora.tx.mode=at` 的 **Seata AT 对照实验**（[对照报告](docs/m2-tx-comparison.md)）。设计决策全部记录在 [docs/adr/](docs/adr/)，共 8 篇。
 
 ## 10 分钟跑起来
 
@@ -65,10 +70,10 @@ done
 
 ```bash
 bash docker/smoke-services.sh   # 网关 + 6 服务健康端点全 200
-bash docker/smoke-flows.sh      # 金路径 36 断言：注册→登录→浏览→加购→改量→刷新→登出→401→越权 403
+bash docker/smoke-flows.sh      # 61 断言：用户/商品/购物车金路径 + 两条交易链
 ```
 
-两个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 每次运行自建用户与商品，可重复执行。
+两个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 每次运行自建用户与商品，可重复执行；两条交易链：**链 A**（下单→重复 40900→支付→订单 PAID→库存扣减收敛→回调重放无副作用）与 **链 B**（经配置中心把关单延迟临时调至 10s→下单→等待自动关单→库存恢复→配置还原）。
 
 ### 业务端点速查（经网关）
 
@@ -79,6 +84,8 @@ bash docker/smoke-flows.sh      # 金路径 36 断言：注册→登录→浏览
 | 商品（公开读） | `GET /api/product/products` · `GET .../products/{id}` · `GET .../products/batch` | 游客可读，详情走缓存三防 |
 | 商品（admin） | `POST/PUT/DELETE /api/product/admin/products...` | 需 `role=ADMIN`，写路径延迟双删 |
 | 购物车（需 token） | `GET/POST/PUT/DELETE /api/cart/carts...` | Redis Hash，行项目含商品快照 |
+| 订单（需 token） | `POST /api/order/orders`（带 `Idempotency-Key`）· `GET /api/order/orders/{id}` | 事务消息主链路，30min 未支付自动关单 |
+| 支付（需 token） | `POST /api/payment/payments` · `GET /api/payment/payments/{orderId}` | mock 通道；`POST .../mock-callback` 为第三方回调入口（免用户 token） |
 
 ### 端点速查
 
@@ -101,7 +108,7 @@ bash docker/smoke-flows.sh      # 金路径 36 断言：注册→登录→浏览
 | --- | --- | --- |
 | M0 | 工程骨架：版本矩阵 + 中间件全家桶 + 7 服务注册 + 网关路由 + CI | ✅ 完成 |
 | M1 | 用户 / 商品 / 购物车（JWT 鉴权、Cache Aside 三防、配置中心） | ✅ 完成 |
-| M2 | 订单 / 库存 / 支付（RocketMQ 事务消息、Seata 对照、统一幂等组件） | 未开始 |
+| M2 | 订单 / 库存 / 支付（RocketMQ 事务消息、Seata 对照、统一幂等组件） | ✅ 完成 |
 | M3 | 手写组件三部曲：ID 生成器 / 限流熔断 / RPC（与 OpenFeign 切换） | 未开始 |
 | M4 | 可观测性 + 网关强化 + JMeter 压测报告 | 未开始 |
 | M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 未开始 |
@@ -114,6 +121,7 @@ bash docker/smoke-flows.sh      # 金路径 36 断言：注册→登录→浏览
 
 - [CONTEXT.md](CONTEXT.md) — 项目定位、领域词汇表、工程约定
 - [docs/adr/](docs/adr/) — 架构决策记录（0001 技术栈 → 0008 手写组件）
+- [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) — MQ 最终一致 vs Seata AT 对照实验报告
 - [docs/agents/](docs/agents/) — AI 协作配置（issue tracker / 标签 / 领域文档）
 - `docker/smoke.sh` — 中间件接缝 · `docker/smoke-services.sh` — 服务健康接缝 · `docker/smoke-flows.sh` — 业务金路径接缝
 
