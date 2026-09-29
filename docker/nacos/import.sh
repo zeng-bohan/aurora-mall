@@ -82,6 +82,8 @@ aurora:
   order:
     close-delay-level: 16
     close-timeout-seconds: 1800
+  tx:
+    mode: mq
 YAML
 )
 

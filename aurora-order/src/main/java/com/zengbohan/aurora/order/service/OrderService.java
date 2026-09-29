@@ -41,35 +41,41 @@ public class OrderService {
     private static final Logger log = LoggerFactory.getLogger(OrderService.class);
 
     private final SegmentIdGenerator idGenerator;
-    private final ProductClient productClient;
+    private final ProductGuard productGuard;
     private final InventoryClient inventoryClient;
     private final OrderMapper orderMapper;
     private final TxMessageMapper txMessageMapper;
     private final TransactionTemplate transactionTemplate;
     private final OrderEventPublisher publisher;
+    private final AtOrderPlacer atOrderPlacer;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final int closeDelayLevel;
     private final long closeTimeoutSeconds;
+    private final String txMode;
 
     public OrderService(SegmentIdGenerator idGenerator,
-                        ProductClient productClient,
+                        ProductGuard productGuard,
                         InventoryClient inventoryClient,
                         OrderMapper orderMapper,
                         TxMessageMapper txMessageMapper,
                         TransactionTemplate transactionTemplate,
                         OrderEventPublisher publisher,
+                        AtOrderPlacer atOrderPlacer,
                         @Value("${aurora.order.close-delay-level:16}") int closeDelayLevel,
-                        @Value("${aurora.order.close-timeout-seconds:1800}") long closeTimeoutSeconds) {
+                        @Value("${aurora.order.close-timeout-seconds:1800}") long closeTimeoutSeconds,
+                        @Value("${aurora.tx.mode:mq}") String txMode) {
         this.idGenerator = idGenerator;
-        this.productClient = productClient;
+        this.productGuard = productGuard;
         this.inventoryClient = inventoryClient;
         this.orderMapper = orderMapper;
         this.txMessageMapper = txMessageMapper;
         this.transactionTemplate = transactionTemplate;
         this.publisher = publisher;
+        this.atOrderPlacer = atOrderPlacer;
         this.closeDelayLevel = closeDelayLevel;
         this.closeTimeoutSeconds = closeTimeoutSeconds;
+        this.txMode = txMode;
     }
 
     /** Read-only accessor for the close scan job's deadline math. */
@@ -82,7 +88,12 @@ public class OrderService {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "缺少 Idempotency-Key 请求头");
         }
-        ProductClient.ProductInfo product = loadProduct(request.skuId());
+        if ("at".equals(txMode)) {
+            // Seata AT comparison scenario; @GlobalTransactional lives on the
+            // separate bean call so the proxy actually wraps it
+            return atOrderPlacer.placeAt(userId, request);
+        }
+        ProductClient.ProductInfo product = productGuard.load(request.skuId());
         BigDecimal total = product.price().multiply(BigDecimal.valueOf(request.quantity()));
 
         // 第一步：Redis 预扣。失败即返回，无需补偿。
@@ -98,6 +109,7 @@ public class OrderService {
                 order.setQuantity(request.quantity());
                 order.setTotalAmount(total);
                 order.setStatus(Order.STATUS_CREATED);
+                order.setTxMode("mq");
                 orderMapper.insert(order);
 
                 TxMessage message = new TxMessage();
@@ -158,32 +170,15 @@ public class OrderService {
         }
         Order order = orderMapper.selectById(orderId);
         if (order != null) {
-            inventoryClient.rollback(order.getSkuId(), new InventoryClient.StockRequest(order.getQuantity()));
+            if ("at".equals(order.getTxMode())) {
+                // AT orders never touched redis; release the db reservation only
+                inventoryClient.releaseDb(order.getSkuId(), new InventoryClient.StockRequest(order.getQuantity()));
+            } else {
+                inventoryClient.rollback(order.getSkuId(), new InventoryClient.StockRequest(order.getQuantity()));
+            }
         }
-        log.info("order {} closed, stock rolled back", orderId);
+        log.info("order {} closed, stock released", orderId);
         return true;
-    }
-
-    private ProductClient.ProductInfo loadProduct(long skuId) {
-        Result<ProductClient.ProductInfo> result;
-        try {
-            result = productClient.detail(skuId);
-        } catch (RuntimeException e) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
-        }
-        if (result == null) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
-        }
-        if (result.code() == ErrorCode.NOT_FOUND.getCode()) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "商品不存在");
-        }
-        if (result.code() != ErrorCode.SUCCESS.getCode() || result.data() == null) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
-        }
-        if (result.data().status() == null || result.data().status() != 1) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "商品已下架");
-        }
-        return result.data();
     }
 
     private void reserveStock(long skuId, int quantity) {

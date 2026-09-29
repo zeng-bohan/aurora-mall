@@ -112,6 +112,30 @@ public class StockService {
     }
 
     /**
+     * AT comparison path: DB-only reservation (no redis, no MQ). The guarded
+     * UPDATE is the branch data seata rolls back through undo_log when the
+     * global transaction fails.
+     */
+    public void reserveDb(long skuId, int quantity) {
+        if (quantity < 1) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "预扣数量必须大于 0");
+        }
+        if (stockMapper.reserveDbGuarded(skuId, quantity) == 0) {
+            throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
+        }
+    }
+
+    /** AT order close: release the db reservation only (no redis was touched). */
+    public void releaseDb(long skuId, int quantity) {
+        if (quantity < 1) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "释放数量必须大于 0");
+        }
+        if (stockMapper.decrementReserved(skuId, quantity) == 0) {
+            log.warn("releaseDb: nothing to release for sku {} x{}", skuId, quantity);
+        }
+    }
+
+    /**
      * Payment-confirmed ledger move: available and reserved both drop by the
      * quantity under the same transactional dedup as the reserve path. A
      * missing reservation is retried (reserved event may still be in flight);

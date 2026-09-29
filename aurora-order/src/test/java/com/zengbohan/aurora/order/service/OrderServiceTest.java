@@ -35,6 +35,8 @@ class OrderServiceTest {
 
     private SegmentIdGenerator idGenerator;
     private ProductClient productClient;
+    private ProductGuard productGuard;
+    private AtOrderPlacer atOrderPlacer;
     private InventoryClient inventoryClient;
     private OrderMapper orderMapper;
     private TxMessageMapper txMessageMapper;
@@ -49,6 +51,8 @@ class OrderServiceTest {
     void setUp() {
         idGenerator = mock(SegmentIdGenerator.class);
         productClient = mock(ProductClient.class);
+        productGuard = new ProductGuard(productClient);
+        atOrderPlacer = mock(AtOrderPlacer.class);
         inventoryClient = mock(InventoryClient.class);
         orderMapper = mock(OrderMapper.class);
         txMessageMapper = mock(TxMessageMapper.class);
@@ -68,8 +72,8 @@ class OrderServiceTest {
         when(inventoryClient.reserve(eq(1L), any())).thenReturn(Result.ok());
         when(inventoryClient.rollback(eq(1L), any())).thenReturn(Result.ok());
 
-        service = new OrderService(idGenerator, productClient, inventoryClient,
-                orderMapper, txMessageMapper, transactionTemplate, publisher, 3, 1800);
+        service = new OrderService(idGenerator, productGuard, inventoryClient,
+                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "mq");
     }
 
     @Test
@@ -135,6 +139,20 @@ class OrderServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.PARAM_ERROR.getCode());
         verify(inventoryClient, never()).reserve(anyLong(), any());
+    }
+
+    @Test
+    void atModeDelegatesToTheAtPlacerWithoutMqSideEffects() {
+        OrderService atService = new OrderService(idGenerator, productGuard, inventoryClient,
+                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at");
+        when(atOrderPlacer.placeAt(eq(7L), any())).thenReturn(9999L);
+
+        long orderId = atService.placeOrder(7L, new PlaceOrderRequest(1L, 1), "req-at");
+
+        assertThat(orderId).isEqualTo(9999L);
+        verify(publisher, never()).sendStockReservedTransactionally(anyString(), anyString());
+        verify(publisher, never()).sendCloseTimeout(org.mockito.ArgumentMatchers.anyLong(),
+                org.mockito.ArgumentMatchers.anyInt());
     }
 
     @Test
