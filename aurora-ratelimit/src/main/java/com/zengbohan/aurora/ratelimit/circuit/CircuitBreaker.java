@@ -30,18 +30,15 @@ public class CircuitBreaker {
     private final int[] bucketFailure;
     private final int[] bucketSlow;
     private final long[] bucketSlot;
-    /** 最近一次调用起始时刻（用于慢调用判定单调）。 */
-    private long lastRefillBucketMillis;
 
     public CircuitBreaker(CircuitBreakerConfig config) {
         this.config = config;
-        this.bucketMillis = Math.max(1, config.openDurationMillis / config.windowBuckets);
+        this.bucketMillis = Math.max(1, config.statWindowMillis / config.windowBuckets);
         this.bucketTotal = new int[config.windowBuckets];
         this.bucketFailure = new int[config.windowBuckets];
         this.bucketSlow = new int[config.windowBuckets];
         this.bucketSlot = new long[config.windowBuckets];
         Arrays.fill(bucketSlot, Long.MIN_VALUE);
-        this.lastRefillBucketMillis = config.clock.getAsLong();
     }
 
     public CircuitBreakerState state() {
@@ -55,8 +52,8 @@ public class CircuitBreaker {
      * 包裹一次调用：熔断判定 + 执行 + 统计。异常原样穿透（业务异常不该被熔断吞掉）。
      */
     public <T> T execute(Callable<T> call) throws Exception {
-        int permission = acquirePermission();
-        if (permission == CLOSED_PROBE_REJECT) {
+        Permission permission = acquirePermission();
+        if (permission == Permission.REJECT) {
             throw new CircuitOpenException("circuit breaker is OPEN, call fast-failed");
         }
         long startNanos = System.nanoTime();
@@ -67,29 +64,46 @@ public class CircuitBreaker {
             return result;
         } finally {
             long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
-            recordResult(success, elapsedMillis, permission == HALF_OPEN_PROBE);
+            recordResult(success, elapsedMillis, permission == Permission.PROBE);
         }
     }
 
-    private static final int CLOSED_PROBE_REJECT = -1;
-    private static final int CLOSED_PROBE = 0;
-    private static final int HALF_OPEN_PROBE = 1;
+    /** 不抛受检异常的便捷变体：包裹 Supplier。 */
+    public <T> T executeSupplier(java.util.function.Supplier<T> supplier) {
+        try {
+            return execute(supplier::get);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            // Supplier.get() 不声明受检异常，此分支实际不可达；防御性包装保持签名诚实
+            throw new IllegalStateException("unexpected checked exception from supplier", e);
+        }
+    }
 
-    /** 判定本次调用是否放行；返回 REJECT/CLOSED/HALF_OPEN 标记。 */
-    private int acquirePermission() {
+    /** 一次调用的放行判定结果。 */
+    private enum Permission {
+        /** 熔断打开或半开试探满员：快速失败。 */
+        REJECT,
+        /** CLOSED 正常放行。 */
+        NORMAL,
+        /** HALF_OPEN 试探放行。 */
+        PROBE
+    }
+
+    private Permission acquirePermission() {
         synchronized (lock) {
             checkOpenTimeout();
             if (state == CircuitBreakerState.OPEN) {
-                return CLOSED_PROBE_REJECT;
+                return Permission.REJECT;
             }
             if (state == CircuitBreakerState.HALF_OPEN) {
                 if (halfOpenInFlight >= config.halfOpenPermittedCalls) {
-                    return CLOSED_PROBE_REJECT;
+                    return Permission.REJECT;
                 }
                 halfOpenInFlight++;
-                return HALF_OPEN_PROBE;
+                return Permission.PROBE;
             }
-            return CLOSED_PROBE;
+            return Permission.NORMAL;
         }
     }
 
@@ -105,7 +119,6 @@ public class CircuitBreaker {
 
     private void recordResult(boolean success, long elapsedMillis, boolean halfOpenProbe) {
         boolean slow = elapsedMillis >= config.slowCallDurationMillis;
-        CircuitBreakerState trigger = null;
 
         synchronized (lock) {
             recordIntoBucket(success, slow);
@@ -124,7 +137,6 @@ public class CircuitBreaker {
                 return;
             }
             if (state == CircuitBreakerState.CLOSED && shouldOpen()) {
-                trigger = CircuitBreakerState.OPEN;
                 transitionTo(CircuitBreakerState.OPEN);
                 openedAt = config.clock.getAsLong();
             }

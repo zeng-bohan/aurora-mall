@@ -27,17 +27,26 @@ class ProtocolCodecTest {
 
     @Test
     void decodeExtractsTheRealBodyNotAPlaceholder() throws Exception {
-        // decodeHeader 只解头（body 是零填充占位），decode 才切出真实 body——
-        // 传输层必须用 decode，否则握手/业务数据全是 0 字节
+        // decodeHeader 只解头（body 为空、bodyLength 报告声明值），decode 才切出真实 body——
+        // 传输层必须用 decode，否则拿到的是空 body；坏帧头声明再大也不分配内存
         byte[] body = new byte[]{9, 8, 7};
         byte[] full = ProtocolCodec.encode(RpcFrame.request(5L, MessageType.REQUEST, (byte) 1, body));
 
         RpcFrame headerOnly = ProtocolCodec.decodeHeader(full);
-        assertThat(headerOnly.body()).containsExactly(0, 0, 0); // 占位
+        assertThat(headerOnly.body()).isEmpty();
+        assertThat(headerOnly.bodyLength()).isEqualTo(3);
 
         RpcFrame decoded = ProtocolCodec.decode(full);
         assertThat(decoded.body()).containsExactly(9, 8, 7);
         assertThat(decoded.requestId()).isEqualTo(5L);
+    }
+
+    @Test
+    void unknownSerializerCodeFailsFast() {
+        ProtocolCodec codec = ProtocolCodec.defaultCodec();
+        assertThatIllegalArgumentException()
+                .isThrownBy(() -> codec.serializer((byte) 99))
+                .withMessageContaining("unknown serializer");
     }
 
     @Test
@@ -67,15 +76,23 @@ class ProtocolCodecTest {
 
     @Test
     void oversizedBodyIsRejected() {
-        // 声明一个超长 body（超过上限）但只给 18 字节头
+        // 正溢出分支：bodyLength = MAX+1（长度字段在 offset 14）
         byte[] header = new byte[ProtocolCodec.HEADER_LENGTH];
         ProtocolCodec.writeMagic(header);
         header[2] = MessageType.REQUEST.code();
         header[3] = (byte) 1;
-        writeLong(header, 4, 1L);
-        writeInt(header, 12, Integer.MAX_VALUE); // bodyLength 爆表
-
+        writeLong(header, 6, 1L);
+        writeInt(header, 14, ProtocolCodec.MAX_BODY_LENGTH + 1);
         assertThat(ProtocolCodec.decodeHeader(header)).isNull();
+
+        // 负数分支：高位为 1 的 int
+        byte[] negative = new byte[ProtocolCodec.HEADER_LENGTH];
+        ProtocolCodec.writeMagic(negative);
+        negative[2] = MessageType.REQUEST.code();
+        negative[3] = (byte) 1;
+        writeLong(negative, 6, 1L);
+        writeInt(negative, 14, -1);
+        assertThat(ProtocolCodec.decodeHeader(negative)).isNull();
     }
 
     @Test
@@ -98,6 +115,22 @@ class ProtocolCodecTest {
         List<String> payload = List.of("a", "b", "c");
         byte[] bytes = codec.serialize(payload);
         assertThat(codec.deserialize(bytes, List.class)).isEqualTo(payload);
+    }
+
+    @Test
+    void nestedObjectAndMapPayloadsRoundTrip() throws Exception {
+        ProtocolCodec codec = ProtocolCodec.defaultCodec();
+        Outer payload = new Outer(List.of(new Inner("a"), new Inner("b")),
+                java.util.Map.of("x", 1, "y", 2));
+        byte[] bytes = codec.serialize(payload);
+        assertThat(codec.deserialize(bytes, Outer.class)).isEqualTo(payload);
+    }
+
+    /** 嵌套结构往返的样例载荷。 */
+    record Inner(String value) {
+    }
+
+    record Outer(java.util.List<Inner> items, java.util.Map<String, Integer> counts) {
     }
 
     private static void writeLong(byte[] b, int off, long v) {

@@ -39,6 +39,8 @@
         <spring-cloud-alibaba.version>2025.0.0.0</spring-cloud-alibaba.version>
         <mybatis-plus.version>3.5.12</mybatis-plus.version>
         <rocketmq-spring.version>2.3.1</rocketmq-spring.version>
+        <!-- Boot/Cloud BOM 不管理 guava，显式钉版本（ratelimit 基准对照用，仅测试范围） -->
+        <guava.version>33.4.0-jre</guava.version>
     </properties>
 
     <dependencyManagement>
@@ -76,6 +78,11 @@
                 <groupId>org.apache.rocketmq</groupId>
                 <artifactId>rocketmq-spring-boot-starter</artifactId>
                 <version>${rocketmq-spring.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>${guava.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

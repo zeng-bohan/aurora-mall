@@ -6,13 +6,27 @@
 
 ### `CircuitBreaker` — CLOSED / OPEN / HALF_OPEN 状态机
 
-- 以**装饰器**形式包裹任意 `Callable`：熔断判定 → 执行 → 统计，业务异常原样穿透（不被熔断吞掉）
+- 以**装饰器**形式包裹任意 `Callable`（或用 `executeSupplier` 包裹 `Supplier`）：熔断判定 → 执行 → 统计，业务异常原样穿透（不被熔断吞掉）
 - **CLOSED**：环形桶滑动窗口统计失败率与慢调用率，任一超阈值转 OPEN
 - **OPEN**：不触达被包裹调用，直接抛 `CircuitOpenException` 快速失败；持续时长到达转 HALF_OPEN
 - **HALF_OPEN**：放行有限次试探（并发下严格有界），全部成功回 CLOSED，任一失败回 OPEN
 - **触发源二选一/并用**：失败率阈值、慢调用率阈值（单次耗时 > `slowCallDurationMillis` 算慢调用），两者独立判定，任一达到即熔断
+- **两个窗口独立配置**：统计窗口（`statWindowMillis`，默认 10s）与 OPEN 持续时长（`openDurationMillis`）互不耦合——早期失败滑出统计窗后不再推高失败率（有判别单测锁定）
 - **最小请求数** `minRequestThreshold`：窗口内请求数低于此值不判定，避免小样本抖动误熔断
 - 状态变更经 `Listener` 事件钩子外抛（为 M4 指标留缝，不引依赖）
+
+### 与 Sentinel 的设计对照（仅对照，不引入依赖）
+
+| 维度 | 本实现 | Sentinel |
+| --- | --- | --- |
+| 统计结构 | 环形桶数组 + 全程单锁，判定强一致 | LeapArray 环形桶 + CAS（`WindowWrap`），高并发吞吐更高 |
+| 熔断状态机 | CLOSED/OPEN/HALF_OPEN，半开并发试探数显式可配 | 同三态；半开探测语义由规则隐式驱动 |
+| 触发源 | 失败率 + 慢调用率（并集判定） | 慢调用比例 / 异常比例 / 异常数，按规则三选一 |
+| 接入方式 | 装饰器包裹任意 `Callable`，零框架耦合 | `@SentinelResource` 注解 / SphU API + 槽链（ProcessorSlotChain） |
+| 时钟 | 注入 `LongSupplier`，测试可推时间 | 内部毫秒时钟 |
+| 取舍 | 少依赖、语义直白、可读源码级理解；放弃槽链扩展点与规则中心 | 功能全（控制台、集群流控），重依赖 + 强框架耦合 |
+
+为什么手写而不是直接用 Sentinel：这个组件的存在意义是"读过源码级理解"（ADR-0008）；生产选型建议仍是 Sentinel——两者差距（槽链扩展、规则中心、集群模式）正是对照表的价值。
 
 ### `SlidingWindowRateLimiter` — 环形桶分段计数
 
@@ -46,7 +60,7 @@ CircuitBreaker breaker = new CircuitBreaker(CircuitBreakerConfig.builder()
 T result = breaker.execute(() -> callRemote()); // 熔断打开时快速失败
 ```
 
-## 测试覆盖（23 例，`mvn -pl aurora-ratelimit test`）
+## 测试覆盖（25 例，`mvn -pl aurora-ratelimit test`）
 
 | 场景 | 说明 |
 | --- | --- |
@@ -72,6 +86,8 @@ T result = breaker.execute(() -> callRemote()); // 熔断打开时快速失败
 | 熔断：慢调用触发 | 3 慢 + 1 快 = 75% 慢调用率独立触发 OPEN |
 | 熔断：并发试探有界 | 10 线程试探仅 2 个进入，其余快速失败（阻塞验证真实上界） |
 | 熔断：事件钩子 | 状态迁移事件按预期发布 OPEN/CLOSED 各一次 |
+| 熔断：统计窗独立 | 失败滑出统计窗后不再推高失败率（窗口与 OPEN 时长解耦） |
+| 熔断：Supplier 变体 | executeSupplier 正常返回/异常穿透 |
 
 ## 实测基准
 

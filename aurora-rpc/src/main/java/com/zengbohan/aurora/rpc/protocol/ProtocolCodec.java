@@ -1,5 +1,7 @@
 package com.zengbohan.aurora.rpc.protocol;
 
+import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+
 import java.nio.ByteBuffer;
 import java.util.HashMap;
 import java.util.Map;
@@ -33,6 +35,23 @@ public final class ProtocolCodec {
     /** body 长度上限，防止恶意/错位帧分配巨量内存（10MB）。 */
     public static final int MAX_BODY_LENGTH = 10 * 1024 * 1024;
 
+    /**
+     * 拆包器统一工厂：服务端、客户端、测试都用这一个配置，
+     * 头布局改动时只改这一处（长度字段在 offset 14、4 字节）。
+     */
+    public static LengthFieldBasedFrameDecoder newFrameDecoder() {
+        return newFrameDecoder(MAX_BODY_LENGTH);
+    }
+
+    /** 可配 body 上限的拆包器：部署想收紧单帧内存时用。 */
+    public static LengthFieldBasedFrameDecoder newFrameDecoder(int maxBodyLength) {
+        if (maxBodyLength <= 0) {
+            throw new IllegalArgumentException("maxBodyLength must be positive: " + maxBodyLength);
+        }
+        return new LengthFieldBasedFrameDecoder(
+                maxBodyLength + HEADER_LENGTH, OFF_BODY_LENGTH, 4, 0, 0, true);
+    }
+
     private static final int OFF_MAGIC = 0;
     private static final int OFF_VERSION = 2;
     private static final int OFF_TYPE = 3;
@@ -58,7 +77,12 @@ public final class ProtocolCodec {
     }
 
     public Serializer serializer(byte code) {
-        return serializers.get(code);
+        Serializer serializer = serializers.get(code);
+        if (serializer == null) {
+            // fail-fast：未知实现号在两端配置不对称时立刻暴露，而不是运行期 NPE
+            throw new IllegalArgumentException("unknown serializer code: " + code);
+        }
+        return serializer;
     }
 
     /** 序列化指定值，使用默认（JSON）实现。 */
