@@ -111,6 +111,24 @@ public class StockService {
         return true;
     }
 
+    /**
+     * Payment-confirmed ledger move: available and reserved both drop by the
+     * quantity under the same transactional dedup as the reserve path. A
+     * missing reservation is retried (reserved event may still be in flight);
+     * the dedup row rolls back with the throw so the retry re-processes.
+     */
+    @Transactional
+    public boolean applyPaidEvent(String messageId, long skuId, int quantity) {
+        if (!dedupStore.tryInsert("order-paid", messageId)) {
+            return false;
+        }
+        if (stockMapper.confirmPayment(skuId, quantity) == 0) {
+            throw new IllegalStateException(
+                    "reserved not applied yet for sku " + skuId + " x" + quantity + "; will retry");
+        }
+        return true;
+    }
+
     public ProductStock dbStock(long skuId) {
         return stockMapper.selectById(skuId);
     }

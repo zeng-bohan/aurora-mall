@@ -130,6 +130,11 @@ class GatewayJwtFilterTest {
     }
 
     @Test
+    void paymentCallbackPassesWithoutUserToken() {
+        assertThat(run(exchange(HttpMethod.POST, "/api/payment/payments/mock-callback", null))).isEqualTo(200);
+    }
+
+    @Test
     void actuatorHealthPassesWithoutToken() {
         assertThat(run(exchange("/api/payment/actuator/health", null))).isEqualTo(200);
     }
