@@ -1,20 +1,20 @@
 package com.zengbohan.aurora.ratelimit.circuit;
 
-import java.util.Arrays;
+import com.zengbohan.aurora.ratelimit.RingWindow;
+
 import java.util.concurrent.Callable;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 熔断器：CLOSED / OPEN / HALF_OPEN 三态机，以装饰器形式包裹任意调用。
  * <p>
- * CLOSED：用环形桶滑动窗口统计失败率与慢调用率，任一超阈值转 OPEN。
+ * CLOSED：用环形桶滑动窗口（{@link RingWindow}，三维：total/failure/slow）
+ * 统计失败率与慢调用率，任一超阈值转 OPEN。
  * OPEN：不触达被包裹调用，直接快速失败；持续时长到达转 HALF_OPEN。
  * HALF_OPEN：放行有限次试探（并发下严格有界），全部成功回 CLOSED，任一失败回 OPEN。
  */
 public class CircuitBreaker {
 
     private final CircuitBreakerConfig config;
-    private final long bucketMillis;
 
     private final Object lock = new Object();
     private CircuitBreakerState state = CircuitBreakerState.CLOSED;
@@ -25,22 +25,19 @@ public class CircuitBreaker {
     /** HALF_OPEN 试探成功数。 */
     private int halfOpenSuccesses;
 
-    // 环形桶统计窗口：每桶记录 total/failure/slow
-    private final int[] bucketTotal;
-    private final int[] bucketFailure;
-    private final int[] bucketSlow;
-    private final long[] bucketSlot;
+    /** 统计窗口：维度 0=总次数、1=失败数、2=慢调用数。 */
+    private final RingWindow window;
 
     public CircuitBreaker(CircuitBreakerConfig config) {
         this.config = config;
-        this.bucketMillis = Math.max(1, config.statWindowMillis / config.windowBuckets);
-        this.bucketTotal = new int[config.windowBuckets];
-        this.bucketFailure = new int[config.windowBuckets];
-        this.bucketSlow = new int[config.windowBuckets];
-        this.bucketSlot = new long[config.windowBuckets];
-        Arrays.fill(bucketSlot, Long.MIN_VALUE);
+        long bucketMillis = Math.max(1, config.statWindowMillis / config.windowBuckets);
+        this.window = new RingWindow(config.windowBuckets, bucketMillis, 3);
     }
 
+    /**
+     * 当前状态。注意：这是一个有副作用的读——OPEN 持续时长已到时会在本次调用里
+     * 惰性迁移到 HALF_OPEN（不靠后台定时器）。并发下由内部锁保证迁移只发生一次。
+     */
     public CircuitBreakerState state() {
         synchronized (lock) {
             checkOpenTimeout();
@@ -143,44 +140,29 @@ public class CircuitBreaker {
         }
     }
 
-    /** 记录一次调用到当前滑动窗口桶。 */
+    /** 记录一次调用到当前滑动窗口桶（三维：total / failure / slow）。 */
     private void recordIntoBucket(boolean success, boolean slow) {
         long now = config.clock.getAsLong();
-        long slot = now / bucketMillis;
-        int idx = (int) Math.floorMod(slot, config.windowBuckets);
-        if (bucketSlot[idx] != slot) {
-            bucketSlot[idx] = slot;
-            bucketTotal[idx] = 0;
-            bucketFailure[idx] = 0;
-            bucketSlow[idx] = 0;
-        }
-        bucketTotal[idx]++;
+        window.add(now, 0, 1);
         if (!success) {
-            bucketFailure[idx]++;
+            window.add(now, 1, 1);
         }
         if (slow) {
-            bucketSlow[idx]++;
+            window.add(now, 2, 1);
         }
     }
 
     /** CLOSED 下是否达到熔断阈值（失败率或慢调用率）。 */
     private boolean shouldOpen() {
-        int total = 0;
-        int failures = 0;
-        int slows = 0;
-        long currentSlot = config.clock.getAsLong() / bucketMillis;
-        for (int i = 0; i < config.windowBuckets; i++) {
-            if (bucketSlot[i] > currentSlot - config.windowBuckets) {
-                total += bucketTotal[i];
-                failures += bucketFailure[i];
-                slows += bucketSlow[i];
-            }
-        }
+        long[] sums = window.sums(config.clock.getAsLong());
+        long total = sums[0];
+        long failures = sums[1];
+        long slows = sums[2];
         if (total < config.minRequestThreshold) {
             return false; // 小样本不判定
         }
-        int failureRate = (int) (failures * 100L / total);
-        int slowRate = (int) (slows * 100L / total);
+        int failureRate = (int) (failures * 100 / total);
+        int slowRate = (int) (slows * 100 / total);
         return failureRate >= config.failureRateThreshold
                 || slowRate >= config.slowCallRateThreshold;
     }
@@ -194,10 +176,7 @@ public class CircuitBreaker {
     }
 
     private void resetWindow() {
-        Arrays.fill(bucketTotal, 0);
-        Arrays.fill(bucketFailure, 0);
-        Arrays.fill(bucketSlow, 0);
-        Arrays.fill(bucketSlot, Long.MIN_VALUE);
+        window.reset();
     }
 
     /** 状态变更监听（为 M4 指标留缝）。 */

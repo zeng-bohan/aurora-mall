@@ -122,9 +122,11 @@ public final class ProtocolCodec {
     }
 
     /**
-     * 解码头：校验魔数/类型/body 长度上限；任一不合法返回 null（调用方关连接或回错误帧）。
+     * 解码头：校验魔数/版本/类型/body 长度上限；任一不合法返回 null（调用方关连接或回错误帧）。
+     * <p>
+     * 只产头元数据、不触碰 body——要完整帧走 {@link #decode}。
      */
-    public static RpcFrame decodeHeader(byte[] bytes) {
+    public static FrameHeader decodeHeader(byte[] bytes) {
         if (bytes == null || bytes.length < HEADER_LENGTH) {
             return null;
         }
@@ -143,20 +145,19 @@ public final class ProtocolCodec {
         if (bodyLength < 0 || bodyLength > MAX_BODY_LENGTH) {
             return null;
         }
-        return RpcFrame.headerOnly(buffer.getLong(OFF_REQUEST_ID), type,
+        return new FrameHeader(buffer.getLong(OFF_REQUEST_ID), type,
                 buffer.get(OFF_SERIALIZER), buffer.get(OFF_STATUS), bodyLength);
     }
 
     /**
      * 解码完整帧（头 + body）：把真实 body 从缓冲区切出来。
      * <p>
-     * 与 {@link #decodeHeader} 的区别：那个只解头、body 是占位零填充（供拆包器先看长度），
-     * 这个把 body 一并解出，供拿到完整帧字节后直接使用。
+     * 与 {@link #decodeHeader} 的区别：那个只验头不碰 body，这个把 body 一并解出。
      *
-     * @return 完整帧；魔数/版本/type/body 长度不合法时返回 null
+     * @return 完整帧；头不合法或 body 未收全时返回 null
      */
     public static RpcFrame decode(byte[] fullFrame) {
-        RpcFrame header = decodeHeader(fullFrame);
+        FrameHeader header = decodeHeader(fullFrame);
         if (header == null) {
             return null;
         }
@@ -166,7 +167,7 @@ public final class ProtocolCodec {
         }
         byte[] body = new byte[bodyLength];
         System.arraycopy(fullFrame, HEADER_LENGTH, body, 0, bodyLength);
-        return RpcFrame.withBody(header, body);
+        return RpcFrame.from(header, body);
     }
 
     /** 仅测试用：写魔数到指定偏移。 */

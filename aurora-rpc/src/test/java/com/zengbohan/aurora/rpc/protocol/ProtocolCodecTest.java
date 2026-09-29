@@ -18,23 +18,24 @@ class ProtocolCodecTest {
         byte[] encoded = ProtocolCodec.encode(original);
 
         assertThat(encoded).hasSize(ProtocolCodec.HEADER_LENGTH + 3);
-        RpcFrame decoded = ProtocolCodec.decodeHeader(encoded);
-        assertThat(decoded.requestId()).isEqualTo(42L);
-        assertThat(decoded.type()).isEqualTo(MessageType.REQUEST);
-        assertThat(decoded.serializerCode()).isEqualTo((byte) 1);
-        assertThat(decoded.bodyLength()).isEqualTo(3);
+        FrameHeader header = ProtocolCodec.decodeHeader(encoded);
+        assertThat(header.requestId()).isEqualTo(42L);
+        assertThat(header.type()).isEqualTo(MessageType.REQUEST);
+        assertThat(header.serializerCode()).isEqualTo((byte) 1);
+        assertThat(header.status()).isEqualTo((byte) 0);
+        assertThat(header.bodyLength()).isEqualTo(3);
     }
 
     @Test
     void decodeExtractsTheRealBodyNotAPlaceholder() throws Exception {
-        // decodeHeader 只解头（body 为空、bodyLength 报告声明值），decode 才切出真实 body——
-        // 传输层必须用 decode，否则拿到的是空 body；坏帧头声明再大也不分配内存
+        // decodeHeader 只产头元数据（不碰 body），decode 才切出真实 body——
+        // 传输层必须用 decode；坏帧头声明再大也不会被分配成实际内存
         byte[] body = new byte[]{9, 8, 7};
         byte[] full = ProtocolCodec.encode(RpcFrame.request(5L, MessageType.REQUEST, (byte) 1, body));
 
-        RpcFrame headerOnly = ProtocolCodec.decodeHeader(full);
-        assertThat(headerOnly.body()).isEmpty();
+        FrameHeader headerOnly = ProtocolCodec.decodeHeader(full);
         assertThat(headerOnly.bodyLength()).isEqualTo(3);
+        assertThat(headerOnly.requestId()).isEqualTo(5L);
 
         RpcFrame decoded = ProtocolCodec.decode(full);
         assertThat(decoded.body()).containsExactly(9, 8, 7);

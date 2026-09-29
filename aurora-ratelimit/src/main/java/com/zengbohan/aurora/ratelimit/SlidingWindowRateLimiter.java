@@ -1,12 +1,11 @@
 package com.zengbohan.aurora.ratelimit;
 
 import java.time.Duration;
-import java.util.Arrays;
 import java.util.Objects;
 import java.util.function.LongSupplier;
 
 /**
- * 滑动窗口限流器：环形桶分段计数。
+ * 滑动窗口限流器：环形桶分段计数（统计基元见 {@link RingWindow}）。
  * <p>
  * 窗口被切成 {@code bucketCount} 个等长时间槽，当前时刻落在哪个槽就计数在哪个槽；
  * 判定时只累计「最近 bucketCount 个槽」的计数，因此窗口是连续滑动的，
@@ -21,14 +20,8 @@ public class SlidingWindowRateLimiter implements RateLimiter {
     private static final int DEFAULT_BUCKET_COUNT = 10;
 
     private final int limit;
-    private final int bucketCount;
-    private final long bucketMillis;
+    private final RingWindow window;
     private final LongSupplier clock;
-
-    /** 环形桶计数，下标 = 槽号 % bucketCount，由本对象锁保护。 */
-    private final long[] counts;
-    /** 各桶当前归属的时间槽号；槽号不匹配 = 桶已过期，下次使用前清零。 */
-    private final long[] slotStarts;
 
     public SlidingWindowRateLimiter(int limit, Duration window) {
         this(limit, window, DEFAULT_BUCKET_COUNT, System::currentTimeMillis);
@@ -55,12 +48,8 @@ public class SlidingWindowRateLimiter implements RateLimiter {
                     "window " + window + " is too short for " + bucketCount + " buckets");
         }
         this.limit = limit;
-        this.bucketCount = bucketCount;
-        this.bucketMillis = windowMillis / bucketCount;
+        this.window = new RingWindow(bucketCount, windowMillis / bucketCount, 1);
         this.clock = Objects.requireNonNull(clock, "clock");
-        this.counts = new long[bucketCount];
-        this.slotStarts = new long[bucketCount];
-        Arrays.fill(slotStarts, Long.MIN_VALUE);
     }
 
     @Override
@@ -68,22 +57,10 @@ public class SlidingWindowRateLimiter implements RateLimiter {
         if (permits <= 0) {
             throw new IllegalArgumentException("permits must be positive: " + permits);
         }
-        long slot = clock.getAsLong() / bucketMillis;
-        int idx = (int) Math.floorMod(slot, bucketCount);
-        if (slotStarts[idx] != slot) {
-            // 环形复用：这个桶属于上一圈，清零后归当前槽
-            slotStarts[idx] = slot;
-            counts[idx] = 0;
-        }
-        long inWindow = 0;
-        for (int i = 0; i < bucketCount; i++) {
-            // 只统计最近 bucketCount 个槽内的桶，更老的自然出窗
-            if (slotStarts[i] > slot - bucketCount) {
-                inWindow += counts[i];
-            }
-        }
+        long now = clock.getAsLong();
+        long inWindow = window.sums(now)[0];
         if (inWindow + permits <= limit) {
-            counts[idx] += permits;
+            window.add(now, 0, permits);
             return true;
         }
         return false;
