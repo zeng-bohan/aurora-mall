@@ -28,6 +28,7 @@
         <module>aurora-inventory</module>
         <module>aurora-payment</module>
         <module>aurora-id-generator</module>
+        <module>aurora-ratelimit</module>
     </modules>
 
     <properties>
