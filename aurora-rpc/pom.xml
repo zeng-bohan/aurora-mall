@@ -40,6 +40,12 @@
             <groupId>com.alibaba.nacos</groupId>
             <artifactId>nacos-client</artifactId>
         </dependency>
+        <!-- 熔断接入：消费端调用链包一层手写熔断器 -->
+        <dependency>
+            <groupId>com.zengbohan.aurora</groupId>
+            <artifactId>aurora-ratelimit</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.mockito</groupId>
             <artifactId>mockito-core</artifactId>

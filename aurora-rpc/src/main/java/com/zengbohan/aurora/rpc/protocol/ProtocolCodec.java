@@ -61,6 +61,9 @@ public final class ProtocolCodec {
     private static final int OFF_BODY_LENGTH = 14;
 
     private final Map<Byte, Serializer> serializers = new HashMap<>();
+    private final com.fasterxml.jackson.databind.ObjectMapper mapper =
+            new com.fasterxml.jackson.databind.ObjectMapper()
+                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
 
     public ProtocolCodec() {
         register(new JsonSerializer());
@@ -93,6 +96,14 @@ public final class ProtocolCodec {
     /** 反序列化，使用默认（JSON）实现。 */
     public <T> T deserialize(byte[] bytes, Class<T> type) throws Exception {
         return serializer(JsonSerializer.CODE).deserialize(bytes, type);
+    }
+
+    /**
+     * 已反序列化对象到目标类型的转换（泛型擦除防护：JSON 泛化的 Map/List 节点
+     * 按声明的具体类型还原，服务端分发参数用）。
+     */
+    public <T> T convertValue(Object fromValue, Class<T> toValueType) {
+        return mapper.convertValue(fromValue, toValueType);
     }
 
     /** 按指定实现序列化（proxy 层用于带 code 的帧）。 */

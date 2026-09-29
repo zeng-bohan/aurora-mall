@@ -114,6 +114,22 @@ public class RpcClient {
         return ch != null && ch.isActive();
     }
 
+    /**
+     * 同步等待连接就绪（首连是异步的，池化场景需要阻塞暖机）。
+     *
+     * @return true = 已连上；false = 超时仍未连上（实例不可达）
+     */
+    public boolean awaitConnected(long timeoutMillis) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        while (System.currentTimeMillis() < deadline) {
+            if (isConnected()) {
+                return true;
+            }
+            Thread.sleep(25);
+        }
+        return isConnected();
+    }
+
     private void connectOrRecover() {
         if (!running) {
             return;

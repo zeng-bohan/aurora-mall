@@ -16,6 +16,15 @@
 - **处理器异常以 status 回传**：业务处理器抛异常时，服务端以 `status=ERROR` + 消息回传而**不**断连；调用方收到 `RpcRemoteException`（"对端业务失败"），与 `RpcUnavailableException`（"对端不可达"）语义区分；响应回显请求的 serializerCode（两端按请求协商实现）
 - 消息类型：pipeline 以 `ByteBuf` 为消息类型（`LengthFieldBasedFrameDecoder` 之后），出站写入用 `Unpooled.wrappedBuffer` 包装；拆包配置统一走 `ProtocolCodec.newFrameDecoder()`（body 上限可配）
 
+### 动态代理与熔断接入（消费端）
+
+- **调用链**：接口方法 → `Invocation` 组装 → **熔断判定** → 发现挑实例（负载均衡）→ 连接池取 client → 序列化 → Netty 往返 → 反序列化 → 按声明返回类型还原 → 返回/抛异常。熔断包裹整个远程段，OPEN 时在发现之前快速失败
+- **`@AuroraRpcService`**：实现类标注对外接口，接口全名即服务名；`RpcServiceExporter` 启动 Netty（随机端口可指定）+ 注册中心上报，业务异常在本层捕获编进载荷（`status=OK + exceptionType`），与传输层系统失败区分
+- **异常四层**（调用方可捕获性明确）：`RpcRemoteException`（对端业务失败，携带远端异常类型名）≠ `RpcUnavailableException`（不可达/无实例/连接池暖机超时）≠ `RpcTimeoutException`（等待超时）≠ `CircuitOpenException`（熔断快速失败）
+- **泛型擦除防护**：参数与返回值都按声明的具体类型二次还原（`convertValue`）——JSON 泛化的 Map/List 节点不会泄漏成 ClassCastException（集成测试锁定）
+- **连接池**：按实例地址缓存 client，新实例**同步暖机**首连（冷实例的第一跳不会白 fail），不可达实例回收条目并抛不可用
+- 每接口一个熔断器实例（故障按服务隔离），阈值经 `CircuitBreakerConfig` 可配（默认失败率 50% / 最小样本 10 / 半开试探 3 / OPEN 10s）
+
 ### 注册发现与负载均衡
 
 - **`RegistryService` SPI**：register / unregister / subscribe / unsubscribe 四个方法。订阅语义 = 立即回调当前全量快照，此后每次变更推全量——消费端无需 discover+subscribe 两步，也无增量合并逻辑
@@ -50,7 +59,7 @@ offset 18  body
 
 取舍记录在设计要点：为什么默认 JSON 而不是 Hessian/Kryo/Protobuf——**JDK 原生序列化禁用**（gadget 反序列化漏洞），JSON 胜在可读与跨语言，代价是体积与 CPU；Hessian/Kryo 是二进制高性能但引第三方信任与版本坑，Protobuf 强 schema 但需要先定义 .proto 且 Java 侧可读性差。
 
-## 测试覆盖（42 例，`mvn -pl aurora-rpc test`，除 Nacos 集成外 CI 可跑、零外部依赖）
+## 测试覆盖（52 例，`mvn -pl aurora-rpc test`，除 Nacos 集成外 CI 可跑、零外部依赖）
 
 | 场景 | 说明 |
 | --- | --- |
@@ -74,6 +83,11 @@ offset 18  body
 | 传输：心跳失联检测 | 连到"只收不发"的死端，读空闲后主动断开 |
 | 传输：过载拒绝 | 业务池 1 线程 + 队列 1：第 3 个起 OVERLOADED 拒绝、不断连，释放后照常服务 |
 | 传输：stop 失败在途 | stop() 立即失败挂起调用（远早于 10s 超时） |
+| 代理：全链路类型还原 | echo/String、add/原始类型、嵌套 record+集合、void 方法经 真 Netty 往返全对 |
+| 代理：业务失败分层 | 远端业务异常 → RpcRemoteException（带远端类型名），连接不断 |
+| 代理：无实例快速失败 | 订阅后无实例 → RpcUnavailableException 指名服务 |
+| 代理：熔断开合 | 连续失败→OPEN 零远端调用快速失败→半开试探成功→CLOSED 恢复 |
+| 代理：轮询分布 | 双实例轮询 6 次覆盖 A/B |
 | 注册：订阅即送达 | 先推当前快照，上线/下线各推一次全量 |
 | 注册：重复注册幂等 | 同实例二次注册不推送 |
 | 注册：服务隔离 | 互不串台 |
