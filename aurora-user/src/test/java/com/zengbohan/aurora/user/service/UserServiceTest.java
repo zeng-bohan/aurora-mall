@@ -1,6 +1,7 @@
 package com.zengbohan.aurora.user.service;
 
 import com.zengbohan.aurora.common.auth.JwtCodec;
+import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.user.dto.LoginRequest;
 import com.zengbohan.aurora.user.dto.RegisterRequest;
@@ -51,6 +52,17 @@ class UserServiceTest {
         assertThat(saved.getUsername()).isEqualTo("bohan");
         assertThat(saved.getPassword()).isNotEqualTo("secret123");
         assertThat(saved.getRole()).isEqualTo("USER");
+    }
+
+    @Test
+    void registerLosesUniqueIndexRaceGracefully() {
+        when(userMapper.selectCount(any())).thenReturn(0L);
+        when(userMapper.insert(any(User.class)))
+                .thenThrow(new org.springframework.dao.DuplicateKeyException("uk_users_username"));
+
+        assertThatThrownBy(() -> userService.register(new RegisterRequest("bohan", "secret123", null)))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.PARAM_ERROR.getCode());
     }
 
     @Test

@@ -12,6 +12,7 @@ import com.zengbohan.aurora.user.dto.TokenResponse;
 import com.zengbohan.aurora.user.entity.User;
 import com.zengbohan.aurora.user.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -50,7 +51,13 @@ public class UserService {
         user.setRole(ROLE_USER);
         user.setNickname(request.nickname());
         user.setStatus(1);
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (DuplicateKeyException e) {
+            // two concurrent registrations pass the pre-check; the unique
+            // index is the race authority
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "用户名已存在");
+        }
         return user.getId();
     }
 

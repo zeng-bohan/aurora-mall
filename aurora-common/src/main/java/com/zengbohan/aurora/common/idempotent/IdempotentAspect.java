@@ -43,10 +43,18 @@ public class IdempotentAspect {
             case REDIS -> {
                 RedisIdempotentStore store = require(redisStores,
                         "RedisIdempotentStore (needs redis on the classpath) for @Idempotent(REDIS)");
-                if (!store.tryAcquire(bizType + ":" + key, idempotent.ttlSeconds())) {
+                String fullKey = bizType + ":" + key;
+                if (!store.tryAcquire(fullKey, idempotent.ttlSeconds())) {
                     throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
                 }
-                yield pjp.proceed();
+                try {
+                    yield pjp.proceed();
+                } catch (Throwable failure) {
+                    // the call did not succeed, so the guard must not block the
+                    // retry: release the key before surfacing the failure
+                    store.release(fullKey);
+                    throw failure;
+                }
             }
             case DB_DEDUP -> {
                 DedupStore store = require(dedupStores,

@@ -13,13 +13,23 @@ public class InMemoryCartStore implements CartStore {
     public long increment(long userId, long skuId, long delta) {
         Map<Long, Long> cart = carts.computeIfAbsent(userId, k -> new LinkedHashMap<>());
         long next = cart.getOrDefault(skuId, 0L) + delta;
+        if (next <= 0) {
+            // mirrors the redis lua: a line at or below zero leaves the cart
+            cart.remove(skuId);
+            return 0L;
+        }
         cart.put(skuId, next);
         return next;
     }
 
     @Override
     public void put(long userId, long skuId, long quantity) {
-        carts.computeIfAbsent(userId, k -> new LinkedHashMap<>()).put(skuId, quantity);
+        Map<Long, Long> cart = carts.computeIfAbsent(userId, k -> new LinkedHashMap<>());
+        if (quantity <= 0) {
+            cart.remove(skuId);
+        } else {
+            cart.put(skuId, quantity);
+        }
     }
 
     @Override

@@ -76,6 +76,11 @@ class IdempotentAspectTest {
             lastTtl = ttlSeconds;
             return keys.add(key);
         }
+
+        @Override
+        public void release(String key) {
+            keys.remove(key);
+        }
     }
 
     private static class FakeDedup implements DedupStore {
@@ -140,6 +145,19 @@ class IdempotentAspectTest {
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.DUPLICATE_REQUEST.getCode());
         assertThat(calls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void failedCallReleasesTheGuardSoRetryPasses() throws Throwable {
+        ProceedingJoinPoint failing = joinPoint("placeOrder", "order-1");
+        when(failing.proceed()).thenThrow(new IllegalStateException("downstream down"));
+
+        assertThatThrownBy(() -> aspect.guard(failing, annotated(Strategy.REDIS, "#orderId", 77)))
+                .isInstanceOf(IllegalStateException.class);
+
+        // the same request id must pass on retry after the failure
+        ProceedingJoinPoint retry = joinPoint("placeOrder", "order-1");
+        assertThat(aspect.guard(retry, annotated(Strategy.REDIS, "#orderId", 77))).isEqualTo("result");
     }
 
     @Test
