@@ -29,6 +29,7 @@
         <module>aurora-payment</module>
         <module>aurora-id-generator</module>
         <module>aurora-ratelimit</module>
+        <module>aurora-rpc</module>
     </modules>
 
     <properties>
