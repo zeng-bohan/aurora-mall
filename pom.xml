@@ -27,6 +27,7 @@
         <module>aurora-order</module>
         <module>aurora-inventory</module>
         <module>aurora-payment</module>
+        <module>aurora-id-generator</module>
     </modules>
 
     <properties>
