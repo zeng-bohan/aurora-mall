@@ -86,11 +86,21 @@ aurora:
     mode: mq
 YAML
 )
+GATEWAY_CFG=$(cat <<'YAML'
+# 网关限流：路由 id -> 规则；没有规则的路由不限流。
+# 大促/压测前直接改这里发布（@ConfigurationProperties 随刷新事件重绑定，即时生效）。
+aurora:
+  rate-limit:
+    enabled: true
+    routes: {}
+YAML
+)
 
 echo "publishing configs into namespace '$NS'..."
 publish aurora-common.yml "$COMMON"
 publish aurora-user.yml "$USER_CFG"
 publish aurora-product.yml "$PRODUCT_CFG"
 publish aurora-order.yml "$ORDER_CFG"
+publish aurora-gateway.yml "$GATEWAY_CFG"
 
 echo "done. secrets stay in $SECRETS_FILE and nacos, never in git."
