@@ -20,11 +20,8 @@ class FrameDecoderTest {
 
     @BeforeEach
     void setUp() {
-        // 长度字段在第 14 字节（bodyLength，4 字节），调整量 2（前面还有 magic/version/type/serializer/status/requestId 之前的偏移），
-        // 长度字段自身长度 4，failFast=true 丢弃残缺帧
-        channel = new EmbeddedChannel(new LengthFieldBasedFrameDecoder(
-                ProtocolCodec.MAX_BODY_LENGTH + ProtocolCodec.HEADER_LENGTH,
-                14, 4, 0, 0, true));
+        // 拆包配置统一来自 ProtocolCodec 工厂：头布局改动只改一处
+        channel = new EmbeddedChannel(ProtocolCodec.newFrameDecoder());
     }
 
     @AfterEach

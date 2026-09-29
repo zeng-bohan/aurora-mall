@@ -20,6 +20,8 @@ public final class CircuitBreakerConfig {
     final int halfOpenPermittedCalls;
     /** OPEN 持续时长，到期转 HALF_OPEN。 */
     final long openDurationMillis;
+    /** 统计窗口时长：失败率/慢调用率的观察窗，与 OPEN 持续时长互相独立。 */
+    final long statWindowMillis;
     /** 统计窗口桶数。 */
     final int windowBuckets;
     final LongSupplier clock;
@@ -32,6 +34,7 @@ public final class CircuitBreakerConfig {
         this.minRequestThreshold = builder.minRequestThreshold;
         this.halfOpenPermittedCalls = builder.halfOpenPermittedCalls;
         this.openDurationMillis = builder.openDurationMillis;
+        this.statWindowMillis = builder.statWindowMillis;
         this.windowBuckets = builder.windowBuckets;
         this.clock = builder.clock;
         this.listener = builder.listener;
@@ -49,6 +52,7 @@ public final class CircuitBreakerConfig {
         private int minRequestThreshold = 10;
         private int halfOpenPermittedCalls = 3;
         private long openDurationMillis = 10_000;
+        private long statWindowMillis = 10_000;
         private int windowBuckets = 10;
         private LongSupplier clock = System::currentTimeMillis;
         private CircuitBreaker.Listener listener = (from, to) -> {
@@ -98,6 +102,22 @@ public final class CircuitBreakerConfig {
             }
             this.openDurationMillis = millis;
             return this;
+        }
+
+        public Builder openDuration(Duration duration) {
+            return openDurationMillis(duration.toMillis());
+        }
+
+        public Builder statWindowMillis(long millis) {
+            if (millis <= 0) {
+                throw new IllegalArgumentException("statWindowMillis must be positive: " + millis);
+            }
+            this.statWindowMillis = millis;
+            return this;
+        }
+
+        public Builder statWindow(Duration duration) {
+            return statWindowMillis(duration.toMillis());
         }
 
         public Builder windowBuckets(int count) {

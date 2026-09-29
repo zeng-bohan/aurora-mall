@@ -6,6 +6,7 @@ import com.zengbohan.aurora.rpc.protocol.RpcFrame;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
+import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.ChannelOption;
@@ -14,17 +15,18 @@ import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.SocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
-import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
+import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.handler.timeout.IdleStateHandler;
 import io.netty.util.concurrent.DefaultPromise;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.GenericFutureListener;
 
+import java.lang.System.Logger;
+import java.lang.System.Logger.Level;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -34,8 +36,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>
  * 调用与连接解耦：每次 invoke 分配唯一 requestId，响应按 requestId 找回挂起的调用；
  * 断线时所有在途 Future 立即失败（而不是等超时），重连成功后后续调用自动走新连接。
+ * 心跳节奏独立于重连退避：连接空闲超过心跳间隔才发 ping，不随退避周期抖动。
  */
 public class RpcClient {
+
+    private static final Logger log = System.getLogger(RpcClient.class.getName());
 
     private static final String PING = "C:ping";
 
@@ -52,7 +57,8 @@ public class RpcClient {
     private final Map<Long, DefaultPromise<byte[]>> pending = new ConcurrentHashMap<>();
     private final AtomicLong requestIdSeq = new AtomicLong();
     private volatile boolean running;
-    private volatile long lastResponseNanos; // 心跳/活动判定
+    /** 上次发 ping 的时刻（纳秒），实现心跳间隔与重连退避解耦。 */
+    private volatile long lastPingNanos;
 
     public RpcClient(String host, int port, String internalSecret) {
         this(host, port, internalSecret, 3000, 30_000, 500);
@@ -60,6 +66,12 @@ public class RpcClient {
 
     public RpcClient(String host, int port, String internalSecret,
             long requestTimeoutMillis, long heartbeatIntervalMillis, long reconnectBackoffMillis) {
+        if (host == null || host.isEmpty()) {
+            throw new IllegalArgumentException("host must not be empty");
+        }
+        if (requestTimeoutMillis <= 0 || heartbeatIntervalMillis <= 0 || reconnectBackoffMillis <= 0) {
+            throw new IllegalArgumentException("timeouts must be positive");
+        }
         this.host = host;
         this.port = port;
         this.internalSecret = internalSecret;
@@ -69,6 +81,9 @@ public class RpcClient {
     }
 
     public synchronized void start() {
+        if (group != null) {
+            return; // 幂等：重复 start 不重建线程组
+        }
         group = new NioEventLoopGroup(1, runnable -> {
             Thread t = new Thread(runnable, "rpc-client-io");
             t.setDaemon(true);
@@ -81,6 +96,8 @@ public class RpcClient {
 
     public synchronized void stop() {
         running = false;
+        // 先让在途调用立即失败：若等 channelInactive 触发，线程组可能先死、调用方会白等整个超时
+        failAllPending(new RpcUnavailableException("rpc client stopped"));
         if (channel != null) {
             channel.close();
             channel = null;
@@ -89,6 +106,12 @@ public class RpcClient {
             group.shutdownGracefully(0, 100, TimeUnit.MILLISECONDS);
             group = null;
         }
+    }
+
+    /** 当前是否持有活跃连接（健康检查/测试观察用）。 */
+    public boolean isConnected() {
+        Channel ch = channel;
+        return ch != null && ch.isActive();
     }
 
     private void connectOrRecover() {
@@ -109,25 +132,30 @@ public class RpcClient {
                         @Override
                         protected void initChannel(SocketChannel ch) {
                             ch.pipeline()
-                                    .addLast(new LengthFieldBasedFrameDecoder(
-                                            ProtocolCodec.MAX_BODY_LENGTH + ProtocolCodec.HEADER_LENGTH,
-                                            14, 4, 0, 0, true))
+                                    .addLast(ProtocolCodec.newFrameDecoder())
+                                    // 读空闲：3 个心跳周期无任何响应视为失联，关连接触发重连
                                     .addLast(new IdleStateHandler(
-                                            (int) Math.min(heartbeatIntervalMillis * 3, Integer.MAX_VALUE), 0, 0)) // 读空闲：3 周期无响应视为失联
+                                            (int) Math.min(heartbeatIntervalMillis * 3, Integer.MAX_VALUE),
+                                            0, 0, TimeUnit.MILLISECONDS))
                                     .addLast(new ClientFrameHandler());
                         }
                     });
             // 异步连接：不能在 event-loop 线程上 sync()（该线程正是完成连接的线程，会自锁）
             bootstrap.connect(host, port).addListener((GenericFutureListener<Future<? super Void>>) f -> {
                 if (f.isSuccess()) {
-                    Channel newChannel = ((io.netty.channel.ChannelFuture) f).channel();
+                    Channel newChannel = ((ChannelFuture) f).channel();
                     this.channel = newChannel;
+                    this.lastPingNanos = System.nanoTime();
                     sendHandshake(newChannel);
                     onConnected(newChannel);
+                } else {
+                    // 连接失败：DEBUG 记录（服务未起是常态路径），退避后由定时任务重试
+                    log.log(Level.DEBUG, "rpc connect to " + host + ":" + port
+                            + " failed, will retry: " + f.cause());
                 }
             });
         } catch (Exception e) {
-            // 连接失败，退避后由定时任务重试
+            log.log(Level.WARNING, "rpc connect setup error: " + e);
         }
     }
 
@@ -141,14 +169,20 @@ public class RpcClient {
     protected void onConnected(Channel ch) {
     }
 
+    /** 空闲超过心跳间隔才发 ping：请求本身在流动时不额外打扰。 */
     private void maybeHeartbeat() {
-        // 简化的读空闲检测交给 IdleStateHandler；这里发心跳保活
         Channel ch = channel;
-        if (ch != null && ch.isActive()) {
-            RpcFrame ping = RpcFrame.request(0L, MessageType.CONTROL, JsonSerializerCode.JSON,
-                    PING.getBytes(StandardCharsets.UTF_8));
-            ch.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(ping)));
+        if (ch == null || !ch.isActive()) {
+            return;
         }
+        long now = System.nanoTime();
+        if (now - lastPingNanos < heartbeatIntervalMillis * 1_000_000L) {
+            return;
+        }
+        lastPingNanos = now;
+        RpcFrame ping = RpcFrame.request(0L, MessageType.CONTROL, JsonSerializerCode.JSON,
+                PING.getBytes(StandardCharsets.UTF_8));
+        ch.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(ping)));
     }
 
     /**
@@ -194,7 +228,7 @@ public class RpcClient {
         }
     }
 
-    /** 连接丢失：在途调用全部失败（重连后自动恢复）。 */
+    /** 在途调用全部立即失败（断线/停止时调用；按 key 移除保证幂等）。 */
     void failAllPending(Throwable cause) {
         for (Map.Entry<Long, DefaultPromise<byte[]>> entry : pending.entrySet()) {
             DefaultPromise<byte[]> p = pending.remove(entry.getKey());
@@ -215,7 +249,6 @@ public class RpcClient {
                 ctx.close();
                 return;
             }
-            lastResponseNanos = System.nanoTime();
             if (frame.type() == MessageType.CONTROL) {
                 return; // pong，忽略
             }
@@ -241,7 +274,7 @@ public class RpcClient {
 
         @Override
         public void userEventTriggered(ChannelHandlerContext ctx, Object evt) {
-            if (evt instanceof io.netty.handler.timeout.IdleStateEvent) {
+            if (evt instanceof IdleStateEvent) {
                 // 读空闲：连接已失联，主动关闭触发重连
                 ctx.close();
             }
@@ -249,11 +282,8 @@ public class RpcClient {
 
         @Override
         public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
+            log.log(Level.DEBUG, "rpc client pipeline error, closing: " + cause);
             ctx.close();
         }
-    }
-
-    public long lastResponseNanos() {
-        return lastResponseNanos;
     }
 }

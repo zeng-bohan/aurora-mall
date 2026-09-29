@@ -218,4 +218,33 @@ class CircuitBreakerTest {
         breaker.execute(ok());
         assertThat(closeEvents.get()).isEqualTo(1);
     }
+
+    @Test
+    void supplierVariantWrapsWithoutCheckedExceptions() {
+        CircuitBreaker breaker = breaker(config().build());
+
+        assertThat(breaker.executeSupplier(() -> "ok")).isEqualTo("ok");
+        assertThatThrownBy(() -> breaker.executeSupplier(() -> {
+            throw new IllegalStateException("supplier blew up");
+        })).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void failuresAgeOutOfStatWindowIndependentlyOfOpenDuration() throws Exception {
+        // 统计窗口 200ms 与 OPEN 时长 10s 相互独立：早期失败出窗后不应再推高失败率
+        CircuitBreaker breaker = breaker(config()
+                .statWindowMillis(200)
+                .openDurationMillis(10_000)
+                .minRequestThreshold(3)
+                .build());
+
+        assertThatThrownBy(() -> breaker.execute(boom())).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> breaker.execute(boom())).isInstanceOf(IllegalStateException.class);
+
+        advance(500); // 统计窗（200ms）已完全滑过，两次失败出窗
+        breaker.execute(ok());
+        // 若统计窗仍包住早期失败：3 次里 2 败 = 67% ≥ 50% 会误熔断；
+        // 出窗后只剩 1 次成功，样本数低于阈值不判定，保持 CLOSED
+        assertThat(breaker.state()).isEqualTo(CircuitBreakerState.CLOSED);
+    }
 }

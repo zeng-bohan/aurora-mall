@@ -54,7 +54,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- this dev box runs out of page file with the default 512m fork -->
+                    <!-- 本机内存紧张：默认 512m 的 surefire fork 会耗尽页面文件 -->
                     <argLine>-Xmx192m -XX:+UseSerialGC</argLine>
                 </configuration>
             </plugin>

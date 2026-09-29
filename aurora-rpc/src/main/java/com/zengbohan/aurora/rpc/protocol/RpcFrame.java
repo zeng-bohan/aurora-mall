@@ -17,6 +17,11 @@ public final class RpcFrame {
     private final byte serializerCode;
     private final byte status;
     private final byte[] body;
+    /**
+     * 帧声明的 body 长度。-1 = 以 body 数组实际长度为准（正常构造路径）。
+     * 仅解头的帧（见 {@link #headerOnly}）没有 body，但声明的长度要如实报告。
+     */
+    private final int declaredBodyLength;
 
     private RpcFrame(long requestId, MessageType type, byte serializerCode, byte status, byte[] body) {
         this.requestId = requestId;
@@ -24,6 +29,17 @@ public final class RpcFrame {
         this.serializerCode = serializerCode;
         this.status = status;
         this.body = body;
+        this.declaredBodyLength = -1;
+    }
+
+    private RpcFrame(long requestId, MessageType type, byte serializerCode, byte status,
+            byte[] body, int declaredBodyLength) {
+        this.requestId = requestId;
+        this.type = type;
+        this.serializerCode = serializerCode;
+        this.status = status;
+        this.body = body;
+        this.declaredBodyLength = declaredBodyLength;
     }
 
     public static RpcFrame request(long requestId, MessageType type, byte serializerCode, byte[] body) {
@@ -46,12 +62,14 @@ public final class RpcFrame {
     }
 
     /**
-     * 仅解码头时使用：body 未知（等待按 bodyLength 读取），但 status 已在头里。
+     * 仅解码头时使用：body 尚未从流中切出，但头里声明的长度要如实报告。
+     * <p>
+     * 不按声明长度分配占位数组——坏帧头可能声明 10MB，逐帧分配是内存放大面。
+     * body 为空数组，{@link #bodyLength()} 返回声明值。
      */
     static RpcFrame headerOnly(long requestId, MessageType type, byte serializerCode,
             byte status, int bodyLength) {
-        byte[] placeholder = new byte[Math.max(bodyLength, 0)];
-        return new RpcFrame(requestId, type, serializerCode, status, placeholder);
+        return new RpcFrame(requestId, type, serializerCode, status, new byte[0], Math.max(bodyLength, 0));
     }
 
     /** 用解出的真实 body 重建帧（decode 的后半段）。 */
@@ -80,7 +98,8 @@ public final class RpcFrame {
     }
 
     public int bodyLength() {
-        return body.length;
+        // 仅解头的帧 body 为空，但帧头声明的长度才是协议事实
+        return declaredBodyLength >= 0 ? declaredBodyLength : body.length;
     }
 
     /** 内部可见的直接引用，避免编解码时不必要的拷贝。 */
