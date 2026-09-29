@@ -53,8 +53,8 @@ class FrameDecoderTest {
         ByteBuf second = channel.readInbound();
         assertThat(first).isNotNull();
         assertThat(second).isNotNull();
-        RpcFrame firstFrame = ProtocolCodec.decodeHeader(toBytes(first));
-        RpcFrame secondFrame = ProtocolCodec.decodeHeader(toBytes(second));
+        FrameHeader firstFrame = ProtocolCodec.decodeHeader(toBytes(first));
+        FrameHeader secondFrame = ProtocolCodec.decodeHeader(toBytes(second));
         assertThat(firstFrame.requestId()).isEqualTo(1L);
         assertThat(secondFrame.requestId()).isEqualTo(2L);
         first.release();
@@ -74,7 +74,7 @@ class FrameDecoderTest {
         channel.writeInbound(Unpooled.wrappedBuffer(full, ProtocolCodec.HEADER_LENGTH, full.length - ProtocolCodec.HEADER_LENGTH));
         ByteBuf in = channel.readInbound();
         assertThat(in).isNotNull();
-        RpcFrame frame = ProtocolCodec.decodeHeader(toBytes(in));
+        FrameHeader frame = ProtocolCodec.decodeHeader(toBytes(in));
         assertThat(frame.requestId()).isEqualTo(3L);
         in.release();
     }
