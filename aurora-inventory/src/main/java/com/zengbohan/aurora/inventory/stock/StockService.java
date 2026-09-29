@@ -74,11 +74,21 @@ public class StockService {
         }
     }
 
+    /**
+     * Order-cancelled path: the redis sellable number goes back up AND the DB
+     * reservation is released, so the two layers converge without waiting for
+     * the reconcile job. The guarded decrement keeps reserved non-negative;
+     * a zero-row release (event not yet consumed) is warned for reconciliation.
+     */
     public void rollback(long skuId, int quantity) {
         if (quantity < 1) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "回滚数量必须大于 0");
         }
         redis.execute(scripts.rollback, List.of(StockLuaScripts.key(skuId)), String.valueOf(quantity));
+        if (stockMapper.decrementReserved(skuId, quantity) == 0) {
+            log.warn("rollback: db reserved release skipped for sku {} x{} (event not yet applied?)",
+                    skuId, quantity);
+        }
     }
 
     /**
