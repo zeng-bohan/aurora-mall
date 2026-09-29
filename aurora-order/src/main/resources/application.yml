@@ -8,6 +8,30 @@ spring:
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
+  datasource:
+    url: jdbc:mysql://${MYSQL_ADDR:localhost:13306}/aurora_order?characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${MYSQL_PASSWORD:aurora123}
+
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:16379}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+aurora:
+  config:
+    required-keys: aurora.internal.secret
+  order:
+    # RocketMQ delay level 16 = 30min; smoke tests shrink it via the config center
+    close-delay-level: 16
+    close-timeout-seconds: 1800
+    tx-retry-interval-ms: 30000
+    close-scan-interval-ms: 60000
 
 management:
   endpoints:
@@ -19,8 +43,3 @@ logging:
   pattern:
     # traceId rides every log line via the MDC key set by TraceIdFilter
     level: "%5p [${spring.application.name:},%X{traceId:-}]"
-
-# secret from the nacos config center (see application-default.yml)
-aurora:
-  config:
-    required-keys: aurora.internal.secret
