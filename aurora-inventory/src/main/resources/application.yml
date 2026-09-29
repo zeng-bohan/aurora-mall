@@ -8,6 +8,26 @@ spring:
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
+  datasource:
+    url: jdbc:mysql://${MYSQL_ADDR:localhost:13306}/aurora_inventory?characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${MYSQL_PASSWORD:aurora123}
+
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:16379}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+aurora:
+  config:
+    required-keys: aurora.internal.secret
+  stock:
+    reconcile-interval-ms: 60000
 
 management:
   endpoints:
@@ -19,8 +39,3 @@ logging:
   pattern:
     # traceId rides every log line via the MDC key set by TraceIdFilter
     level: "%5p [${spring.application.name:},%X{traceId:-}]"
-
-# secret from the nacos config center (see application-default.yml)
-aurora:
-  config:
-    required-keys: aurora.internal.secret
