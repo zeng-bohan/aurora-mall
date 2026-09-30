@@ -47,14 +47,19 @@ jobs:
           name: service-jars
           path: jars
 
-      # Dockerfile 的 COPY 以 aurora-<svc>/target/*.jar 为上下文路径，把 jar 归位
+      # Dockerfile 的 COPY 以 aurora-<svc>/target/*.jar 为上下文路径，把 jar 归位。
+      # download-artifact 按 upload 时的仓库相对路径还原（jars/aurora-<svc>/target/…），
+      # 用 find 递归取回再按模块名放置
       - name: Place jars back into module targets
         run: |
-          shopt -s nullglob
-          for jar in jars/aurora-*-0.1.0-SNAPSHOT.jar; do
+          while read -r jar; do
             name="$(basename "$jar" -0.1.0-SNAPSHOT.jar)"
             mkdir -p "$name/target"
-            mv "$jar" "$name/target/"
+            cp "$jar" "$name/target/"
+          done < <(find jars -name 'aurora-*-0.1.0-SNAPSHOT.jar')
+          for dockerfile in */Dockerfile; do
+            context="$(dirname "$dockerfile")"
+            ls "$context"/target/*.jar > /dev/null || { echo "missing jar for $context"; exit 1; }
           done
 
       # Builds every service image locally to prove the Dockerfiles work.
