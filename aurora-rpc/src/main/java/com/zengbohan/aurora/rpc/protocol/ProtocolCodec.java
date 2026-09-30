@@ -63,7 +63,9 @@ public final class ProtocolCodec {
     private final Map<Byte, Serializer> serializers = new HashMap<>();
     private final com.fasterxml.jackson.databind.ObjectMapper mapper =
             new com.fasterxml.jackson.databind.ObjectMapper()
-                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+                    .registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+                    // 金额精度：泛化还原（Map→record）同样不能让小数过 Double
+                    .enable(com.fasterxml.jackson.databind.DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
 
     public ProtocolCodec() {
         register(new JsonSerializer());
@@ -104,6 +106,12 @@ public final class ProtocolCodec {
      */
     public <T> T convertValue(Object fromValue, Class<T> toValueType) {
         return mapper.convertValue(fromValue, toValueType);
+    }
+
+    /** 泛型签名版：{@code List<ProductSnapshot>} 这类返回值必须按
+     * {@code method.getGenericReturnType()} 还原，否则元素停留在 Map。 */
+    public Object convertValue(Object fromValue, java.lang.reflect.Type toType) {
+        return mapper.convertValue(fromValue, mapper.getTypeFactory().constructType(toType));
     }
 
     /** 按指定实现序列化（proxy 层用于带 code 的帧）。 */

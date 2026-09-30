@@ -1,13 +1,12 @@
 package com.zengbohan.aurora.cart.service;
 
-import com.zengbohan.aurora.cart.client.ProductClient;
+import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.cart.dto.CartItem;
 import com.zengbohan.aurora.cart.dto.CartItemRequest;
-import com.zengbohan.aurora.cart.dto.ProductSnapshot;
+import com.zengbohan.aurora.cart.port.ProductPort;
 import com.zengbohan.aurora.cart.store.CartStore;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.common.result.Result;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -18,11 +17,11 @@ import java.util.Map;
 public class CartService {
 
     private final CartStore cartStore;
-    private final ProductClient productClient;
+    private final ProductPort productPort;
 
-    public CartService(CartStore cartStore, ProductClient productClient) {
+    public CartService(CartStore cartStore, ProductPort productPort) {
         this.cartStore = cartStore;
-        this.productClient = productClient;
+        this.productPort = productPort;
     }
 
     /** Repeated adds of the same sku accumulate quantity (redis HINCRBY). */
@@ -44,19 +43,15 @@ public class CartService {
         cartStore.clear(userId);
     }
 
-    /** Line items with product snapshots joined via openfeign batch lookup. */
+    /** Line items with product snapshots joined via port batch lookup. */
     public List<CartItem> view(long userId) {
         Map<Long, Long> lines = cartStore.entries(userId);
         if (lines.isEmpty()) {
             return List.of();
         }
-        Result<List<ProductSnapshot>> batch =
-                productClient.batch(new ArrayList<>(lines.keySet()));
-        if (batch == null || batch.code() != ErrorCode.SUCCESS.getCode() || batch.data() == null) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
-        }
+        List<ProductSnapshot> batch = productPort.batch(new ArrayList<>(lines.keySet()));
         Map<Long, ProductSnapshot> snapshots = new java.util.HashMap<>();
-        for (ProductSnapshot snapshot : batch.data()) {
+        for (ProductSnapshot snapshot : batch) {
             if (snapshot.id() != null) {
                 snapshots.put(snapshot.id(), snapshot);
             }
@@ -73,22 +68,10 @@ public class CartService {
     }
 
     private void requireProductExists(long skuId) {
-        Result<ProductSnapshot> result;
-        try {
-            result = productClient.detail(skuId);
-        } catch (RuntimeException e) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
-        }
-        if (result == null) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
-        }
-        if (result.code() == ErrorCode.SUCCESS.getCode() && result.data() != null) {
-            return;
-        }
-        if (result.code() == ErrorCode.NOT_FOUND.getCode()) {
+        // 端口语义：null=不存在；服务不可用由适配器翻译成 SYSTEM_ERROR 业务异常
+        ProductSnapshot snapshot = productPort.detail(skuId);
+        if (snapshot == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "商品不存在");
         }
-        // any other envelope (system error upstream) is an outage, not a bad sku
-        throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
     }
 }

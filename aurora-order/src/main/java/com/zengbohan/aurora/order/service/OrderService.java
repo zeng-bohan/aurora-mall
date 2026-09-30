@@ -2,6 +2,7 @@ package com.zengbohan.aurora.order.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.idempotent.Idempotent;
@@ -9,7 +10,6 @@ import com.zengbohan.aurora.common.idempotent.Strategy;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
 import com.zengbohan.aurora.order.client.InventoryClient;
-import com.zengbohan.aurora.order.client.ProductClient;
 import com.zengbohan.aurora.order.dto.OrderView;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
@@ -104,7 +104,7 @@ public class OrderService {
             // separate bean call so the proxy actually wraps it
             return atOrderPlacer.placeAt(userId, request);
         }
-        ProductClient.ProductInfo product = productGuard.load(request.skuId());
+        ProductSnapshot product = productGuard.load(request.skuId());
         BigDecimal total = product.price().multiply(BigDecimal.valueOf(request.quantity()));
 
         // 第一步：Redis 预扣。失败即返回，无需补偿。

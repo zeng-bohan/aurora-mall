@@ -28,6 +28,12 @@ mybatis-plus:
 aurora:
   config:
     required-keys: aurora.internal.secret
+  # 手写 RPC 导出（M3 T8）：true 时随上下文启动 RPC 监听并注册进 nacos
+  rpc:
+    enabled: ${AURORA_RPC_ENABLED:false}
+    registry-addr: ${NACOS_ADDR:localhost:8848}
+    host: ${RPC_HOST:127.0.0.1}
+    port: ${RPC_PORT:9181}
 
 management:
   endpoints:

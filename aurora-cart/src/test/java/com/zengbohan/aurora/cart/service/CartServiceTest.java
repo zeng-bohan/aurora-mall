@@ -1,44 +1,64 @@
 package com.zengbohan.aurora.cart.service;
 
-import com.zengbohan.aurora.cart.client.ProductClient;
+import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.cart.dto.CartItem;
 import com.zengbohan.aurora.cart.dto.CartItemRequest;
-import com.zengbohan.aurora.cart.dto.ProductSnapshot;
+import com.zengbohan.aurora.cart.port.ProductPort;
 import com.zengbohan.aurora.cart.store.InMemoryCartStore;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.common.result.Result;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyList;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
 
+/**
+ * 购物车业务单测：业务只依赖 ProductPort 端口（M3 T8）。
+ * 端口语义——detail 不存在返回 null、batch 缺失 id 不在结果中、
+ * 不可用在适配器层统一翻译为 SYSTEM_ERROR 业务异常——用假端口模拟。
+ */
 class CartServiceTest {
 
     private InMemoryCartStore store;
-    private ProductClient productClient;
+    private FakeProductPort productPort;
     private CartService service;
 
     private static final ProductSnapshot MUG =
             new ProductSnapshot(1L, "Aurora Mug", new BigDecimal("29.90"), 100, 1);
 
+    /** 假端口：可编程返回与故障。 */
+    private static final class FakeProductPort implements ProductPort {
+        final Map<Long, ProductSnapshot> catalog = new HashMap<>(Map.of(1L, MUG));
+        boolean outage;
+
+        @Override
+        public ProductSnapshot detail(long id) {
+            if (outage) {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
+            }
+            return catalog.get(id);
+        }
+
+        @Override
+        public List<ProductSnapshot> batch(List<Long> ids) {
+            if (outage) {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
+            }
+            return ids.stream().filter(catalog::containsKey).map(catalog::get).toList();
+        }
+    }
+
     @BeforeEach
     void setUp() {
         store = new InMemoryCartStore();
-        productClient = mock(ProductClient.class);
-        service = new CartService(store, productClient);
-        when(productClient.detail(anyLong())).thenReturn(Result.ok(MUG));
-        when(productClient.batch(anyList()))
-                .thenReturn(Result.ok(List.of(MUG)));
+        productPort = new FakeProductPort();
+        service = new CartService(store, productPort);
     }
 
     @Test
@@ -51,8 +71,6 @@ class CartServiceTest {
 
     @Test
     void addUnknownSkuThrowsParamError() {
-        when(productClient.detail(999L)).thenReturn(Result.fail(ErrorCode.NOT_FOUND));
-
         assertThatThrownBy(() -> service.add(7L, new CartItemRequest(999L, 1)))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.PARAM_ERROR.getCode());
@@ -60,18 +78,8 @@ class CartServiceTest {
     }
 
     @Test
-    void upstreamSystemErrorIsAnOutageNotABadSku() {
-        when(productClient.detail(1L)).thenReturn(Result.fail(ErrorCode.SYSTEM_ERROR));
-
-        assertThatThrownBy(() -> service.add(7L, new CartItemRequest(1L, 1)))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.SYSTEM_ERROR.getCode());
-        assertThat(store.entries(7L)).isEmpty();
-    }
-
-    @Test
-    void productServiceDownThrowsSystemErrorWithoutWritingCart() {
-        when(productClient.detail(anyLong())).thenThrow(new RuntimeException("connect refused"));
+    void productOutageThrowsSystemErrorWithoutWritingCart() {
+        productPort.outage = true; // 适配器把不可用翻译成 SYSTEM_ERROR，服务层只管业务语义
 
         assertThatThrownBy(() -> service.add(7L, new CartItemRequest(1L, 1)))
                 .isInstanceOf(BusinessException.class)
@@ -103,12 +111,10 @@ class CartServiceTest {
 
     @Test
     void viewSkipsLinesWhoseProductDisappeared() {
+        productPort.catalog.put(555L, new ProductSnapshot(555L, "Gone", BigDecimal.ONE, 0, 1));
         service.add(7L, new CartItemRequest(1L, 4));
         service.add(7L, new CartItemRequest(555L, 1));
-        // batch returns only the surviving product
-        when(productClient.detail(555L)).thenReturn(Result.ok(new ProductSnapshot(
-                555L, "Gone", BigDecimal.ONE, 0, 1)));
-        when(productClient.batch(anyList())).thenReturn(Result.ok(List.of(MUG)));
+        productPort.catalog.remove(555L); // 商品下架：batch 不再返回该 id
 
         List<CartItem> items = service.view(7L);
 

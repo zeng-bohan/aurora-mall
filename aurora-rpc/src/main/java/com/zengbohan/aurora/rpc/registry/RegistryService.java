@@ -24,4 +24,10 @@ public interface RegistryService {
     void subscribe(String service, Consumer<List<ServiceInstance>> listener);
 
     void unsubscribe(String service, Consumer<List<ServiceInstance>> listener);
+
+    /**
+     * 同步拉取当前可用实例（健康过滤同订阅）。订阅推送是异步的——消费端
+     * 启动后第一次调用可能早于首帧推送，用它兜底消除竞态。
+     */
+    List<ServiceInstance> discover(String service);
 }

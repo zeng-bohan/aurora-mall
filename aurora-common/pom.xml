@@ -23,6 +23,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
+        <!-- compile-time only: InternalSecretFeignConfig; runtime comes from the
+             services that actually use openfeign (gateway scans this package too) -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+            <optional>true</optional>
+        </dependency>
         <!-- compile-time only: idempotent stores; auto-config lives in the services -->
         <dependency>
             <groupId>org.springframework</groupId>

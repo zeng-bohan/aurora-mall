@@ -1,7 +1,7 @@
 package com.zengbohan.aurora.cart.client;
 
 import com.zengbohan.aurora.common.result.Result;
-import com.zengbohan.aurora.cart.dto.ProductSnapshot;
+import com.zengbohan.aurora.api.product.ProductSnapshot;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

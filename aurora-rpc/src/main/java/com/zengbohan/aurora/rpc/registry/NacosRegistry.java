@@ -116,6 +116,16 @@ public class NacosRegistry implements RegistryService, AutoCloseable {
         }
     }
 
+    @Override
+    public List<ServiceInstance> discover(String service) {
+        try {
+            // 只取健康实例，与订阅推送同口径
+            return toAuroraInstances(service, naming.selectInstances(service, group, true));
+        } catch (NacosException e) {
+            throw new IllegalStateException("nacos discover failed for " + service, e);
+        }
+    }
+
     /** 只保留 enabled + healthy 的实例。 */
     private static List<ServiceInstance> toAuroraInstances(String service, List<Instance> instances) {
         if (instances == null) {

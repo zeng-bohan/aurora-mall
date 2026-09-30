@@ -17,6 +17,10 @@ spring.data.redis:
 aurora:
   config:
     required-keys: aurora.internal.secret
+  # 手写 RPC 切换（M3 T8）：true 时商品查询走 aurora-rpc，缺省走 OpenFeign
+  rpc:
+    enabled: ${AURORA_RPC_ENABLED:false}
+    registry-addr: ${NACOS_ADDR:localhost:8848}
 
 management:
   endpoints:
