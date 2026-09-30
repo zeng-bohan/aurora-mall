@@ -2,6 +2,7 @@ package com.zengbohan.aurora.payment.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zengbohan.aurora.api.order.OrderSummary;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
@@ -48,7 +49,7 @@ public class PaymentService {
             requireOwner(userId, orderId);
             return existing;
         }
-        OrderClient.OrderInfo order = loadPayableOrder(orderId);
+        OrderSummary order = loadPayableOrder(orderId);
         if (order.userId() != userId) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
@@ -99,14 +100,14 @@ public class PaymentService {
     }
 
     private void requireOwner(long userId, long orderId) {
-        OrderClient.OrderInfo order = loadOrder(orderId);
+        OrderSummary order = loadOrder(orderId);
         if (order == null || order.userId() != userId) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
     }
 
-    private OrderClient.OrderInfo loadPayableOrder(long orderId) {
-        OrderClient.OrderInfo order = loadOrder(orderId);
+    private OrderSummary loadPayableOrder(long orderId) {
+        OrderSummary order = loadOrder(orderId);
         if (order == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
@@ -116,8 +117,8 @@ public class PaymentService {
         return order;
     }
 
-    private OrderClient.OrderInfo loadOrder(long orderId) {
-        Result<OrderClient.OrderInfo> result;
+    private OrderSummary loadOrder(long orderId) {
+        Result<OrderSummary> result;
         try {
             result = orderClient.byId(orderId);
         } catch (RuntimeException e) {
@@ -136,7 +137,7 @@ public class PaymentService {
     }
 
     private void publishPaid(PaymentOrder payment) {
-        OrderClient.OrderInfo order = loadOrder(payment.getOrderId());
+        OrderSummary order = loadOrder(payment.getOrderId());
         if (order == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "订单服务不可用");
         }

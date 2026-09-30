@@ -19,6 +19,8 @@ public class JsonSerializer implements Serializer {
     public JsonSerializer() {
         this.mapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
+                // 金额精度：未开此项 JSON 小数走 Double，BigDecimal 19.90 会被劣化成 19.9
+                .enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS)
                 .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }

@@ -53,6 +53,11 @@ public class InMemoryRegistry implements RegistryService {
         }
     }
 
+    @Override
+    public List<ServiceInstance> discover(String service) {
+        return snapshot(service);
+    }
+
     private void notifyListeners(String service) {
         List<ServiceInstance> snapshot = snapshot(service);
         CopyOnWriteArrayList<Consumer<List<ServiceInstance>>> list = listeners.get(service);

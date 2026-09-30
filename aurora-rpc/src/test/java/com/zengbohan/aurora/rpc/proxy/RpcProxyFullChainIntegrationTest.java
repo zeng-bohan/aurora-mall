@@ -40,6 +40,9 @@ class RpcProxyFullChainIntegrationTest {
 
         String boom();
 
+        /** 泛型容器返回值：回归 List<ProductSnapshot> 形态的擦除还原。 */
+        List<Pojo> listPojo();
+
         record Pojo(String name, List<Integer> values) {
         }
     }
@@ -84,6 +87,11 @@ class RpcProxyFullChainIntegrationTest {
             public String boom() {
                 throw new IllegalStateException("unused");
             }
+
+            @Override
+            public List<Pojo> listPojo() {
+                return List.of(new Pojo("in-list", List.of(9)));
+            }
         });
         exporter.start();
 
@@ -92,6 +100,8 @@ class RpcProxyFullChainIntegrationTest {
         EchoApi api = factory.create(EchoApi.class);
 
         assertThat(api.echo("hello")).isEqualTo("echo:hello");
+        // 泛型容器返回值元素还原为具体 record（而非 Map）
+        assertThat(api.listPojo()).containsExactly(new EchoApi.Pojo("in-list", List.of(9)));
         assertThat(api.add(2, 3)).isEqualTo(5); // 原始类型返回
         assertThat(api.roundTrip(new EchoApi.Pojo("abc", List.of(1, 2))))
                 .isEqualTo(new EchoApi.Pojo("ABC", List.of(1, 2))); // 嵌套 record + 集合往返
@@ -124,6 +134,11 @@ class RpcProxyFullChainIntegrationTest {
             @Override
             public String boom() {
                 throw new IllegalArgumentException("bad input");
+            }
+
+            @Override
+            public List<Pojo> listPojo() {
+                return List.of();
             }
         });
         exporter.start();
@@ -183,6 +198,11 @@ class RpcProxyFullChainIntegrationTest {
             @Override
             public String boom() {
                 return "boom";
+            }
+
+            @Override
+            public List<Pojo> listPojo() {
+                return List.of();
             }
         });
         exporter.start();
@@ -260,6 +280,11 @@ class RpcProxyFullChainIntegrationTest {
             @Override
             public String boom() {
                 return prefix;
+            }
+
+            @Override
+            public List<Pojo> listPojo() {
+                return List.of();
             }
         };
     }

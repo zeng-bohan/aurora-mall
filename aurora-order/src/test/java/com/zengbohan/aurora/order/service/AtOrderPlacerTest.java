@@ -5,6 +5,7 @@ import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
 import com.zengbohan.aurora.order.client.InventoryClient;
+import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.order.client.ProductClient;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
@@ -32,8 +33,8 @@ class AtOrderPlacerTest {
     private OrderMapper orderMapper;
     private AtOrderPlacer placer;
 
-    private static final ProductClient.ProductInfo ON_SALE =
-            new ProductClient.ProductInfo(1L, "Aurora Mug", new BigDecimal("19.90"), 100, 1);
+    private static final ProductSnapshot ON_SALE =
+            new ProductSnapshot(1L, "Aurora Mug", new BigDecimal("19.90"), 100, 1);
 
     @BeforeEach
     void setUp() {
@@ -76,7 +77,7 @@ class AtOrderPlacerTest {
     @Test
     void offShelfProductStopsBeforeReservation() {
         when(productClient.detail(1L)).thenReturn(Result.ok(
-                new ProductClient.ProductInfo(1L, "x", BigDecimal.ONE, 0, 0)));
+                new ProductSnapshot(1L, "x", BigDecimal.ONE, 0, 0)));
 
         assertThatThrownBy(() -> placer.placeAt(7L, new PlaceOrderRequest(1L, 1)))
                 .isInstanceOf(BusinessException.class);

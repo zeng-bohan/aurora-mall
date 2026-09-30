@@ -84,8 +84,8 @@ public class RpcProxyFactory {
                 if (returnType.isPrimitive()) {
                     return primitiveBoxed(result, returnType);
                 }
-                // 载荷里的 result 是 JSON 泛化对象（record 会是 Map），按声明返回类型还原
-                return codec.convertValue(result, returnType);
+                // 按泛型签名还原：List<ProductSnapshot> 等容器返回值的元素类型在 Class 里已擦除
+                return codec.convertValue(result, method.getGenericReturnType());
             }
         };
         return (T) Proxy.newProxyInstance(api.getClassLoader(), new Class<?>[]{api}, handler);

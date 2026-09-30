@@ -30,6 +30,7 @@
         <module>aurora-id-generator</module>
         <module>aurora-ratelimit</module>
         <module>aurora-rpc</module>
+        <module>aurora-api</module>
     </modules>
 
     <properties>
@@ -62,6 +63,26 @@
             <dependency>
                 <groupId>com.zengbohan.aurora</groupId>
                 <artifactId>aurora-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zengbohan.aurora</groupId>
+                <artifactId>aurora-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zengbohan.aurora</groupId>
+                <artifactId>aurora-id-generator</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zengbohan.aurora</groupId>
+                <artifactId>aurora-ratelimit</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zengbohan.aurora</groupId>
+                <artifactId>aurora-rpc</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

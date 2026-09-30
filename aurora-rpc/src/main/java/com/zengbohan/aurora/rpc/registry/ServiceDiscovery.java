@@ -53,12 +53,19 @@ public class ServiceDiscovery {
     }
 
     /**
-     * 挑一个实例调用。
+     * 挑一个实例调用。本地快照为空（订阅首帧未达的启动窗口）时同步拉取兜底。
      *
      * @throws RpcUnavailableException 服务没有任何可用实例
      */
     public ServiceInstance pick(String service, LoadBalancer loadBalancer) {
         List<ServiceInstance> snapshot = snapshot(service);
+        if (snapshot.isEmpty()) {
+            // 订阅推送是异步的，启动后第一跳可能早于首帧——同步拉取消除竞态
+            snapshot = registry.discover(service);
+            if (!snapshot.isEmpty()) {
+                cache.put(service, snapshot);
+            }
+        }
         if (snapshot.isEmpty()) {
             throw new RpcUnavailableException("no instances available for " + service);
         }

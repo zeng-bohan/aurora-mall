@@ -3,6 +3,7 @@ package com.zengbohan.aurora.payment.service;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
+import com.zengbohan.aurora.api.order.OrderSummary;
 import com.zengbohan.aurora.payment.client.OrderClient;
 import com.zengbohan.aurora.payment.entity.PaymentOrder;
 import com.zengbohan.aurora.payment.mapper.PaymentOrderMapper;
@@ -31,8 +32,8 @@ class PaymentServiceTest {
     private PaymentEventPublisher publisher;
     private PaymentService service;
 
-    private static final OrderClient.OrderInfo CREATED_ORDER =
-            new OrderClient.OrderInfo(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 0);
+    private static final OrderSummary CREATED_ORDER =
+            new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 0);
 
     @BeforeEach
     void setUp() {
@@ -90,7 +91,7 @@ class PaymentServiceTest {
     void initiateRejectsNonCreatedOrder() {
         when(mapper.findByOrderId(1001L)).thenReturn(null);
         when(orderClient.byId(1001L)).thenReturn(Result.ok(
-                new OrderClient.OrderInfo(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
+                new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
 
         assertThatThrownBy(() -> service.initiate(7L, 1001L))
                 .isInstanceOf(BusinessException.class)
@@ -111,7 +112,7 @@ class PaymentServiceTest {
     void initiateForSomeoneElsesOrderIsNotFound() {
         when(mapper.findByOrderId(1001L)).thenReturn(null);
         when(orderClient.byId(1001L)).thenReturn(Result.ok(
-                new OrderClient.OrderInfo(1001L, 999L, 1L, 2, new BigDecimal("39.80"), 0)));
+                new OrderSummary(1001L, 999L, 1L, 2, new BigDecimal("39.80"), 0)));
 
         assertThatThrownBy(() -> service.initiate(7L, 1001L))
                 .isInstanceOf(BusinessException.class)

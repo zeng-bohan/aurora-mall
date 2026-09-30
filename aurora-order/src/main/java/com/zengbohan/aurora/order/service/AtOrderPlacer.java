@@ -1,10 +1,12 @@
 package com.zengbohan.aurora.order.service;
 
+import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
 import com.zengbohan.aurora.order.client.InventoryClient;
+import com.zengbohan.aurora.order.client.ProductClient;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
 import com.zengbohan.aurora.order.mapper.OrderMapper;
@@ -38,7 +40,7 @@ public class AtOrderPlacer {
 
     @GlobalTransactional(name = "aurora-place-order-at", rollbackFor = Exception.class)
     public long placeAt(long userId, PlaceOrderRequest request) {
-        com.zengbohan.aurora.order.client.ProductClient.ProductInfo product =
+        ProductSnapshot product =
                 productGuard.load(request.skuId());
         BigDecimal total = product.price().multiply(BigDecimal.valueOf(request.quantity()));
 
