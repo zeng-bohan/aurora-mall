@@ -92,7 +92,8 @@ done
 
 ```bash
 bash docker/smoke-services.sh   # 网关 + 6 服务健康端点全 200
-bash docker/smoke-flows.sh      # 60+ 断言：用户/商品/购物车金路径 + 两条交易链
+bash docker/smoke-flows.sh      # 68 断言：金路径 + 两条交易链 + 网关限流链
+bash docker/smoke-rpc.sh        # 链 D：切换手写 RPC 实测后自动还原（可选）
 ```
 
 两个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 每次运行自建用户与商品，可重复执行。
@@ -169,7 +170,7 @@ mvn -pl aurora-rpc test          # 单模块：协议/传输/注册发现（真 
 | M0 | 工程骨架：版本矩阵 + 中间件全家桶 + 7 服务注册 + 网关路由 + CI | ✅ 完成 |
 | M1 | 用户 / 商品 / 购物车（JWT 鉴权、Cache Aside 三防、配置中心） | ✅ 完成 |
 | M2 | 订单 / 库存 / 支付（RocketMQ 事务消息、Seata 对照、统一幂等组件、ID 生成器） | ✅ 完成 |
-| M3 | 手写组件：限流熔断（已交付）+ RPC（已交付）/ 端口切换（进行中） | 🚧 进行中 |
+| M3 | 手写组件：限流熔断 + 简化 RPC（与 OpenFeign 切换）+ 端口收敛 | ✅ 完成 |
 | M4 | 可观测性 + 网关强化 + JMeter 压测报告 | 未开始 |
 | M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 未开始 |
 | M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
@@ -182,6 +183,7 @@ mvn -pl aurora-rpc test          # 单模块：协议/传输/注册发现（真 
 - [CONTEXT.md](CONTEXT.md) — 项目定位、领域词汇表、工程约定
 - [docs/adr/](docs/adr/) — 架构决策记录（0001 技术栈 → 0008 手写组件）
 - [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) — MQ 最终一致 vs Seata AT 对照实验报告
+- [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) — OpenFeign vs 手写 RPC 对照报告（等价性证据 + 微基准 + 边界）
 - [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件的设计取舍与实测数据
 - [docs/agents/](docs/agents/) — AI 协作配置（issue tracker / 标签 / 领域文档）
 

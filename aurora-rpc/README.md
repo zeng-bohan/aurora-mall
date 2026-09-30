@@ -2,6 +2,16 @@
 
 手写简化 RPC（ADR-0008 三部曲之三）：**自定义协议 + Netty 传输 + 序列化 SPI + 动态代理 + 注册发现 + 负载均衡**，与 OpenFeign 可通过配置开关切换（切换收敛见 M3 T8）。核心传输零框架依赖，Spring 胶水可选。
 
+## 实测数据
+
+全链路代理往返微基准（测试内 harness，非 JMH；8 线程 × 5000 次，含熔断/发现/编解码/真 Netty 往返）：
+
+```
+[bench] rpc proxy round-trip: 40000 calls in 1708ms -> 23415 ops/s (8 threads)
+```
+
+对照分析与边界见 [docs/m3-rpc-comparison.md](../docs/m3-rpc-comparison.md)。
+
 ## 设计
 
 ### 传输层 `RpcServer` / `RpcClient`（Netty）
@@ -104,6 +114,16 @@ offset 18  body
 | 发现缓存：并发无撕裂 | 8 读线程 × 2000 次 pick 对抗写线程反复上下线，只见已知实例 |
 | 发现缓存：空快照 | pick 抛 RpcUnavailableException、snapshot 显式为空 |
 | Nacos 集成（auto-skip） | 真 Nacos 注册→订阅推送→注销推送（无 Nacos 自动跳过） |
+
+## 实测数据
+
+全链路代理往返微基准（测试内 harness，非 JMH；8 线程 × 5000 次，含熔断/发现/编解码/真 Netty 往返）：
+
+```
+[bench] rpc proxy round-trip: 40000 calls in 1708ms -> 23415 ops/s (8 threads)
+```
+
+对照分析与边界见 [docs/m3-rpc-comparison.md](../docs/m3-rpc-comparison.md)。
 
 ## 设计要点回顾
 
