@@ -63,6 +63,8 @@ flowchart LR
 | Docker Desktop | ≥6GB 可用内存 | 中间件全家桶（MySQL/Redis/Nacos/RocketMQ/观测栈） |
 | Git Bash | Windows 需 | smoke 脚本为 bash |
 
+> 密码口径：compose 里 MySQL 的 `aurora123` 是 **dev-only** 默认值（与宿主端口偏移同因，便于本地一键起栈）；生产凭据走 nacos 配置中心 + 部署时注入（JWT/internal secret 即此口径）。上线前必须替换全部默认密码。
+
 ## 快速开始（10 分钟）
 
 ```bash
@@ -153,7 +155,7 @@ curl -s -X POST http://localhost:8000/api/order/orders \
 ## 测试
 
 ```bash
-mvn test          # 全模块单测（175+ 例；依赖外部环境的集成测试在无环境时自动跳过）
+mvn test          # 全模块单测（238 例；依赖外部环境的集成测试在无环境时自动跳过）
 mvn -pl aurora-ratelimit test    # 单模块：限流算法 + 熔断状态机 + Guava 基准
 mvn -pl aurora-rpc test          # 单模块：协议/传输/注册发现（真 Netty 往返，零外部依赖）
 ```
