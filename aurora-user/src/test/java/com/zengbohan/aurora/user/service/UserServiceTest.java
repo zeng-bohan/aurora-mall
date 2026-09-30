@@ -186,6 +186,16 @@ class UserServiceTest {
     }
 
     @Test
+    void unknownUserLoginFailsWithSameMessage() {
+        when(userMapper.selectOne(any())).thenReturn(null);
+
+        assertThatThrownBy(() -> userService.login(new LoginRequest("nobody", "whatever")))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.PARAM_ERROR.getCode())
+                .hasMessage("用户名或密码错误");
+    }
+
+    @Test
     void disabledUserCannotLogin() {
         User user = activeUser();
         user.setStatus(0);
