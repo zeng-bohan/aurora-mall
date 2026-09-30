@@ -12,7 +12,24 @@
             </layout>
         </encoder>
     </appender>
+    <!-- Loki 直推（M4 T4）：异步批量；traceId 标签 = 网关下发的 X-Trace-Id，供跨服务检索 -->
+    <appender name="LOKI" class="com.github.loki4j.logback.Loki4jAppender" lazy="true">
+        <http>
+            <url>http://localhost:3100/loki/api/v1/push</url>
+        </http>
+        <format>
+            <label>
+                <pattern>app=aurora,service=${appName},traceId=%X{traceId:-}</pattern>
+            </label>
+            <message>
+                <pattern>%date{yyyy-MM-dd HH:mm:ss.SSS} %5p [${appName},%X{traceId:-},%tid] --- [%15.15t] %-40.40logger{39} : %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}</pattern>
+            </message>
+        </format>
+        <batchMaxItems>100</batchMaxItems>
+        <batchTimeoutMs>3000</batchTimeoutMs>
+    </appender>
     <root level="INFO">
         <appender-ref ref="CONSOLE_SW"/>
+        <appender-ref ref="LOKI"/>
     </root>
 </configuration>
