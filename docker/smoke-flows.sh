@@ -165,6 +165,24 @@ redis_get() {
   docker exec aurora-redis redis-cli GET "aurora:stock:$1" | tr -d '\r'
 }
 
+nacos_publish_gateway() { # limit windowSeconds ("0 0" = restore: no per-route limits)
+  if [[ "$1" == "0" ]]; then
+    local content="aurora:
+  rate-limit:
+    enabled: true
+    routes: {}"
+  else
+    local content="aurora:
+  rate-limit:
+    enabled: true
+    routes:
+      product:
+        limit: $1
+        window-seconds: $2"
+  fi
+  curl -fs -X POST "http://${NACOS_ADDR:-localhost:8848}/nacos/v1/cs/configs"     --data-urlencode "dataId=aurora-gateway.yml"     --data-urlencode "group=DEFAULT_GROUP"     --data-urlencode "tenant=dev"     --data-urlencode "type=yml"     --data-urlencode "content=$content" > /dev/null
+}
+
 nacos_publish_order() { # delayLevel timeoutSeconds
   local content="aurora:
   order:
@@ -228,6 +246,21 @@ assert_eq "100" "$(redis_get "$SKU")" "redis restored to 100"
 nacos_publish_order 16 1800 && ok "nacos: close config restored (level 16)"
 
 echo
+step "chain C: gateway rate limit via nacos, over-limit 429 then recovery"
+# flush residual window members so the count starts clean
+docker exec aurora-redis redis-cli DEL "aurora:rl:product" > /dev/null
+nacos_publish_gateway 2 10 && ok "nacos: product route limited to 2 req / 10s"
+sleep 3 # nacos config listener fires RefreshEvent; @ConfigurationProperties rebinds
+
+req GET "/api/product/products/1" "$TOKEN"; assert_status 200 "limited: first request passes"
+req GET "/api/product/products/1" "$TOKEN"; assert_status 200 "limited: second request passes"
+req GET "/api/product/products/1" "$TOKEN"; assert_status 429 "third request is rate limited"
+assert_body '"code":42900' "rate limit carries business code 42900"
+
+nacos_publish_gateway 0 0 && ok "nacos: rate limit rule restored (no per-route limits)"
+sleep 6 # rebind latency: the previous rule must be gone before the recovery probe
+req GET "/api/product/products/1" "$TOKEN"; assert_status 200 "recovery: request passes after restore"
+
 if [[ $FAIL -eq 0 ]]; then
   echo "smoke-flows OK: $PASS assertions green"
   exit 0

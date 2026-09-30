@@ -1,6 +1,7 @@
 package com.zengbohan.aurora.gateway.ratelimit;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.cloud.context.config.annotation.RefreshScope;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -18,6 +19,11 @@ import java.util.Map;
  * </pre>
  * 没有规则的路由不限流；enabled=false 全局关闭。多实例共享配额（Redis ZSET）。
  */
+/**
+ * {@code @RefreshScope}：刷新时整 bean 销毁重建——Map 属性的 rebind 是合并语义，
+ * {@code routes: {}} 清不掉已有键，销毁重建才能真正移除规则。
+ */
+@RefreshScope
 @ConfigurationProperties(prefix = "aurora.rate-limit")
 public class RateLimitProperties {
 
