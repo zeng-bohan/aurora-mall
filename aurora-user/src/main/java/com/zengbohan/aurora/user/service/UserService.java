@@ -34,6 +34,12 @@ public class UserService {
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final long accessTtlSeconds;
     private final long refreshTtlSeconds;
+    /** 不存在用户时做一次等价 bcrypt 比对，抹平响应时间差。 */
+    private static final String DUMMY_BCRYPT;
+
+    static {
+        DUMMY_BCRYPT = new BCryptPasswordEncoder().encode("aurora-dummy-password");
+    }
 
     public UserService(UserMapper userMapper, JwtCodec jwtCodec, StringRedisTemplate redis,
                        @Value("${aurora.jwt.access-ttl-seconds:1800}") long accessTtlSeconds,
@@ -70,7 +76,12 @@ public class UserService {
     public TokenResponse login(LoginRequest request) {
         User user = userMapper.selectOne(
                 new LambdaQueryWrapper<User>().eq(User::getUsername, request.username()));
-        if (user == null || user.getStatus() == 0 || !encoder.matches(request.password(), user.getPassword())) {
+        if (user == null) {
+            // 拉平与真实 bcrypt 校验的耗时，用户名不存在不再构成可枚举的时序侧信道
+            encoder.matches(request.password(), DUMMY_BCRYPT);
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "用户名或密码错误");
+        }
+        if (user.getStatus() == 0 || !encoder.matches(request.password(), user.getPassword())) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "用户名或密码错误");
         }
         return issueTokens(user);
