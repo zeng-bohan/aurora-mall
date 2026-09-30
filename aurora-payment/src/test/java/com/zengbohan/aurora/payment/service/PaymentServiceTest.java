@@ -4,6 +4,7 @@ import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.api.order.OrderSummary;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zengbohan.aurora.payment.client.OrderClient;
 import com.zengbohan.aurora.payment.entity.PaymentOrder;
 import com.zengbohan.aurora.payment.mapper.PaymentOrderMapper;
@@ -40,7 +41,7 @@ class PaymentServiceTest {
         mapper = mock(PaymentOrderMapper.class);
         orderClient = mock(OrderClient.class);
         publisher = mock(PaymentEventPublisher.class);
-        service = new PaymentService(mapper, orderClient, publisher);
+        service = new PaymentService(mapper, orderClient, publisher, new ObjectMapper());
         when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
     }
 

@@ -33,13 +33,14 @@ public class PaymentService {
     private final PaymentOrderMapper paymentOrderMapper;
     private final OrderClient orderClient;
     private final PaymentEventPublisher publisher;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     public PaymentService(PaymentOrderMapper paymentOrderMapper, OrderClient orderClient,
-                          PaymentEventPublisher publisher) {
+                          PaymentEventPublisher publisher, ObjectMapper objectMapper) {
         this.paymentOrderMapper = paymentOrderMapper;
         this.orderClient = orderClient;
         this.publisher = publisher;
+        this.objectMapper = objectMapper;
     }
 
     /** Idempotent: the same trade order always maps to the same payment order. */

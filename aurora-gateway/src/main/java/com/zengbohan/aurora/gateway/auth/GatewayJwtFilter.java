@@ -41,12 +41,14 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
     private final JwtCodec jwtCodec;
     private final ReactiveStringRedisTemplate redis;
     private final String internalSecret;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
 
     public GatewayJwtFilter(JwtCodec jwtCodec,
                             ReactiveStringRedisTemplate redis,
-                            @Value("${aurora.internal.secret}") String internalSecret) {
+                            @Value("${aurora.internal.secret}") String internalSecret,
+                            ObjectMapper mapper) {
         this.jwtCodec = jwtCodec;
+        this.mapper = mapper;
         this.redis = redis;
         this.internalSecret = internalSecret;
     }

@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.gateway.auth;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zengbohan.aurora.common.auth.JwtCodec;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,7 +38,7 @@ class GatewayJwtFilterTest {
         codec = new JwtCodec(SECRET, Clock.fixed(NOW, ZoneOffset.UTC));
         redis = mock(ReactiveStringRedisTemplate.class);
         when(redis.hasKey(anyString())).thenReturn(Mono.just(false));
-        filter = new GatewayJwtFilter(codec, redis, INTERNAL_SECRET);
+        filter = new GatewayJwtFilter(codec, redis, INTERNAL_SECRET, new ObjectMapper());
     }
 
     private String accessToken(String jti) {
