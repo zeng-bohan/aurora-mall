@@ -7,6 +7,7 @@ import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.product.entity.Sku;
 import com.zengbohan.aurora.product.service.ProductQueryService;
 import com.zengbohan.aurora.rpc.proxy.AuroraRpcService;
+import com.zengbohan.aurora.rpc.proxy.BusinessFailureException;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -31,11 +32,12 @@ public class ProductRpcService implements ProductRpcApi {
             Sku sku = queryService.detail(id);
             return sku == null ? null : toSnapshot(sku);
         } catch (BusinessException e) {
-            // HTTP 形态的 miss 走异常→40400 信封；RPC 契约是返回 null，在此翻译
+            // HTTP 形态的 miss 走异常→40400 信封；RPC 契约是返回 null
             if (e.getErrorCode().getCode() == ErrorCode.NOT_FOUND.getCode()) {
                 return null;
             }
-            throw e;
+            // 其余业务拒绝 → 业务失败标记（客户端还原为 RpcRemoteException，不计熔断）
+            throw new BusinessFailureException(e.getClass().getName(), e.getMessage());
         }
     }
 

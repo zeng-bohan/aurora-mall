@@ -102,9 +102,9 @@ class RpcTransportIntegrationTest {
                     Thread.sleep(50);
                 }
             }
-            // 处理器异常以 RpcRemoteException 穿透，连接不断（后续调用仍可达）
+            // 处理器异常=系统失败：ERROR status → RpcUnavailableException（不断连，计入熔断）
             assertThatThrownBy(() -> failingClient.invoke("x".getBytes(StandardCharsets.UTF_8)))
-                    .isInstanceOf(RpcRemoteException.class)
+                    .isInstanceOf(RpcUnavailableException.class)
                     .hasMessageContaining("business blew up");
         } finally {
             failingClient.stop();
@@ -243,7 +243,7 @@ class RpcTransportIntegrationTest {
                         start.await();
                         burst.invoke("x".getBytes(StandardCharsets.UTF_8));
                         succeeded.incrementAndGet();
-                    } catch (RpcRemoteException e) {
+                    } catch (RpcUnavailableException e) {
                         if (String.valueOf(e.getMessage()).contains("overloaded")) {
                             overloaded.incrementAndGet();
                         }

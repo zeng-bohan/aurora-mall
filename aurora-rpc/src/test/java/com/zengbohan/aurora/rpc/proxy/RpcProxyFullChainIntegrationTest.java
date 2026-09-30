@@ -1,6 +1,7 @@
 package com.zengbohan.aurora.rpc.proxy;
 
 import com.zengbohan.aurora.ratelimit.circuit.CircuitBreakerConfig;
+import com.zengbohan.aurora.ratelimit.circuit.CircuitBreakerState;
 import com.zengbohan.aurora.ratelimit.circuit.CircuitOpenException;
 import com.zengbohan.aurora.rpc.lb.RoundRobinLoadBalancer;
 import com.zengbohan.aurora.rpc.protocol.ProtocolCodec;
@@ -133,7 +134,9 @@ class RpcProxyFullChainIntegrationTest {
 
             @Override
             public String boom() {
-                throw new IllegalArgumentException("bad input");
+                // 业务失败：显式标记 → 服务端转 payload → 客户端 RpcRemoteException
+                throw new com.zengbohan.aurora.rpc.proxy.BusinessFailureException(
+                        "java.lang.IllegalArgumentException", "bad input");
             }
 
             @Override
@@ -217,9 +220,9 @@ class RpcProxyFullChainIntegrationTest {
                 new RoundRobinLoadBalancer(), pool, codec, SECRET, config);
         EchoApi api = factory.create(EchoApi.class);
 
-        // 两次业务失败（100% ≥ 50%）→ OPEN
-        assertThatThrownBy(() -> api.echo("a")).isInstanceOf(RpcRemoteException.class);
-        assertThatThrownBy(() -> api.echo("b")).isInstanceOf(RpcRemoteException.class);
+        // 两次系统失败（100% ≥ 50%）→ OPEN（系统失败计入熔断，业务失败不计）
+        assertThatThrownBy(() -> api.echo("a")).isInstanceOf(RpcUnavailableException.class);
+        assertThatThrownBy(() -> api.echo("b")).isInstanceOf(RpcUnavailableException.class);
         int callsAtOpen = serverCalls.get();
 
         // OPEN 期间快速失败：不触达远端（计数不再涨），远早于网络往返
@@ -234,6 +237,77 @@ class RpcProxyFullChainIntegrationTest {
         healthy.set(true);
         assertThat(api.echo("recover")).isEqualTo("ok");
         assertThat(api.echo("stable")).isEqualTo("ok"); // CLOSED 后正常调用
+    }
+
+    @Test
+    void breakerIgnoresBusinessFailuresButCountsSystemFailures() throws Exception {
+        // 业务失败（payload）不计熔断失败率；系统失败（ERROR status）计入
+        AtomicBoolean mode = new AtomicBoolean(false); // false=业务失败 true=系统失败
+        RpcServiceExporter mixed = new RpcServiceExporter(registry, codec, "127.0.0.1", SECRET);
+        mixed.export(EchoApi.class, new EchoApi() {
+            @Override
+            public String echo(String msg) {
+                if (msg.startsWith("sys")) {
+                    throw new IllegalStateException("system down");
+                }
+                if (msg.startsWith("biz")) {
+                    throw new com.zengbohan.aurora.rpc.proxy.BusinessFailureException(
+                            "java.lang.IllegalArgumentException", "rejected");
+                }
+                return "ok";
+            }
+
+            @Override
+            public int add(int a, int b) {
+                return 0;
+            }
+
+            @Override
+            public EchoApi.Pojo roundTrip(EchoApi.Pojo pojo) {
+                return pojo;
+            }
+
+            @Override
+            public void fireAndForget() {
+            }
+
+            @Override
+            public String boom() {
+                return "boom";
+            }
+
+            @Override
+            public List<EchoApi.Pojo> listPojo() {
+                return List.of();
+            }
+        });
+        mixed.start();
+
+        CircuitBreakerConfig config = CircuitBreakerConfig.builder()
+                .failureRateThreshold(50)
+                .minRequestThreshold(4)
+                .halfOpenPermittedCalls(1)
+                .openDurationMillis(5000)
+                .build();
+        RpcProxyFactory factory = new RpcProxyFactory(discovery,
+                new RoundRobinLoadBalancer(), pool, codec, SECRET, config);
+        EchoApi api = factory.create(EchoApi.class);
+
+        // 4 次业务失败：RpcRemoteException 穿透且不计熔断，保持 CLOSED
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> api.echo("biz")).isInstanceOf(RpcRemoteException.class);
+        }
+        assertThat(breakerState(api, factory)).isEqualTo(CircuitBreakerState.CLOSED);
+
+        // 4 次系统失败（样本 4 成功+4 失败=50%≥50%）→ OPEN
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> api.echo("sys")).isInstanceOf(RpcUnavailableException.class);
+        }
+        assertThat(breakerState(api, factory)).isEqualTo(CircuitBreakerState.OPEN);
+    }
+
+    private CircuitBreakerState breakerState(EchoApi api, RpcProxyFactory factory) {
+        return factory.breakerStateForTest(EchoApi.class);
     }
 
     @Test

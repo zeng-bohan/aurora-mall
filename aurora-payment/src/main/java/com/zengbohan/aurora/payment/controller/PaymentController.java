@@ -4,6 +4,7 @@ import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.payment.entity.PaymentOrder;
 import com.zengbohan.aurora.payment.service.PaymentService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.web.bind.annotation.GetMapping;

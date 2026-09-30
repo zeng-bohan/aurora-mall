@@ -2,10 +2,12 @@ package com.zengbohan.aurora.rpc.proxy;
 
 import com.zengbohan.aurora.ratelimit.circuit.CircuitBreaker;
 import com.zengbohan.aurora.ratelimit.circuit.CircuitBreakerConfig;
+import com.zengbohan.aurora.ratelimit.circuit.CircuitBreakerState;
 import com.zengbohan.aurora.rpc.lb.LoadBalancer;
 import com.zengbohan.aurora.rpc.protocol.ProtocolCodec;
 import com.zengbohan.aurora.rpc.registry.ServiceDiscovery;
 import com.zengbohan.aurora.rpc.transport.RpcRemoteException;
+import com.zengbohan.aurora.rpc.transport.RpcTimeoutException;
 import com.zengbohan.aurora.rpc.transport.RpcUnavailableException;
 
 import java.lang.reflect.InvocationHandler;
@@ -60,6 +62,12 @@ public class RpcProxyFactory {
                 .build();
     }
 
+    /** 测试观察：指定接口的熔断器当前状态。 */
+    CircuitBreakerState breakerStateForTest(Class<?> api) {
+        CircuitBreaker breaker = breakers.get(api);
+        return breaker == null ? null : breaker.state();
+    }
+
     @SuppressWarnings("unchecked")
     public <T> T create(Class<T> api) {
         if (!api.isInterface()) {
@@ -76,7 +84,13 @@ public class RpcProxyFactory {
                 Invocation invocation = new Invocation(api.getName(), method.getName(),
                         typeNames(method.getParameterTypes()), method.getReturnType().getName(),
                         args == null ? new Object[0] : args);
-                Object result = breaker.executeSupplier(() -> callRemote(invocation));
+                // 熔断只包传输段：业务失败（载荷异常）在熔断外还原抛出，不污染失败率
+                InvocationResult payload = breaker.executeSupplier(() -> callRemote(invocation));
+                if (payload.isBusinessFailure()) {
+                    throw new RpcRemoteException(
+                            payload.exceptionType() + ": " + payload.exceptionMessage());
+                }
+                Object result = payload.result();
                 Class<?> returnType = method.getReturnType();
                 if (returnType == void.class) {
                     return null;
@@ -91,19 +105,15 @@ public class RpcProxyFactory {
         return (T) Proxy.newProxyInstance(api.getClassLoader(), new Class<?>[]{api}, handler);
     }
 
-    private Object callRemote(Invocation invocation) {
+    /** 传输段：返回载荷（可能含业务失败标记）；可用性异常计入熔断。 */
+    private InvocationResult callRemote(Invocation invocation) {
         var instance = discovery.pick(invocation.interfaceName(), loadBalancer);
         var client = clientPool.get(instance);
         try {
             byte[] request = codec.serialize(invocation);
             byte[] response = client.invoke(request);
-            InvocationResult result = codec.deserialize(response, InvocationResult.class);
-            if (result.isBusinessFailure()) {
-                // 业务失败与不可用分层：远端类型名 + 消息随 RpcRemoteException 穿透
-                throw new RpcRemoteException(result.exceptionType() + ": " + result.exceptionMessage());
-            }
-            return result.result();
-        } catch (RpcRemoteException | RpcUnavailableException e) {
+            return codec.deserialize(response, InvocationResult.class);
+        } catch (RpcUnavailableException | RpcTimeoutException e) {
             throw e;
         } catch (Exception e) {
             throw new RpcUnavailableException("rpc invocation failed: " + e, e);

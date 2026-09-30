@@ -134,10 +134,13 @@ public class RpcServiceExporter {
             return codec.serialize(InvocationResult.of(
                     void.class.equals(returnType) ? null : codec.convertValue(result, returnType)));
         } catch (InvocationTargetException e) {
-            // 业务异常：类型名 + 消息编进载荷，客户端还原为 RpcRemoteException
             Throwable cause = e.getCause();
-            return codec.serialize(InvocationResult.failure(
-                    cause.getClass().getName(), String.valueOf(cause.getMessage())));
+            // 业务失败（处理器显式标记）：OK + 载荷，客户端还原为 RpcRemoteException
+            // （熔断器不统计）；其余系统异常重抛 → 传输层 ERROR status
+            if (cause instanceof BusinessFailureException bf) {
+                return codec.serialize(InvocationResult.failure(bf.getFailureType(), bf.getMessage()));
+            }
+            throw cause instanceof Exception ? (Exception) cause : new IllegalStateException(cause);
         }
     }
 }
