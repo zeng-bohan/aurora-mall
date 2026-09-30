@@ -9,3 +9,16 @@ scrape_configs:
   - job_name: skywalking-oap
     static_configs:
       - targets: ['skywalking-oap:1234']
+
+  # 服务是宿主机上的裸 JVM（非容器）：经 host.docker.internal 回连宿主端口
+  - job_name: aurora-services
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - 'host.docker.internal:8000'   # gateway
+          - 'host.docker.internal:8081'   # user
+          - 'host.docker.internal:8082'   # product
+          - 'host.docker.internal:8083'   # cart
+          - 'host.docker.internal:8084'   # order
+          - 'host.docker.internal:8085'   # inventory
+          - 'host.docker.internal:8086'   # payment

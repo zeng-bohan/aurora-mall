@@ -57,7 +57,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,prometheus
 
 # aurora.jwt.secret / aurora.internal.secret come from the nacos config center
 # (application-default.yml import); startup fails fast when they are missing
