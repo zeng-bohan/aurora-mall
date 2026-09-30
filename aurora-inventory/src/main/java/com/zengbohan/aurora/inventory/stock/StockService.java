@@ -10,6 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 
@@ -29,13 +30,16 @@ public class StockService {
     private final StockLuaScripts scripts;
     private final ProductStockMapper stockMapper;
     private final DedupStore dedupStore;
+    private final TransactionTemplate transactionTemplate;
 
     public StockService(StringRedisTemplate redis, StockLuaScripts scripts,
-                        ProductStockMapper stockMapper, DedupStore dedupStore) {
+                        ProductStockMapper stockMapper, DedupStore dedupStore,
+                        TransactionTemplate transactionTemplate) {
         this.redis = redis;
         this.scripts = scripts;
         this.stockMapper = stockMapper;
         this.dedupStore = dedupStore;
+        this.transactionTemplate = transactionTemplate;
     }
 
     public void setStock(long skuId, int quantity) {
@@ -77,18 +81,31 @@ public class StockService {
     /**
      * Order-cancelled path: the redis sellable number goes back up AND the DB
      * reservation is released, so the two layers converge without waiting for
-     * the reconcile job. The guarded decrement keeps reserved non-negative;
-     * a zero-row release (event not yet consumed) is warned for reconciliation.
+     * the reconcile job.
+     * <p>
+     * 双侧各自按 orderId 幂等：redis 用 SETNX 标记（恰好一次 INCRBY，挡住
+     * MQ close listener 与超时扫描并发、以及"INCRBY 后、标记落库前崩溃"的
+     * 重入窗口）；DB 用 dedup + 守卫式释放同一事务（崩溃回滚 dedup 行，
+     * 重投递可重入）。任一侧缺失由重入补齐，两侧都不会多加。
      */
-    public void rollback(long skuId, int quantity) {
+    public void rollback(long orderId, long skuId, int quantity) {
         if (quantity < 1) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "回滚数量必须大于 0");
         }
-        redis.execute(scripts.rollback, List.of(StockLuaScripts.key(skuId)), String.valueOf(quantity));
-        if (stockMapper.decrementReserved(skuId, quantity) == 0) {
-            log.warn("rollback: db reserved release skipped for sku {} x{} (event not yet applied?)",
-                    skuId, quantity);
-        }
+        // redis 侧：marker 保证恰好一次 INCRBY
+        redis.execute(scripts.rollback,
+                List.of(StockLuaScripts.releasedMarkerKey(orderId), StockLuaScripts.key(skuId)),
+                String.valueOf(quantity), StockLuaScripts.RELEASE_MARKER_TTL_SECONDS);
+        // db 侧：dedup + 守卫式释放同一事务（崩溃回滚 dedup 行，重投递可重入）
+        transactionTemplate.executeWithoutResult(status -> {
+            if (!dedupStore.tryInsert("stock-release", String.valueOf(orderId))) {
+                return;
+            }
+            if (stockMapper.decrementReserved(skuId, quantity) == 0) {
+                log.warn("rollback: db reserved release skipped for sku {} x{} (event not yet applied?)",
+                        skuId, quantity);
+            }
+        });
     }
 
     /**
@@ -125,14 +142,20 @@ public class StockService {
         }
     }
 
-    /** AT order close: release the db reservation only (no redis was touched). */
-    public void releaseDb(long skuId, int quantity) {
+    /** AT order close: release the db reservation only (no redis was touched).
+     *  同样按 orderId 去重——关单补偿重入不能双扣 reserved。 */
+    public void releaseDb(long orderId, long skuId, int quantity) {
         if (quantity < 1) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "释放数量必须大于 0");
         }
-        if (stockMapper.decrementReserved(skuId, quantity) == 0) {
-            log.warn("releaseDb: nothing to release for sku {} x{}", skuId, quantity);
-        }
+        transactionTemplate.executeWithoutResult(status -> {
+            if (!dedupStore.tryInsert("stock-release-db", String.valueOf(orderId))) {
+                return;
+            }
+            if (stockMapper.decrementReserved(skuId, quantity) == 0) {
+                log.warn("releaseDb: nothing to release for sku {} x{}", skuId, quantity);
+            }
+        });
     }
 
     /**

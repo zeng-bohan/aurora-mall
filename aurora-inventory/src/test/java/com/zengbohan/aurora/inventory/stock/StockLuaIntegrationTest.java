@@ -80,12 +80,20 @@ class StockLuaIntegrationTest {
     }
 
     @Test
-    void rollbackRestoresExactlyWhatWasTaken() {
+    void rollbackRestoresExactlyOncePerOrder() {
         redis.opsForValue().set(key, "10");
+        String marker = "aurora:test:released:" + System.nanoTime();
 
         assertThat(reserve("4")).isEqualTo(6L);
-        assertThat(redis.execute(scripts.rollback, List.of(key), "4")).isEqualTo(10L);
+        // 首次：执行回滚，恢复 10
+        assertThat(redis.execute(scripts.rollback, List.of(marker, key), "4",
+                StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(1L);
         assertThat(redis.opsForValue().get(key)).isEqualTo("10");
+        // 同一订单重入：标记挡住，库存不再多加
+        assertThat(redis.execute(scripts.rollback, List.of(marker, key), "4",
+                StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(0L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("10");
+        redis.delete(marker);
     }
 
     @Test

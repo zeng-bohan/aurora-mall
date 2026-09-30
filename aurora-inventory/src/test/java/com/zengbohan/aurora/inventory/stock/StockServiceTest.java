@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.HashSet;
 import java.util.List;
@@ -44,7 +47,10 @@ class StockServiceTest {
         mapper = mock(ProductStockMapper.class);
         lua = new StockLuaScripts();
         dedup = new FakeDedup();
-        service = new StockService(redis, lua, mapper, dedup);
+        // 测试内联执行事务回调（mock 事务管理器），只验证去重与守卫式更新的交互
+        PlatformTransactionManager txManager = mock(PlatformTransactionManager.class);
+        when(txManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
+        service = new StockService(redis, lua, mapper, dedup, new TransactionTemplate(txManager));
     }
 
     private static class FakeDedup implements DedupStore {
@@ -128,11 +134,34 @@ class StockServiceTest {
     void rollbackExecutesLuaAndReleasesDbReservation() {
         when(mapper.decrementReserved(1L, 3)).thenReturn(1);
 
-        service.rollback(1L, 3);
+        service.rollback(101L, 1L, 3);
 
         verify(redis).execute(Mockito.same(lua.rollback),
-                Mockito.eq(List.of(StockLuaScripts.key(1L))), Mockito.eq("3"));
+                Mockito.eq(List.of(StockLuaScripts.releasedMarkerKey(101L), StockLuaScripts.key(1L))),
+                Mockito.eq("3"), Mockito.eq(StockLuaScripts.RELEASE_MARKER_TTL_SECONDS));
         verify(mapper).decrementReserved(1L, 3);
+    }
+
+    @Test
+    void rollbackSameOrderIdTwiceIsIdempotentOnBothLayers() {
+        // redis 标记 + db dedup 双侧幂等：补偿重入第二次调用不再动任何一层
+        when(mapper.decrementReserved(1L, 3)).thenReturn(1);
+
+        service.rollback(101L, 1L, 3);
+        service.rollback(101L, 1L, 3);
+
+        // redis 脚本两次都会执行（幂等在脚本内的标记上），但 db 释放只发生一次
+        verify(mapper, Mockito.times(1)).decrementReserved(1L, 3);
+    }
+
+    @Test
+    void releaseDbSameOrderIdTwiceIsNoOp() {
+        when(mapper.decrementReserved(1L, 2)).thenReturn(1);
+
+        service.releaseDb(201L, 1L, 2);
+        service.releaseDb(201L, 1L, 2);
+
+        verify(mapper, Mockito.times(1)).decrementReserved(1L, 2);
     }
 
     @Test
