@@ -40,9 +40,6 @@ public class GatewayRateLimitFilter implements GlobalFilter, Ordered {
 
     public GatewayRateLimitFilter(RateLimitProperties properties,
                                   RedisSlidingWindowRateLimiter limiter) {
-        // @RefreshScope 重建属性 bean 后本过滤器重新注入，构造即重跑校验——
-        // 坏规则（limit≤0 / window≤0）在装配期暴露而不是运行期整路由恒 429
-        properties.validateAll();
         this.properties = properties;
         this.limiter = limiter;
     }
@@ -61,6 +58,9 @@ public class GatewayRateLimitFilter implements GlobalFilter, Ordered {
         if (rule == null) {
             return chain.filter(exchange); // 没有规则的路由不限流
         }
+        // 每请求校验：@RefreshScope 重建属性后构造器不会重跑，规则校验必须在
+        // 请求路径上——否则刷新出 limit<=0 的规则会让整条路由恒 429
+        rule.validate(route.getId());
         String key = "aurora:rl:" + route.getId();
         return limiter.tryAcquire(key, rule.getLimit(), Duration.ofSeconds(rule.getWindowSeconds()))
                 .flatMap(allowed -> allowed

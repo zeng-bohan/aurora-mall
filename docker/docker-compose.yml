@@ -12,7 +12,7 @@ services:
     ports:
       # host 3306/6379 belong to other long-running projects on this machine;
       # services running on the host connect via localhost:13306 / localhost:16379
-      - "13306:3306"
+      - "127.0.0.1:13306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       # schema-per-service DDL, applied by the official image on first boot
@@ -30,7 +30,7 @@ services:
     container_name: aurora-redis
     command: redis-server --appendonly yes
     ports:
-      - "16379:6379"
+      - "127.0.0.1:16379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -49,8 +49,8 @@ services:
       JVM_XMX: 256m
       TZ: Asia/Shanghai
     ports:
-      - "8848:8848"
-      - "9848:9848"
+      - "127.0.0.1:8848:8848"
+      - "127.0.0.1:9848:9848"
     volumes:
       - nacos-data:/home/nacos/data
       - nacos-logs:/home/nacos/logs
@@ -69,7 +69,7 @@ services:
     user: "0"
     command: sh mqnamesrv
     ports:
-      - "9876:9876"
+      - "127.0.0.1:9876:9876"
     volumes:
       - rocketmq-namesrv-logs:/home/rocketmq/logs
     environment:
@@ -93,8 +93,8 @@ services:
     ports:
       # brokerIP1 advertises 127.0.0.1 so clients running on the host (IDE/mvn) can connect;
       # in-compose callers of the broker are not expected until M4+.
-      - "10909:10909"
-      - "10911:10911"
+      - "127.0.0.1:10909:10909"
+      - "127.0.0.1:10911:10911"
     volumes:
       - ./rocketmq/broker.conf:/home/rocketmq/conf/broker.conf:ro
       - rocketmq-broker-store:/home/rocketmq/store
@@ -120,7 +120,7 @@ services:
       # (a full-file mount broke web-application-type/logback defaults)
       SPRING_APPLICATION_JSON: '{"seata":{"registry":{"type":"nacos","nacos":{"application":"seata-server","server-addr":"nacos:8848","group":"DEFAULT_GROUP","cluster":"default"}}}}'
     ports:
-      - "8091:8091"
+      - "127.0.0.1:8091:8091"
     depends_on:
       nacos:
         condition: service_healthy
@@ -136,7 +136,7 @@ services:
     environment:
       JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Xms128m -Xmx128m"
     ports:
-      - "8180:8080"
+      - "127.0.0.1:8180:8080"
 
   # 9.7 line: H2 storage keeps the dev stack single-container and light;
   # SkyWalking 10 dropped H2 (would need BanyanDB/ES) — revisit at M4
@@ -149,8 +149,8 @@ services:
       JAVA_OPTS: "-Xms1g -Xmx1g"
       TZ: Asia/Shanghai
     ports:
-      - "11800:11800"
-      - "12800:12800"
+      - "127.0.0.1:11800:11800"
+      - "127.0.0.1:12800:12800"
     healthcheck:
       # OAP 9.7 has no /healthcheck HTTP route and the image ships wget, not curl;
       # a 200 on the prometheus telemetry port proves the server is fully started
@@ -169,7 +169,7 @@ services:
     environment:
       SW_OAP_ADDRESS: http://skywalking-oap:12800
     ports:
-      - "8090:8080"
+      - "127.0.0.1:8090:8080"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/ >/dev/null 2>&1"]
       interval: 15s
@@ -184,7 +184,7 @@ services:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:9090/-/healthy >/dev/null 2>&1"]
       interval: 10s
@@ -198,7 +198,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: aurora123
       TZ: Asia/Shanghai
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - grafana-data:/var/lib/grafana
     healthcheck:
@@ -213,7 +213,7 @@ services:
     container_name: aurora-loki
     command: -config.file=/etc/loki/local-config.yaml
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     volumes:
       - loki-data:/loki
     healthcheck:
