@@ -1,5 +1,7 @@
 package com.zengbohan.aurora.order.mq;
 
+import com.zengbohan.aurora.common.mq.TradeTopics;
+
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.apache.rocketmq.spring.support.RocketMQHeaders;
@@ -18,10 +20,11 @@ import org.springframework.stereotype.Component;
 @Component
 public class OrderEventPublisher {
 
-    public static final String TOPIC_TRADE = "aurora-trade";
-    public static final String TAG_STOCK_RESERVED = "tag-stock-reserved";
-    public static final String TAG_ORDER_CLOSE_TIMEOUT = "tag-order-close-timeout";
-    public static final String TAG_ORDER_PAID = "tag-order-paid";
+    // 事实源下沉到 common（消费者注解与生产者共用），保留旧名作委托以免扩散改动
+    public static final String TOPIC_TRADE = TradeTopics.TOPIC_TRADE;
+    public static final String TAG_STOCK_RESERVED = TradeTopics.TAG_STOCK_RESERVED;
+    public static final String TAG_ORDER_CLOSE_TIMEOUT = TradeTopics.TAG_ORDER_CLOSE_TIMEOUT;
+    public static final String TAG_ORDER_PAID = TradeTopics.TAG_ORDER_PAID;
 
     private static final Logger log = LoggerFactory.getLogger(OrderEventPublisher.class);
 
