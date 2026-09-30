@@ -96,9 +96,12 @@ public class NacosRegistry implements RegistryService, AutoCloseable {
         try {
             naming.subscribe(service, group, adapter);
         } catch (NacosException e) {
-            // 失败路径清掉占位，让下一次 subscribe 能重新尝试
+            // 失败路径清掉占位让下一次能重试；只摘本次的 listener，不株连同服务其他订阅者
             adapters.remove(service, adapter);
-            listeners.remove(service);
+            CopyOnWriteArrayList<Consumer<List<ServiceInstance>>> list = listeners.get(service);
+            if (list != null && list.isEmpty()) {
+                listeners.remove(service);
+            }
             throw new IllegalStateException("nacos subscribe failed for " + service, e);
         }
     }

@@ -73,6 +73,20 @@ class ProductAdapterWiringTest {
         });
     }
 
+    /** 注解驱动导出（评审修复）：带 @AuroraRpcService 的 bean 自动进导出器。 */
+    @com.zengbohan.aurora.rpc.proxy.AuroraRpcService(ProductRpcApi.class)
+    static class AnnotatedService implements ProductRpcApi {
+        @Override
+        public com.zengbohan.aurora.api.product.ProductSnapshot detail(long id) {
+            return null;
+        }
+
+        @Override
+        public java.util.List<com.zengbohan.aurora.api.product.ProductSnapshot> batch(java.util.List<Long> ids) {
+            return java.util.List.of();
+        }
+    }
+
     @Test
     void autoConfigurationProvidesRpcStackWhenEnabled() {
         // aurora-rpc 的自动装配整栈在开关打开时到位（注册中心用 mock 顶替，不连 nacos）
@@ -87,6 +101,8 @@ class ProductAdapterWiringTest {
                     assertThat(context).hasBean("rpcProxyFactory");
                     assertThat(context).hasBean("serviceDiscovery");
                     assertThat(context).hasBean("rpcClientPool");
+                    // 注解驱动导出：生命周期 bean 在位，扫描到了标注解的服务
+                    assertThat(context).hasBean("rpcExporterLifecycle");
                 });
     }
 }

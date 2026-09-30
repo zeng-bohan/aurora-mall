@@ -7,7 +7,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 网关限流配置（nacos 下发即时生效：@ConfigurationProperties 随 RefreshEvent 重绑定）。
+ * 网关限流配置（nacos 下发即时生效）。
  * <pre>
  * aurora:
  *   rate-limit:
@@ -18,10 +18,10 @@ import java.util.Map;
  *         window-seconds: 10
  * </pre>
  * 没有规则的路由不限流；enabled=false 全局关闭。多实例共享配额（Redis ZSET）。
- */
-/**
+ * <p>
  * {@code @RefreshScope}：刷新时整 bean 销毁重建——Map 属性的 rebind 是合并语义，
- * {@code routes: {}} 清不掉已有键，销毁重建才能真正移除规则。
+ * {@code routes: {}} 清不掉已有键，销毁重建才能真正移除规则；重建路径重跑
+ * {@link Rule#validate}，坏规则在装配期暴露而非运行期静默失效。
  */
 @RefreshScope
 @ConfigurationProperties(prefix = "aurora.rate-limit")
@@ -32,6 +32,11 @@ public class RateLimitProperties {
 
     /** 路由 id → 限流规则；没有规则的路径直接放行。 */
     private Map<String, Rule> routes = new LinkedHashMap<>();
+
+    /** 装配期校验全部规则（过滤器构造时调用，@RefreshScope 重建即重跑）。 */
+    public void validateAll() {
+        routes.forEach((route, rule) -> rule.validate(route));
+    }
 
     public boolean isEnabled() {
         return enabled;

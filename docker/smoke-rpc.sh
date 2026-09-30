@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-# M3 acceptance seam (chain D): the SAME product flows asserted in rpc mode
-# must behave exactly like feign mode. Restarts cart+product with
-# AURORA_RPC_ENABLED=true, walks the cart golden path, then restores the
-# default (feign) mode so the stack is left as it was.
-# Prereq: stack up (see smoke-flows.sh), jars built (mvn package -DskipTests).
+# M3 验收缝（链 D）：同一商品链路在 RPC 模式下的断言必须与 Feign 模式完全一致。
+# 以 AURORA_RPC_ENABLED=true 重启 cart+product，走一遍购物车金路径，
+# 跑完自动还原默认（Feign）模式——栈保持原状。
+# 前置：栈已起（见 smoke-flows.sh），jars 已构建（mvn package -DskipTests）。
 set -uo pipefail
 
 BASE="${BASE:-http://localhost:8000}"
@@ -73,7 +72,7 @@ SKU=$(grep -oE '"data":[0-9]+' <<<"$RESP" | grep -oE '[0-9]+')
 [[ -n "$SKU" ]] && ok "seed product id=$SKU" || { bad "seed product id"; exit 1; }
 
 # 1) switch cart+product to rpc mode
-echo "  ... restarting cart+product with AURORA_RPC_ENABLED=true"
+echo "  ... 以 AURORA_RPC_ENABLED=true 重启 cart+product"
 restart_rpc_mode product
 restart_rpc_mode cart
 await_healthy product && await_healthy cart && ok "rpc-mode services healthy" || { bad "rpc-mode services healthy"; exit 1; }
@@ -92,10 +91,10 @@ req GET /api/cart/carts "$TOKEN"
 grep -qF '"skuId":999999999' <<<"$RESP" && bad "unknown sku not written" || ok "unknown sku not written"
 
 # 3) restore default (feign) mode so the stack is left as found
-echo "  ... restoring feign mode"
+echo "  ... 还原 Feign 模式"
 restart_default_mode product
 restart_default_mode cart
-await_healthy cart && ok "feign mode restored" || bad "feign mode restored"
+await_healthy product && await_healthy cart && ok "feign mode restored" || bad "feign mode restored"
 
 if [[ $FAIL -eq 0 ]]; then
   echo "smoke-rpc OK: $PASS assertions green (rpc mode equivalent to feign)"

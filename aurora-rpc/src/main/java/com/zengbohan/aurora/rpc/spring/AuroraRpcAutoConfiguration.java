@@ -1,9 +1,11 @@
 package com.zengbohan.aurora.rpc.spring;
 
 import com.alibaba.nacos.api.exception.NacosException;
+import com.zengbohan.aurora.rpc.proxy.AuroraRpcService;
+import com.zengbohan.aurora.rpc.proxy.RpcServiceExporter;
 import com.zengbohan.aurora.rpc.lb.RandomLoadBalancer;
 import com.zengbohan.aurora.rpc.lb.RoundRobinLoadBalancer;
-import com.zengbohan.aurora.rpc.loadbalance.LoadBalancerProperties;
+import com.zengbohan.aurora.rpc.lb.LoadBalancerProperties;
 import com.zengbohan.aurora.rpc.protocol.ProtocolCodec;
 import com.zengbohan.aurora.rpc.proxy.RpcClientPool;
 import com.zengbohan.aurora.rpc.proxy.RpcProxyFactory;
@@ -11,6 +13,8 @@ import com.zengbohan.aurora.rpc.registry.NacosRegistry;
 import com.zengbohan.aurora.rpc.registry.ServiceDiscovery;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.context.ApplicationContext;
+import org.springframework.context.SmartLifecycle;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -58,6 +62,53 @@ public class AuroraRpcAutoConfiguration {
         return "random".equalsIgnoreCase(loadBalancerProperties.getStrategy())
                 ? new RandomLoadBalancer()
                 : new RoundRobinLoadBalancer();
+    }
+
+    /**
+     * 注解驱动导出：扫描全部 {@link AuroraRpcService} 标记的 bean，随上下文启动
+     * 导出器（Netty 监听 properties.port + 注册中心上报），关闭时注销并停服。
+     * 业务侧只需标注解，不再手写导出装配。
+     */
+    @Bean
+    public SmartLifecycle rpcExporterLifecycle(ApplicationContext context, NacosRegistry registry,
+            ProtocolCodec codec, AuroraRpcProperties properties,
+            @Value("${aurora.internal.secret}") String internalSecret) {
+        RpcServiceExporter exporter = new RpcServiceExporter(registry, codec,
+                properties.getHost(), internalSecret);
+        context.getBeansWithAnnotation(AuroraRpcService.class)
+                .values()
+                .forEach(bean -> {
+                    AuroraRpcService annotation =
+                            bean.getClass().getAnnotation(AuroraRpcService.class);
+                    exporter.export(annotation.value(), bean);
+                });
+        return new SmartLifecycle() {
+            private volatile boolean running;
+
+            @Override
+            public void start() {
+                // start(int) 已把受检异常转为非受检（IllegalStateException）
+                exporter.start(properties.getPort());
+                running = true;
+            }
+
+            @Override
+            public void stop() {
+                running = false;
+                exporter.stop();
+            }
+
+            @Override
+            public boolean isRunning() {
+                return running;
+            }
+
+            @Override
+            public int getPhase() {
+                // 晚于普通 bean 启动、早于它们关闭
+                return Integer.MAX_VALUE - 100;
+            }
+        };
     }
 
     @Bean

@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.rpc.transport;
 
+import com.zengbohan.aurora.rpc.protocol.ControlFrames;
 import com.zengbohan.aurora.rpc.protocol.MessageType;
 import com.zengbohan.aurora.rpc.protocol.ProtocolCodec;
 import com.zengbohan.aurora.rpc.protocol.RpcFrame;
@@ -42,7 +43,6 @@ public class RpcClient {
 
     private static final Logger log = System.getLogger(RpcClient.class.getName());
 
-    private static final String PING = "C:ping";
 
     private final String host;
     private final int port;
@@ -197,7 +197,7 @@ public class RpcClient {
         }
         lastPingNanos = now;
         RpcFrame ping = RpcFrame.request(0L, MessageType.CONTROL, JsonSerializerCode.JSON,
-                PING.getBytes(StandardCharsets.UTF_8));
+                ControlFrames.PING.getBytes(StandardCharsets.UTF_8));
         ch.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(ping)));
     }
 

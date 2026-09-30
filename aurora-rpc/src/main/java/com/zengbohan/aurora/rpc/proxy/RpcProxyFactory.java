@@ -135,8 +135,9 @@ public class RpcProxyFactory {
         if (returnType == float.class) {
             return ((Number) value).floatValue();
         }
-        if (returnType == boolean.class) {
-            return value;
+        if (returnType == boolean.class || returnType == byte.class
+                || returnType == short.class || returnType == char.class) {
+            return value; // JSON 数字/字符按目标原始类型自动拆箱
         }
         return value;
     }

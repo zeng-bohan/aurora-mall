@@ -52,21 +52,28 @@ class RpcProxyBenchmarkTest {
         int threads = 8;
         long callsPerThread = 5_000;
         AtomicLong counter = new AtomicLong();
+        // 每线程本地记录纳秒耗时，聚合后算分位（无锁写入避免影响被测路径）
+        List<long[]> perThreadLatencies = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(threads);
         ExecutorService pool = Executors.newFixedThreadPool(threads);
         for (int i = 0; i < threads; i++) {
             pool.execute(() -> {
+                long[] latencies = new long[(int) callsPerThread];
+                int n = 0;
                 try {
                     start.await();
                     for (long c = 0; c < callsPerThread; c++) {
+                        long t0 = System.nanoTime();
                         if (api.echo("payload-" + c).startsWith("payload-")) {
                             counter.incrementAndGet();
                         }
+                        latencies[n++] = System.nanoTime() - t0;
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } finally {
+                    perThreadLatencies.add(java.util.Arrays.copyOf(latencies, n));
                     done.countDown();
                 }
             });
@@ -80,9 +87,18 @@ class RpcProxyBenchmarkTest {
         long total = threads * callsPerThread;
         assertThat(counter.get()).isEqualTo(total); // 全部成功才算数
         double opsPerSecond = total / (elapsedNanos / 1_000_000_000.0);
+
+        List<Long> all = perThreadLatencies.stream()
+                .flatMapToLong(java.util.Arrays::stream)
+                .sorted()
+                .boxed()
+                .toList();
+        long p50 = all.get((int) (all.size() * 0.50));
+        long p99 = all.get((int) (all.size() * 0.99));
         System.out.printf(Locale.ROOT,
-                "[bench] rpc proxy round-trip: %d calls in %dms -> %.0f ops/s (%d threads)%n",
-                total, elapsedNanos / 1_000_000, opsPerSecond, threads);
+                "[bench] rpc proxy round-trip: %d calls in %dms -> %.0f ops/s (%d threads) | p50=%.2fms p99=%.2fms%n",
+                total, elapsedNanos / 1_000_000, opsPerSecond, threads,
+                p50 / 1_000_000.0, p99 / 1_000_000.0);
         assertThat(opsPerSecond).as("单机全链路吞吐量级健康下限").isGreaterThan(1_000);
     }
 }

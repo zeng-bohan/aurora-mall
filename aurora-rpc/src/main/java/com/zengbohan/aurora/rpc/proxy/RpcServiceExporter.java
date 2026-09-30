@@ -53,28 +53,53 @@ public class RpcServiceExporter {
 
     /** 启动传输（随机端口）并把本机每个服务注册进注册中心。 */
     public synchronized int start() {
+        return start(0); // 0 = 随机端口，测试互不冲突
+    }
+
+    /** 绑定指定端口启动（0 = 随机端口）；注解驱动导出用 aurora.rpc.port。 */
+    public synchronized int start(int bindPort) {
         if (server != null) {
             throw new IllegalStateException("exporter already started on port " + port);
         }
         server = new RpcServer(internalSecret, this::dispatch);
         try {
-            port = server.start();
+            port = server.start(bindPort);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("exporter start interrupted", e);
         }
-        for (String service : catalog.keySet()) {
-            registry.register(new ServiceInstance(service, host, port));
+        try {
+            for (String service : catalog.keySet()) {
+                registry.register(new ServiceInstance(service, host, port));
+            }
+        } catch (RuntimeException e) {
+            // 注册失败回滚已注册的服务并停服，不留半开状态
+            for (String service : catalog.keySet()) {
+                try {
+                    registry.unregister(new ServiceInstance(service, host, port));
+                } catch (RuntimeException ignored) {
+                    // 回滚尽力而为
+                }
+            }
+            server.stop();
+            server = null;
+            port = -1;
+            throw e;
         }
         return port;
     }
 
     public synchronized void stop() {
         if (server != null) {
-            for (String service : catalog.keySet()) {
-                registry.unregister(new ServiceInstance(service, host, port));
-            }
+            // 先停服再注销：注销失败不能让 Netty 端口悬着
             server.stop();
+            for (String service : catalog.keySet()) {
+                try {
+                    registry.unregister(new ServiceInstance(service, host, port));
+                } catch (RuntimeException e) {
+                    // 注册中心不可达时也要走完停服；注册中心侧靠 ephemeral 实例过期兜底
+                }
+            }
             server = null;
             port = -1;
         }
