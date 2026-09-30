@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# M0 acceptance seam: every skeleton service must answer 200 through the gateway.
+# M0 acceptance seam: gateway health + every service's health on its own port.
 # Prereq: `docker compose up -d` (infra) and the 7 Spring services running on
 # the host (see README runbook), gateway on :8000.
+# 注意：网关已封 /actuator/** 穿透（指标端点不暴露给网关流量），服务健康改为
+# 直连各自端口探测——这本身就是"内部端点不对用户流量开放"语义的一部分。
 set -euo pipefail
 
 BASE="${BASE:-http://localhost:8000}"
@@ -19,9 +21,10 @@ check() {
   fi
 }
 
-check "gateway      /actuator/health" "$BASE/actuator/health"
+check "gateway   /actuator/health" "$BASE/actuator/health"
+declare -A PORTS=( [user]=8081 [product]=8082 [cart]=8083 [order]=8084 [inventory]=8085 [payment]=8086 )
 for svc in user product cart order inventory payment; do
-  check "$svc  /api/$svc/actuator/health" "$BASE/api/$svc/actuator/health"
+  check "$svc  /actuator/health" "http://localhost:${PORTS[$svc]}/actuator/health"
 done
 
 if [[ $FAILED -eq 0 ]]; then
