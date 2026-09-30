@@ -4,7 +4,7 @@
 
 从 0 构建的 Java 微服务电商系统：7 个微服务 + 完整交易链路 + 手写分布式组件，每一个架构决策都可在本地复现、用数据验证。
 
-**当前状态**：M0-M2 已交付（工程骨架 / 用户-商品-购物车 / 订单-库存-支付与分布式事务），M3（手写限流熔断 + 简化 RPC）进行中。
+**当前状态**：M0-M3 已交付（工程骨架 / 用户-商品-购物车 / 订单-库存-支付与分布式事务 / 手写限流熔断与简化 RPC），M4（可观测性 + 压测）进行中。
 
 ## 这个系统能让你看到什么
 
@@ -79,14 +79,17 @@ cd docker && docker compose up -d && bash smoke.sh && bash nacos/import.sh
 
 看到 `smoke OK` 即中间件就绪（首次拉镜像约 10 分钟）。`nacos/import.sh` 把密钥与各服务配置导入 Nacos（命名空间 dev，密钥本地生成不进 git）——**必须在启动服务前执行**，否则服务启动即失败（fail-fast）。详见 [docker/README.md](docker/README.md)。
 
-**2. 构建并启动 7 个服务**（网关 :8000，业务服务 :8081-8086）：
+**2. 构建并启动 7 个服务**（网关 :8000，业务服务 :8081-8086；SkyWalking agent 存在时自动挂载）：
 
 ```bash
 cd .. && mvn clean package
+AGENT=""; [ -d tools/skywalking-agent ] &&   AGENT="-javaagent:$PWD/tools/skywalking-agent/skywalking-agent.jar"
 for svc in gateway user product cart order inventory payment; do
-  java -jar "aurora-$svc/target/aurora-$svc-0.1.0-SNAPSHOT.jar" > /tmp/"$svc".log 2>&1 &
+  java $AGENT -DSW_AGENT_NAME=aurora-$svc     -DSW_AGENT_COLLECTOR_BACKEND_SERVICES=localhost:11800     -jar "aurora-$svc/target/aurora-$svc-0.1.0-SNAPSHOT.jar" > /tmp/"$svc".log 2>&1 &
 done
 ```
+
+agent 二进制获取见 [tools/README.md](tools/README.md)（约 46MB，不入 git；缺席时跳过参数，行为不变）。
 
 **3. 验收**：两级接缝
 

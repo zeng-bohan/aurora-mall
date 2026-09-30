@@ -37,10 +37,11 @@ public class InternalSecretFilter extends OncePerRequestFilter {
         this.expected = expected;
     }
 
-    /** 容器/K8s 探针直连服务端口的健康检查免内部密钥（其余路径一律校验）。 */
+    /** 容器/K8s 探针直连服务端口：健康检查与 Prometheus 抓取免内部密钥。 */
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
-        return request.getRequestURI().startsWith("/actuator/health");
+        String uri = request.getRequestURI();
+        return uri.startsWith("/actuator/health") || uri.startsWith("/actuator/prometheus");
     }
 
     @Override

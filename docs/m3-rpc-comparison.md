@@ -32,17 +32,17 @@ ADR-0008 承诺服务间调用有两条可切换的传输路径：Spring Cloud �
 
 等价性的关键在**语义翻译层**：HTTP 侧"不存在 = 40400 信封"、RPC 侧"不存在 = null"，由导出器（NOT_FOUND 异常 → null）与适配器（信封 40400 → null）各自翻译成 `ProductPort` 的统一端口语义——业务代码两种模式下逐字节相同。
 
-复现：`bash docker/smoke-flows.sh`（默认 Feign）→ `bash docker/smoke-rpc.sh`（切 RPC 实测后自动还原）。
+复现：`bash docker/smoke-flows.sh`（默认 Feign）→ `bash docker/smoke-rpc.sh`（切 RPC 实测后自动还原）。链 D 独立成脚本而非塞进 smoke-flows：它要重启两个服务，混跑会拖慢主验收回路；等价性断言本身即脚本主体。
 
 ## 实测数据
 
 手写 RPC 全链路代理往返微基准（aurora-rpc 测试内 harness，非 JMH；发现缓存命中 → 均衡 → 熔断 → JSON 编解码 → 本机 Netty 真实往返，8 线程 × 5000 次）：
 
 ```
-[bench] rpc proxy round-trip: 40000 calls in 1708ms -> 23415 ops/s (8 threads)
+[bench] rpc proxy round-trip: 40000 calls in 1580ms -> 25301 ops/s (8 threads) | p50=0.25ms p99=1.36ms
 ```
 
-单次往返约 0.34ms（含线程争用）。Feign 侧本里程碑**未**单独取数：HTTP 栈是业界已知量，且对照的首要目标是功能等价与工程可行性；两条路径的正式压测统一放 M4（JMeter 常规链路 + 秒杀两份报告，届时 RPC 数值一并重测）。
+（p50/p99 为单次调用端到端延迟分位。Feign 侧本里程碑未单独取数：HTTP 栈是业界已知量，正式压测统一放 M4 JMeter，届时两条路径同链路对比。）
 
 ## 边界与已知代价
 

@@ -42,6 +42,10 @@
         <rocketmq-spring.version>2.3.1</rocketmq-spring.version>
         <!-- Boot/Cloud BOM 不管理 guava，显式钉版本（ratelimit 基准对照用，仅测试范围） -->
         <guava.version>33.4.0-jre</guava.version>
+        <!-- SkyWalking toolkit：日志 pattern 的 %tid 转换器（agent 缺席时输出 TID: N/A，无害） -->
+        <skywalking.version>9.7.0</skywalking.version>
+        <!-- loki4j：logback 直推 Loki（M4 T4），版本显式钉死（Boot BOM 不管） -->
+        <loki4j.version>1.6.0</loki4j.version>
     </properties>
 
     <dependencyManagement>
@@ -104,6 +108,21 @@
                 <groupId>com.google.guava</groupId>
                 <artifactId>guava</artifactId>
                 <version>${guava.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.skywalking</groupId>
+                <artifactId>apm-toolkit-logback-1.x</artifactId>
+                <version>${skywalking.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.skywalking</groupId>
+                <artifactId>apm-toolkit-trace</artifactId>
+                <version>${skywalking.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.loki4j</groupId>
+                <artifactId>loki-logback-appender</artifactId>
+                <version>${loki4j.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
