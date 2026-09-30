@@ -35,12 +35,16 @@ public class PaymentRefundListener implements RocketMQListener<String> {
 
     @Override
     public void onMessage(String orderId) {
-        long id = Long.parseLong(orderId);
-        // PAID → REFUNDED（钱已收、单已关）；PAYING → REFUNDED 兜底覆盖
-        int moved = paymentOrderMapper.markPaidRefunded(id);
-        if (moved == 0) {
-            moved = paymentOrderMapper.markRefunded(id);
+        // payload 是 order 侧自产的裸 orderId；畸形内容记日志后丢弃（不重投不死信）
+        long id;
+        try {
+            id = Long.parseLong(orderId.trim());
+        } catch (NumberFormatException e) {
+            log.warn("refund signal with malformed payload dropped: {}", orderId);
+            return;
         }
+        // PAYING → REFUNDED 兜底：此时钱未必真实收到，mock 通道语义下同样置退款
+        int moved = paymentOrderMapper.markRefunded(id);
         if (moved > 0) {
             log.warn("refund signal applied: order {} payment -> REFUNDED", id);
         } else {
