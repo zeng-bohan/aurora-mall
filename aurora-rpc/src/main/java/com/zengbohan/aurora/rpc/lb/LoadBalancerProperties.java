@@ -1,4 +1,4 @@
-package com.zengbohan.aurora.rpc.loadbalance;
+package com.zengbohan.aurora.rpc.lb;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 

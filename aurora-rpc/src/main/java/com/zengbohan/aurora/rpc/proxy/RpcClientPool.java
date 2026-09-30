@@ -43,11 +43,12 @@ public class RpcClientPool implements AutoCloseable {
             return client;
         } catch (RpcUnavailableException | InterruptedException e) {
             clients.remove(key);
+            // 两个失败分支都必须停掉 client：Netty 线程组 + 重连任务否则永久泄漏
+            client.stop();
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
                 throw new RpcUnavailableException("interrupted while connecting to " + key);
             }
-            client.stop();
             throw (RpcUnavailableException) e;
         }
     }

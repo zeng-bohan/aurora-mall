@@ -40,6 +40,9 @@ public class GatewayRateLimitFilter implements GlobalFilter, Ordered {
 
     public GatewayRateLimitFilter(RateLimitProperties properties,
                                   RedisSlidingWindowRateLimiter limiter) {
+        // @RefreshScope 重建属性 bean 后本过滤器重新注入，构造即重跑校验——
+        // 坏规则（limit≤0 / window≤0）在装配期暴露而不是运行期整路由恒 429
+        properties.validateAll();
         this.properties = properties;
         this.limiter = limiter;
     }

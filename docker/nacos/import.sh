@@ -104,7 +104,10 @@ GATEWAY_CFG=$(cat <<'YAML'
 aurora:
   rate-limit:
     enabled: true
-    routes: {}
+    routes:
+      order:
+        limit: 100
+        window-seconds: 10
 YAML
 )
 

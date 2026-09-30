@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.rpc.transport;
 
+import com.zengbohan.aurora.rpc.protocol.ControlFrames;
 import com.zengbohan.aurora.rpc.protocol.MessageType;
 import com.zengbohan.aurora.rpc.protocol.ProtocolCodec;
 import com.zengbohan.aurora.rpc.protocol.RpcFrame;
@@ -46,11 +47,6 @@ public class RpcServer {
         byte[] handle(byte[] requestBody) throws Exception;
     }
 
-    /** 控制帧类型标记：body 前缀 C:ping / C:pong。 */
-    private static final String PING = "C:ping";
-    private static final String PONG = "C:pong";
-    /** 握手：body 前缀 H:。 */
-    private static final String HANDSHAKE_PREFIX = "H:";
 
     /** 默认读空闲回收阈值：3 个客户端心跳周期（客户端默认 30s 心跳）。 */
     private static final long DEFAULT_IDLE_TIMEOUT_MILLIS = 90_000;
@@ -68,7 +64,6 @@ public class RpcServer {
     private EventLoopGroup boss;
     private EventLoopGroup worker;
     private Channel serverChannel;
-    private volatile boolean running;
     private int port;
 
     public RpcServer(String internalSecret, RequestHandler handler) {
@@ -142,7 +137,6 @@ public class RpcServer {
                 });
         serverChannel = bootstrap.bind(port).sync().channel();
         this.port = ((InetSocketAddress) serverChannel.localAddress()).getPort();
-        running = true;
         return this.port;
     }
 
@@ -162,7 +156,6 @@ public class RpcServer {
         if (ownsBusinessPool && businessPool != null) {
             businessPool.shutdownNow();
         }
-        running = false;
     }
 
     public int port() {
@@ -207,8 +200,8 @@ public class RpcServer {
 
         private void handleControl(ChannelHandlerContext ctx, RpcFrame frame) {
             String body = new String(frame.body(), StandardCharsets.UTF_8);
-            if (body.startsWith(HANDSHAKE_PREFIX)) {
-                String secret = body.substring(HANDSHAKE_PREFIX.length());
+            if (body.startsWith(ControlFrames.HANDSHAKE_PREFIX)) {
+                String secret = body.substring(ControlFrames.HANDSHAKE_PREFIX.length());
                 // 常量时间比较：共享密钥不走 String.equals 的短路路径
                 if (java.security.MessageDigest.isEqual(
                         internalSecret.getBytes(StandardCharsets.UTF_8),
@@ -217,8 +210,8 @@ public class RpcServer {
                 } else {
                     ctx.close(); // 密钥错误，断连
                 }
-            } else if (body.startsWith(PING)) {
-                writeControl(ctx, frame.serializerCode(), frame.requestId(), PONG);
+            } else if (body.startsWith(ControlFrames.PING)) {
+                writeControl(ctx, frame.serializerCode(), frame.requestId(), ControlFrames.PONG);
             }
         }
 
