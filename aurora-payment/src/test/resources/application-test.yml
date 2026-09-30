@@ -13,3 +13,6 @@ spring:
 aurora:
   internal:
     secret: test-only-internal-secret-not-real
+  # 渠道签名密钥：ChannelSignatureVerifier 装配需要（测试值；生产经 nacos）
+  payment:
+    channel-secret: test-channel-secret-0123456789

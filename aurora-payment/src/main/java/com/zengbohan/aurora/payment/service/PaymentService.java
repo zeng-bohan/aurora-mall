@@ -33,14 +33,17 @@ public class PaymentService {
     private final PaymentOrderMapper paymentOrderMapper;
     private final OrderClient orderClient;
     private final PaymentEventPublisher publisher;
+    private final com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier channelSignatureVerifier;
     private final ObjectMapper objectMapper;
 
     public PaymentService(PaymentOrderMapper paymentOrderMapper, OrderClient orderClient,
-                          PaymentEventPublisher publisher, ObjectMapper objectMapper) {
+                          PaymentEventPublisher publisher, ObjectMapper objectMapper,
+                          com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier channelSignatureVerifier) {
         this.paymentOrderMapper = paymentOrderMapper;
         this.orderClient = orderClient;
         this.publisher = publisher;
         this.objectMapper = objectMapper;
+        this.channelSignatureVerifier = channelSignatureVerifier;
     }
 
     /** Idempotent: the same trade order always maps to the same payment order. */
@@ -73,7 +76,13 @@ public class PaymentService {
      * makes it safe) so a lost publish is recoverable by replaying the
      * callback. Unknown orders are refused.
      */
-    public PaymentOrder handleMockCallback(long orderId) {
+    public PaymentOrder handleMockCallback(long orderId, java.math.BigDecimal amount,
+                                           String channelSignature) {
+        // 渠道签名先行（覆盖 orderId+amount，防金额篡改）：伪造回调在触达任何业务
+        // 逻辑/数据之前 401
+        if (!channelSignatureVerifier.isValid(orderId, amount.toPlainString(), channelSignature)) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED, "渠道签名校验失败");
+        }
         PaymentOrder payment = paymentOrderMapper.findByOrderId(orderId);
         if (payment == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND);

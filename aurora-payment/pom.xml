@@ -19,6 +19,15 @@
             <groupId>com.zengbohan.aurora</groupId>
             <artifactId>aurora-common</artifactId>
         </dependency>
+        <!-- SkyWalking toolkit：%tid 日志转换器（agent 挂载后自动填充，缺席输出 N/A） -->
+        <dependency>
+            <groupId>org.apache.skywalking</groupId>
+            <artifactId>apm-toolkit-logback-1.x</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.skywalking</groupId>
+            <artifactId>apm-toolkit-trace</artifactId>
+        </dependency>
         <!-- 跨服务 wire 契约（M3 T8） -->
         <dependency>
             <groupId>com.zengbohan.aurora</groupId>

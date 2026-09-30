@@ -24,15 +24,10 @@ mybatis-plus:
 
 aurora:
   config:
-    required-keys: aurora.internal.secret
+    required-keys: aurora.internal.secret,aurora.payment.channel-secret
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info
-
-logging:
-  pattern:
-    # traceId rides every log line via the MDC key set by TraceIdFilter
-    level: "%5p [${spring.application.name:},%X{traceId:-}]"

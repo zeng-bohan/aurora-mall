@@ -20,7 +20,8 @@ import java.math.BigDecimal;
 @RequestMapping("/payments")
 public class PaymentController {
 
-    public record PayRequest(@NotNull @Min(1) Long orderId) {
+    public record PayRequest(@NotNull @Min(1) Long orderId,
+                             @NotNull @jakarta.validation.constraints.DecimalMin("0.01") java.math.BigDecimal amount) {
     }
 
     /** status 三态：0=PAYING 1=PAID 2=REFUNDED（迟到回调自动退款，T13）。 */
@@ -41,8 +42,12 @@ public class PaymentController {
 
     /** The simulated third-party async callback (would be signed in production). */
     @PostMapping("/mock-callback")
-    public Result<PaymentView> mockCallback(@Valid @RequestBody PayRequest request) {
-        return Result.ok(toView(paymentService.handleMockCallback(request.orderId())));
+    public Result<PaymentView> mockCallback(
+            @org.springframework.web.bind.annotation.RequestHeader(
+                value = com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier.HEADER,
+                required = false) String signature,
+            @Valid @RequestBody PayRequest request) {
+        return Result.ok(toView(paymentService.handleMockCallback(request.orderId(), request.amount(), signature)));
     }
 
     @GetMapping("/{orderId}")
