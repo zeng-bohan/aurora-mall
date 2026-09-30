@@ -164,6 +164,13 @@ db_scalar() { # sql -> first cell
 redis_get() {
   docker exec aurora-redis redis-cli GET "aurora:stock:$1" | tr -d '\r'
 }
+channel_secret() {
+  curl -s "http://${NACOS_ADDR:-localhost:8848}/nacos/v1/cs/configs?dataId=aurora-payment.yml&group=DEFAULT_GROUP&tenant=dev"     | grep -oE 'channel-secret: [A-Za-z0-9-]+' | cut -d' ' -f2
+}
+
+channel_sign() { # orderId amount -> hex hmac
+  printf '%s:%s' "$1" "$2" | openssl dgst -sha256 -hmac "$(channel_secret)" | awk '{print $NF}'
+}
 
 nacos_publish_gateway() { # limit windowSeconds ("0 0" = restore: no per-route limits)
   if [[ "$1" == "0" ]]; then
@@ -214,14 +221,16 @@ req POST /api/payment/payments "$ACTOR_TOKEN" "{\"orderId\":$OID_A}"
 assert_body '"code":0' "payment initiated"
 req POST /api/payment/payments "$ACTOR_TOKEN" "{\"orderId\":$OID_A}"
 assert_body '"code":0' "repeat initiate returns the same payment"
-req POST /api/payment/payments/mock-callback "" "{\"orderId\":$OID_A}"
+ORDER_TOTAL="59.70"
+CALLBACK_SIG=$(channel_sign "$OID_A" "$ORDER_TOTAL")
+req POST /api/payment/payments/mock-callback "" "{\"orderId\":$OID_A,\"amount\":$ORDER_TOTAL}" "X-Channel-Signature: $CALLBACK_SIG"
 assert_body '"status":1' "callback flips payment to PAID"
 sleep 3
 req GET "/api/order/orders/$OID_A" "$ACTOR_TOKEN"
 assert_body '"status":1' "order advanced to PAID"
 assert_eq "97" "$(db_scalar "SELECT available FROM aurora_inventory.product_stock WHERE sku_id=$SKU")" "db available is 97"
 assert_eq "0" "$(db_scalar "SELECT reserved FROM aurora_inventory.product_stock WHERE sku_id=$SKU")" "db reserved is 0"
-req POST /api/payment/payments/mock-callback "" "{\"orderId\":$OID_A}"
+req POST /api/payment/payments/mock-callback "" "{\"orderId\":$OID_A,\"amount\":$ORDER_TOTAL}" "X-Channel-Signature: $CALLBACK_SIG"
 sleep 1
 assert_eq "97" "$(db_scalar "SELECT available FROM aurora_inventory.product_stock WHERE sku_id=$SKU")" "replayed callback: stock unchanged"
 req GET "/api/order/orders/$OID_A" "$ACTOR_TOKEN"

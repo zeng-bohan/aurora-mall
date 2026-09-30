@@ -24,10 +24,12 @@ if [[ ! -f "$SECRETS_FILE" ]]; then
   {
     echo "AURORA_JWT_SECRET=dev-jwt-$JWT"
     echo "AURORA_INTERNAL_SECRET=dev-internal-$INTERNAL"
+    echo "AURORA_CHANNEL_SECRET=dev-channel-$INTERNAL"
   } > "$SECRETS_FILE"
 fi
 # shellcheck disable=SC1090
 source "$SECRETS_FILE"
+CHANNEL="${AURORA_CHANNEL_SECRET:-dev-channel-fallback}"
 
 echo "ensuring namespace '$NS' exists on $NACOS..."
 if curl -fs "http://$NACOS/nacos/v1/console/namespaces" | grep -q "\"namespaceId\":\"$NS\""; then
@@ -111,11 +113,19 @@ aurora:
 YAML
 )
 
+PAYMENT_CFG=$(cat <<YAML
+aurora:
+  payment:
+    channel-secret: $CHANNEL
+YAML
+)
+
 echo "publishing configs into namespace '$NS'..."
 publish aurora-common.yml "$COMMON"
 publish aurora-user.yml "$USER_CFG"
 publish aurora-product.yml "$PRODUCT_CFG"
 publish aurora-order.yml "$ORDER_CFG"
 publish aurora-gateway.yml "$GATEWAY_CFG"
+publish aurora-payment.yml "$PAYMENT_CFG"
 
 echo "done. secrets stay in $SECRETS_FILE and nacos, never in git."

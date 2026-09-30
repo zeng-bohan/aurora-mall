@@ -24,4 +24,4 @@
 
 - **登出会话失效**：logout 除拉黑 access jti 外，写入用户级 `session-invalid-before` 时间戳，refresh 按签发时间比对——一次登出作废该用户全部既有 refresh；refresh 改为一次一换（旧票即用即拉黑）。
 - **公开路径头清洗**：网关对白名单路径清除客户端自带的 `X-User-Id`/`X-User-Role`，杜绝未来公开端点读身份头时的即插即用伪造。
-- **mock-callback 渠道签名**：当前回调端点仅靠内部密钥（免用户 token）。上线前必须替换为真实渠道签名校验（第三方凭签名+订单号回调），列为 M4 验收项。
+- **mock-callback 渠道签名**：已落地（M4）——回调带 `X-Channel-Signature: HMAC-SHA256(orderId:amount, channel-secret)`，服务端常量时间校验，缺失/错误 401，密钥经 nacos（`aurora.payment.channel-secret`）。上线时替换为真实渠道的签名算法（如 RSA/证书），仅需更换 `ChannelSignatureVerifier` 实现。

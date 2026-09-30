@@ -13,6 +13,7 @@ spring:
   config:
     import:
       - nacos:aurora-common.yml
+      - nacos:aurora-payment.yml
 
 rocketmq:
   name-server: ${ROCKETMQ_ADDR:localhost:9876}

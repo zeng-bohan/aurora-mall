@@ -32,6 +32,8 @@ class PaymentServiceTest {
     private OrderClient orderClient;
     private PaymentEventPublisher publisher;
     private PaymentService service;
+    private com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier verifier;
+    private static final String CHANNEL_SECRET = "test-channel-secret";
 
     private static final OrderSummary CREATED_ORDER =
             new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 0);
@@ -41,7 +43,8 @@ class PaymentServiceTest {
         mapper = mock(PaymentOrderMapper.class);
         orderClient = mock(OrderClient.class);
         publisher = mock(PaymentEventPublisher.class);
-        service = new PaymentService(mapper, orderClient, publisher, new ObjectMapper());
+        verifier = new com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier(CHANNEL_SECRET);
+        service = new PaymentService(mapper, orderClient, publisher, new ObjectMapper(), verifier);
         when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
     }
 
@@ -52,13 +55,44 @@ class PaymentServiceTest {
         when(orderClient.byId(1001L)).thenReturn(Result.ok(
                 new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
 
-        PaymentOrder result = service.handleMockCallback(1001L);
+        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80"));
 
         org.mockito.Mockito.verify(mapper).markRefunded(1001L);
         org.mockito.Mockito.verify(publisher, org.mockito.Mockito.never())
                 .sendOrderPaid(org.mockito.Mockito.anyString(), org.mockito.Mockito.anyString());
         org.assertj.core.api.Assertions.assertThat(result.getStatus())
                 .isEqualTo(PaymentOrder.STATUS_REFUNDED);
+    }
+
+    @Test
+    void wrongChannelSignatureIsRejectedWith401() {
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
+        when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
+
+        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"),
+                verifier.sign(1001L, "39.80") + "tampered"))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.UNAUTHORIZED.getCode());
+    }
+
+    @Test
+    void missingChannelSignatureIsRejectedWith401() {
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
+
+        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"), null))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.UNAUTHORIZED.getCode());
+    }
+
+    @Test
+    void signatureCoversAmountTampering() {
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
+
+        // 签名按 39.80 计算，回调却报 999.99：金额篡改必须被拒
+        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("999.99"),
+                verifier.sign(1001L, "39.80")))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.UNAUTHORIZED.getCode());
     }
 
     @Test
@@ -159,7 +193,7 @@ class PaymentServiceTest {
         when(mapper.markPaid(1001L)).thenReturn(1);
         when(mapper.findByOrderId(1001L)).thenReturn(payment(PaymentOrder.STATUS_PAID));
 
-        PaymentOrder result = service.handleMockCallback(1001L);
+        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80"));
 
         assertThat(result.getStatus()).isEqualTo(PaymentOrder.STATUS_PAID);
         verify(publisher).sendOrderPaid(eq("1001"), anyString());
@@ -170,7 +204,7 @@ class PaymentServiceTest {
         when(mapper.findByOrderId(1001L)).thenReturn(payment(PaymentOrder.STATUS_PAID));
         when(mapper.markPaid(1001L)).thenReturn(0);
 
-        PaymentOrder result = service.handleMockCallback(1001L);
+        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80"));
 
         assertThat(result.getStatus()).isEqualTo(PaymentOrder.STATUS_PAID);
         // replay is the recovery channel for a lost publish
@@ -181,7 +215,7 @@ class PaymentServiceTest {
     void callbackForUnknownOrderIsNotFound() {
         when(mapper.findByOrderId(1001L)).thenReturn(null);
 
-        assertThatThrownBy(() -> service.handleMockCallback(1001L))
+        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80")))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
         verify(publisher, never()).sendOrderPaid(anyString(), anyString());
