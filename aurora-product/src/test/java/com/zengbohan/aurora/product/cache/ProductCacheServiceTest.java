@@ -35,6 +35,7 @@ class ProductCacheServiceTest {
         scheduler = Executors.newSingleThreadScheduledExecutor();
         dbCalls = new AtomicInteger();
         service = new ProductCacheService(store, new VolatileBloomFilterHolder(new StringBloomFilter(1_000, 0.01)),
+                new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
                 clock, Runnable::run, scheduler, 86_400);
         // seed the bloom so id lookups reach the cache/db path
         service.bloomPut(1L);

@@ -37,7 +37,7 @@ public class ProductCacheService {
 
     private final CacheStore store;
     private final VolatileBloomFilterHolder bloomFilterHolder;
-    private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+    private final ObjectMapper mapper;
     private final Clock clock;
     private final Executor rebuildExecutor;
     private final ScheduledExecutorService doubleDeleteScheduler;
@@ -45,12 +45,14 @@ public class ProductCacheService {
 
     public ProductCacheService(CacheStore store,
                                VolatileBloomFilterHolder bloomFilterHolder,
+                               ObjectMapper mapper,
                                Clock clock,
                                @Qualifier("cacheRebuildExecutor") Executor rebuildExecutor,
                                @Qualifier("doubleDeleteScheduler") ScheduledExecutorService doubleDeleteScheduler,
                                @Value("${aurora.cache.physical-ttl-seconds:86400}") long physicalTtlSeconds) {
         this.store = store;
         this.bloomFilterHolder = bloomFilterHolder;
+        this.mapper = mapper;
         this.clock = clock;
         this.rebuildExecutor = rebuildExecutor;
         this.doubleDeleteScheduler = doubleDeleteScheduler;

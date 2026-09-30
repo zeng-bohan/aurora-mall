@@ -4,6 +4,7 @@ import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zengbohan.aurora.order.client.InventoryClient;
 import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.order.client.ProductClient;
@@ -73,7 +74,7 @@ class OrderServiceTest {
         when(inventoryClient.reserve(eq(1L), any())).thenReturn(Result.ok());
         when(inventoryClient.rollback(eq(1L), any())).thenReturn(Result.ok());
 
-        service = new OrderService(idGenerator, productGuard, inventoryClient,
+        service = new OrderService(new ObjectMapper(), idGenerator, productGuard, inventoryClient,
                 orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "mq", false);
     }
 
@@ -144,7 +145,7 @@ class OrderServiceTest {
 
     @Test
     void atModeDelegatesToTheAtPlacerWithoutMqSideEffects() {
-        OrderService atService = new OrderService(idGenerator, productGuard, inventoryClient,
+        OrderService atService = new OrderService(new ObjectMapper(), idGenerator, productGuard, inventoryClient,
                 orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at", true);
         when(atOrderPlacer.placeAt(eq(7L), any())).thenReturn(9999L);
 
@@ -158,7 +159,7 @@ class OrderServiceTest {
 
     @Test
     void atModeWithoutSeataEnabledRefusesToBoot() {
-        assertThatThrownBy(() -> new OrderService(idGenerator, productGuard, inventoryClient,
+        assertThatThrownBy(() -> new OrderService(new ObjectMapper(), idGenerator, productGuard, inventoryClient,
                 orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at", false))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("seata.enabled");

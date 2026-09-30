@@ -48,14 +48,14 @@ public class OrderService {
     private final TransactionTemplate transactionTemplate;
     private final OrderEventPublisher publisher;
     private final AtOrderPlacer atOrderPlacer;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     private final int closeDelayLevel;
     private final long closeTimeoutSeconds;
     private final String txMode;
     private final boolean seataEnabled;
 
-    public OrderService(SegmentIdGenerator idGenerator,
+    public OrderService(ObjectMapper objectMapper,SegmentIdGenerator idGenerator,
                         ProductGuard productGuard,
                         InventoryClient inventoryClient,
                         OrderMapper orderMapper,
@@ -67,6 +67,7 @@ public class OrderService {
                         @Value("${aurora.order.close-timeout-seconds:1800}") long closeTimeoutSeconds,
                         @Value("${aurora.tx.mode:mq}") String txMode,
                         @Value("${seata.enabled:false}") boolean seataEnabled) {
+        this.objectMapper = objectMapper;
         this.idGenerator = idGenerator;
         this.productGuard = productGuard;
         this.inventoryClient = inventoryClient;
