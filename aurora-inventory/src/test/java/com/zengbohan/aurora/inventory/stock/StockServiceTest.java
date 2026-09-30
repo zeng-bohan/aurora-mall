@@ -131,6 +131,19 @@ class StockServiceTest {
     }
 
     @Test
+    void secondReserveMissAfterRebuildMapsToSystemErrorNotSilentSuccess() {
+        // rebuild 后二次 MISS：绝不能静默当作预扣成功
+        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString()))
+                .thenReturn(-1L)
+                .thenReturn(-1L);
+        when(mapper.selectById(1L)).thenReturn(row(1L, 100, 0));
+
+        assertThatThrownBy(() -> service.reserve(1L, 2))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.SYSTEM_ERROR.getCode());
+    }
+
+    @Test
     void rollbackExecutesLuaAndReleasesDbReservation() {
         when(mapper.decrementReserved(1L, 3)).thenReturn(1);
 
