@@ -282,8 +282,9 @@ public class RpcClient {
                 if (frame.status() == StatusCodes.OK) {
                     promise.trySuccess(frame.body());
                 } else {
-                    promise.tryFailure(new RpcRemoteException(
-                            new String(frame.body(), StandardCharsets.UTF_8)));
+                    // ERROR status = 对端系统失败（服务坏了）→ 可用性异常，计入熔断
+                    promise.tryFailure(new RpcUnavailableException("server error status="
+                            + frame.status() + ": " + new String(frame.body(), StandardCharsets.UTF_8)));
                 }
             }
         }
