@@ -1,6 +1,8 @@
 package com.zengbohan.aurora.common.feign;
 
+import com.zengbohan.aurora.common.web.TraceIdFilter;
 import feign.RequestInterceptor;
+import org.slf4j.MDC;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,10 +22,16 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty("aurora.internal.secret")
 public class InternalSecretFeignConfig {
 
-    /** 出站服务间调用携带内部密钥，服务侧 InternalSecretFilter 校验。 */
+    /** 出站调用携带内部密钥 + 当前 traceId（跨服务日志关联，外部审查一.4）。 */
     @Bean
     public RequestInterceptor internalSecretInterceptor(
             @Value("${aurora.internal.secret}") String internalSecret) {
-        return template -> template.header("X-Internal-Secret", internalSecret);
+        return template -> {
+            template.header("X-Internal-Secret", internalSecret);
+            String traceId = MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY);
+            if (traceId != null && !traceId.isEmpty()) {
+                template.header(TraceIdFilter.TRACE_ID_HEADER, traceId);
+            }
+        };
     }
 }

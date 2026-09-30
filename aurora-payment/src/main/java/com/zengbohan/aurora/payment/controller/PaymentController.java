@@ -20,6 +20,11 @@ import java.math.BigDecimal;
 @RequestMapping("/payments")
 public class PaymentController {
 
+    /** 发起支付：金额由服务端按订单计算，请求只带订单号（防越权定价）。 */
+    public record InitiateRequest(@NotNull @Min(1) Long orderId) {
+    }
+
+    /** 渠道回调：金额参与渠道签名，防篡改。 */
     public record PayRequest(@NotNull @Min(1) Long orderId,
                              @NotNull @jakarta.validation.constraints.DecimalMin("0.01") java.math.BigDecimal amount) {
     }
@@ -36,7 +41,7 @@ public class PaymentController {
 
     @PostMapping
     public Result<PaymentView> initiate(@RequestHeader("X-User-Id") long userId,
-                                        @Valid @RequestBody PayRequest request) {
+                                        @Valid @RequestBody InitiateRequest request) {
         return Result.ok(toView(paymentService.initiate(userId, request.orderId())));
     }
 
