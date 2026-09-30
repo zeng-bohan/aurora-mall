@@ -179,12 +179,10 @@ mvn -pl aurora-rpc test          # 单模块：协议/传输/注册发现（真 
 | M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
 | M7 | kind 练习 + 买服务器 + ICP 备案 + 上线 | 未开始 |
 
-任务拆解见 [GitHub Issues](https://github.com/zeng-bohan/aurora-mall/issues)（每里程碑一份 spec + 依赖排序的 tracer-bullet 工单）。
+历史任务追踪见 [GitHub Issues](https://github.com/zeng-bohan/aurora-mall/issues)（已归档关闭）。
 
 ## 文档索引
 
-- [CONTEXT.md](CONTEXT.md) — 项目定位、领域词汇表、工程约定
-- [docs/adr/](docs/adr/) — 架构决策记录（0001 技术栈 → 0008 手写组件）
 - [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) — MQ 最终一致 vs Seata AT 对照实验报告
 - [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) — OpenFeign vs 手写 RPC 对照报告（等价性证据 + 微基准 + 边界）
 - [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件的设计取舍与实测数据
