@@ -60,7 +60,10 @@ class InternalPathGuardFilterTest {
         for (String path : new String[]{
                 "/api/order/a/../internal/orders/1",
                 "/api/order/%2e%2e/internal/orders/1",
-                "/api/order/internal/../internal/orders/1"}) {
+                "/api/order/internal/../internal/orders/1",
+                "/api/order//internal/orders/1",
+                "/api/order/internal;x=1/orders/1",
+                "/api/order/a/..;/internal/orders/1"}) {
             AtomicBoolean reached = new AtomicBoolean();
             MockServerWebExchange exchange = exchangeOnRoute(path);
             filter.filter(exchange, chainThatMarks(reached)).block();
@@ -79,6 +82,21 @@ class InternalPathGuardFilterTest {
 
         assertThat(reached).isFalse();
         assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void normalizeDownstreamMatchesCoyoteSemantics() {
+        // 与 CoyoteAdapter 归一化对齐：剥 ; 参数、折叠空段、解析点段
+        assertThat(InternalPathGuardFilter.normalizeDownstream("/api/order/internal/orders/1"))
+                .isEqualTo("/api/order/internal/orders/1");
+        assertThat(InternalPathGuardFilter.normalizeDownstream("/api/order//internal/orders/1"))
+                .isEqualTo("/api/order/internal/orders/1");
+        assertThat(InternalPathGuardFilter.normalizeDownstream("/api/order/internal;x=1/orders/1"))
+                .isEqualTo("/api/order/internal/orders/1");
+        assertThat(InternalPathGuardFilter.normalizeDownstream("/api/order/a/..;/internal/orders/1"))
+                .isEqualTo("/api/order/internal/orders/1");
+        assertThat(InternalPathGuardFilter.normalizeDownstream("/api/product/products/1"))
+                .isEqualTo("/api/product/products/1");
     }
 
     @Test

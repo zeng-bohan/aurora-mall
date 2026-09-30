@@ -158,7 +158,10 @@ class GatewayJwtFilterTest {
     }
 
     @Test
-    void actuatorHealthPassesWithoutToken() {
+    void jwtFilterAllowsActuatorHealthButGuardBlocksItEarlierInRealStack() {
+        // 本单测只验证 JWT 层：actuator/health 免 token 放行。
+        // 生产栈里内部路径守卫（-300）先以 404 封死 /actuator/**——
+        // 见 InternalPathGuardFilterTest.actuatorPrometheusIsBlockedAtGateway
         assertThat(run(exchange("/api/payment/actuator/health", null))).isEqualTo(200);
     }
 
