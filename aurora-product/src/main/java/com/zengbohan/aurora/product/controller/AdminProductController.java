@@ -1,10 +1,11 @@
 package com.zengbohan.aurora.product.controller;
 
-import com.zengbohan.aurora.common.exception.BusinessException;
-import com.zengbohan.aurora.common.exception.ErrorCode;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.product.entity.Sku;
 import com.zengbohan.aurora.product.service.ProductAdminService;
+import com.zengbohan.aurora.product.service.ProductQueryService;
+import com.zengbohan.aurora.product.web.RequireAdmin;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
@@ -26,7 +27,7 @@ import java.math.BigDecimal;
 public class AdminProductController {
 
     private final ProductAdminService adminService;
-    private final com.zengbohan.aurora.product.service.ProductQueryService queryService;
+    private final ProductQueryService queryService;
 
     public AdminProductController(ProductAdminService adminService,
                                   com.zengbohan.aurora.product.service.ProductQueryService queryService) {
@@ -40,19 +41,17 @@ public class AdminProductController {
     }
 
     /** Admin view includes off-shelf items, unlike the public list. */
+    /** Admin view includes off-shelf items, unlike the public list. */
     @GetMapping
-    public Result<com.baomidou.mybatisplus.extension.plugins.pagination.Page<com.zengbohan.aurora.product.entity.Sku>> page(
-            @RequestHeader(value = "X-User-Role", required = false) String role,
-            @RequestParam(defaultValue = "1") long current,
-            @RequestParam(defaultValue = "10") long size) {
-        requireAdmin(role);
+    @RequireAdmin
+    public Result<Page<Sku>> page(@RequestParam(defaultValue = "1") long current,
+                                  @RequestParam(defaultValue = "10") long size) {
         return Result.ok(queryService.adminPage(current, size));
     }
 
     @PostMapping
-    public Result<Long> create(@RequestHeader(value = "X-User-Role", required = false) String role,
-                               @Valid @RequestBody CreateRequest request) {
-        requireAdmin(role);
+    @RequireAdmin
+    public Result<Long> create(@Valid @RequestBody CreateRequest request) {
         Sku sku = new Sku();
         sku.setTitle(request.title());
         sku.setPrice(request.price());
@@ -62,10 +61,9 @@ public class AdminProductController {
     }
 
     @PutMapping("/{id}")
-    public Result<Void> update(@RequestHeader(value = "X-User-Role", required = false) String role,
-                               @PathVariable long id,
+    @RequireAdmin
+    public Result<Void> update(@PathVariable long id,
                                @Valid @RequestBody CreateRequest request) {
-        requireAdmin(role);
         Sku sku = new Sku();
         sku.setId(id);
         sku.setTitle(request.title());
@@ -75,16 +73,9 @@ public class AdminProductController {
     }
 
     @DeleteMapping("/{id}")
-    public Result<Void> offShelf(@RequestHeader(value = "X-User-Role", required = false) String role,
-                                 @PathVariable long id) {
-        requireAdmin(role);
+    @RequireAdmin
+    public Result<Void> offShelf(@PathVariable long id) {
         adminService.changeStatus(id, 0);
         return Result.ok();
-    }
-
-    private void requireAdmin(String role) {
-        if (!"ADMIN".equals(role)) {
-            throw new BusinessException(ErrorCode.FORBIDDEN);
-        }
     }
 }
