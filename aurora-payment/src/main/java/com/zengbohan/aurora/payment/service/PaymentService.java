@@ -91,11 +91,13 @@ public class PaymentService {
         return current;
     }
 
-    public PaymentOrder byOrderId(long orderId) {
+    public PaymentOrder byOrderId(long userId, long orderId) {
         PaymentOrder payment = paymentOrderMapper.findByOrderId(orderId);
         if (payment == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
+        // 归属校验：非本人统一 NOT_FOUND，不泄露资源存在性（防 IDOR 枚举）
+        requireOwner(userId, orderId);
         return payment;
     }
 

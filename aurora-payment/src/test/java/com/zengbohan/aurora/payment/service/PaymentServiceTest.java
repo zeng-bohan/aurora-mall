@@ -44,6 +44,23 @@ class PaymentServiceTest {
         when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
     }
 
+    @Test
+    void byOrderIdRejectsOtherUsersUniformlyAsNotFound() {
+        // CREATED_ORDER 归属 user 1（见常量定义）
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
+
+        assertThatThrownBy(() -> service.byOrderId(999L, 1001L))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
+    }
+
+    @Test
+    void byOrderIdReturnsPaymentForOwner() {
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
+
+        assertThat(service.byOrderId(7L, 1001L).getStatus()).isZero();
+    }
+
     private PaymentOrder payment(int status) {
         PaymentOrder p = new PaymentOrder();
         p.setOrderId(1001L);

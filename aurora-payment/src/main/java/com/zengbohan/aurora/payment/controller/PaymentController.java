@@ -45,8 +45,9 @@ public class PaymentController {
     }
 
     @GetMapping("/{orderId}")
-    public Result<PaymentView> byOrder(@PathVariable long orderId) {
-        return Result.ok(toView(paymentService.byOrderId(orderId)));
+    public Result<PaymentView> byOrder(@RequestHeader("X-User-Id") long userId,
+                                       @PathVariable long orderId) {
+        return Result.ok(toView(paymentService.byOrderId(userId, orderId)));
     }
 
     private PaymentView toView(PaymentOrder payment) {
