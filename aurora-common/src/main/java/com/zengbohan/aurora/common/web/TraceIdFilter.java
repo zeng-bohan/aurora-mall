@@ -26,7 +26,8 @@ public class TraceIdFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         String traceId = request.getHeader(TRACE_ID_HEADER);
-        if (traceId == null || traceId.isBlank()) {
+        // 入站 id 必须是 8-64 位字母数字/连字符：挡日志注入与单行撑爆
+        if (traceId == null || !traceId.matches("[0-9A-Za-z-]{8,64}")) {
             traceId = UUID.randomUUID().toString().replace("-", "");
         }
         MDC.put(MDC_TRACE_ID_KEY, traceId);

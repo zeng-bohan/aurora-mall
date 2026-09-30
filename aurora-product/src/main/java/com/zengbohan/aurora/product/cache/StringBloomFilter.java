@@ -34,7 +34,7 @@ public final class StringBloomFilter {
         long h1 = hash;
         long h2 = (hash >>> 32) | (hash << 32);
         for (int i = 0; i < hashFunctions; i++) {
-            long combined = Math.abs((h1 + i * h2)) % (bits.length() * 64L);
+            long combined = Math.floorMod(h1 + i * h2, bits.length() * 64L);
             int word = (int) (combined >>> 6);
             long mask = 1L << (combined & 63);
             // CAS 循环实现无锁按位 OR
@@ -47,7 +47,7 @@ public final class StringBloomFilter {
         long h1 = hash;
         long h2 = (hash >>> 32) | (hash << 32);
         for (int i = 0; i < hashFunctions; i++) {
-            long combined = Math.abs((h1 + i * h2)) % (bits.length() * 64L);
+            long combined = Math.floorMod(h1 + i * h2, bits.length() * 64L);
             if ((bits.get((int) (combined >>> 6)) & (1L << (combined & 63))) == 0) {
                 return false;
             }
