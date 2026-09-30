@@ -148,6 +148,8 @@ curl -s -X POST http://localhost:8000/api/order/orders \
 
 > 端口说明：本机开发机上 8080/3306/6379 被其他常驻项目占用，故网关与 MySQL/Redis 的**宿主端口**做了映射偏移；服务间网络内通信一律走标准端口。
 
+> 配置更新说明：`docker/nacos/import.sh` 只在**首次导入后**由 nacos 持有；改了 import.sh（或仓库内其他 nacos 配置源）后需**重跑一遍**才能生效，已运行的 nacos 不会自动感知文件变化。
+
 ## 测试
 
 ```bash
