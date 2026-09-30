@@ -124,6 +124,7 @@ public class PaymentService {
         try {
             result = orderClient.byId(orderId);
         } catch (RuntimeException e) {
+            log.warn("order byId call failed for order {}", orderId, e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "订单服务不可用");
         }
         if (result == null) {

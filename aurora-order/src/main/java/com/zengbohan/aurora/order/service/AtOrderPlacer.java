@@ -11,6 +11,8 @@ import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
 import com.zengbohan.aurora.order.mapper.OrderMapper;
 import org.apache.seata.spring.annotation.GlobalTransactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -24,6 +26,8 @@ import java.math.BigDecimal;
  */
 @Service
 public class AtOrderPlacer {
+
+    private static final Logger log = LoggerFactory.getLogger(AtOrderPlacer.class);
 
     private final SegmentIdGenerator idGenerator;
     private final ProductGuard productGuard;
@@ -63,6 +67,8 @@ public class AtOrderPlacer {
         try {
             reserve = inventoryClient.reserveDb(request.skuId(), new InventoryClient.StockRequest(request.quantity()));
         } catch (RuntimeException e) {
+            log.warn("inventory reserve-db call failed for sku {} x{}",
+                    request.skuId(), request.quantity(), e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务不可用");
         }
         if (reserve != null && reserve.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {

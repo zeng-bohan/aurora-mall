@@ -215,6 +215,7 @@ public class OrderService {
         try {
             result = inventoryClient.reserve(skuId, new InventoryClient.StockRequest(quantity));
         } catch (RuntimeException e) {
+            log.warn("inventory reserve call failed for sku {} x{}", skuId, quantity, e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务不可用");
         }
         if (result != null && result.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {
