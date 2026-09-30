@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 /**
  * Defense against bypassing the gateway: every service-to-service request
@@ -35,10 +37,19 @@ public class InternalSecretFilter extends OncePerRequestFilter {
         this.expected = expected;
     }
 
+    /** 容器/K8s 探针直连服务端口的健康检查免内部密钥（其余路径一律校验）。 */
+    @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return request.getRequestURI().startsWith("/actuator/health");
+    }
+
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
-        if (expected.equals(request.getHeader(HEADER))) {
+        String provided = request.getHeader(HEADER);
+        // 常量时间比较：共享密钥不走 String.equals 的短路路径
+        if (provided != null && MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8), provided.getBytes(StandardCharsets.UTF_8))) {
             filterChain.doFilter(request, response);
             return;
         }
