@@ -27,4 +27,3 @@ trace-id.txt
 
 # 密钥文件（任意层级，历史泄漏过的旧路径一并挡住）
 **/.secrets.env
-.zcodeignore
