@@ -42,6 +42,9 @@ aurora:
     port: ${RPC_PORT:9181}
 
 management:
+  metrics:
+    tags:
+      application: ${spring.application.name}
   endpoints:
     web:
       exposure:

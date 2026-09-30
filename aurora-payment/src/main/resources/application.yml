@@ -27,6 +27,9 @@ aurora:
     required-keys: aurora.internal.secret,aurora.payment.channel-secret
 
 management:
+  metrics:
+    tags:
+      application: ${spring.application.name}
   endpoints:
     web:
       exposure:
