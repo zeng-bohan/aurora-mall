@@ -23,6 +23,7 @@ public class PaymentController {
     public record PayRequest(@NotNull @Min(1) Long orderId) {
     }
 
+    /** status 三态：0=PAYING 1=PAID 2=REFUNDED（迟到回调自动退款，T13）。 */
     public record PaymentView(long paymentId, long orderId, BigDecimal amount, int status) {
     }
 

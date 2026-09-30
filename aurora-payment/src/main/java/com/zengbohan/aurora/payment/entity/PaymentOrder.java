@@ -13,6 +13,9 @@ public class PaymentOrder {
     public static final int STATUS_PAYING = 0;
     public static final int STATUS_PAID = 1;
 
+    /** 迟到回调：订单已关单时 mock 通道语义为自动退款。 */
+    public static final int STATUS_REFUNDED = 2;
+
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long orderId;

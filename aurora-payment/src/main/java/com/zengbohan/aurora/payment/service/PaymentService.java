@@ -77,6 +77,14 @@ public class PaymentService {
         if (payment == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
+        // 迟到回调：关单赢了竞态后钱才到。mock 通道语义=自动退款，
+        // 不发布 order-paid（否则"钱收了、单关了、库存回了"且无补偿）
+        OrderSummary order = loadOrder(orderId);
+        if (order != null && order.status() == 2) {
+            paymentOrderMapper.markRefunded(orderId);
+            log.warn("late callback for closed order {} — mock channel auto-refunds", orderId);
+            return paymentOrderMapper.findByOrderId(orderId);
+        }
         boolean first = paymentOrderMapper.markPaid(orderId) > 0;
         PaymentOrder current = first ? paymentOrderMapper.findByOrderId(orderId) : payment;
         if (current.getStatus() != PaymentOrder.STATUS_PAID) {

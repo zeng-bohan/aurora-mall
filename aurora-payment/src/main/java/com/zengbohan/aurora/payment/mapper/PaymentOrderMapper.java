@@ -14,4 +14,8 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrder> {
     /** Guarded transition: PAYING -> PAID succeeds exactly once. */
     @Update("UPDATE payment_orders SET status = 1 WHERE order_id = #{orderId} AND status = 0")
     int markPaid(@Param("orderId") long orderId);
+
+    /** 守卫转移：仅 PAYING → REFUNDED（迟到回调的自动退款，不覆盖已支付）。 */
+    @Update("UPDATE payment_orders SET status = 2 WHERE order_id = #{orderId} AND status = 0")
+    int markRefunded(@Param("orderId") long orderId);
 }
