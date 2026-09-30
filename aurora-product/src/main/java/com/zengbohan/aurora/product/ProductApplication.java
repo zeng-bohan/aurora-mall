@@ -6,7 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 // Root scan picks up aurora-common's web seam (advice + trace filter).
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = "com.zengbohan.aurora")
 @EnableScheduling
 @MapperScan("com.zengbohan.aurora.product.mapper")
 public class ProductApplication {
