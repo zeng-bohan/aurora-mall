@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# 同分支新推送取消仍在跑的旧构建，省额度也省排队
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -22,20 +27,35 @@ jobs:
       - name: Build and test
         run: mvn -B clean verify
 
+      # 复用测试 job 的构建产物：docker-build 不再重复一次全量 package
+      - name: Upload service jars
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-jars
+          path: aurora-*/target/*.jar
+          if-no-files-found: error
+
   docker-build:
     runs-on: ubuntu-latest
     needs: build-test
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - name: Download service jars
+        uses: actions/download-artifact@v4
         with:
-          distribution: temurin
-          java-version: 21
-          cache: maven
+          name: service-jars
+          path: jars
 
-      - name: Package jars
-        run: mvn -B package -DskipTests
+      # Dockerfile 的 COPY 以 aurora-<svc>/target/*.jar 为上下文路径，把 jar 归位
+      - name: Place jars back into module targets
+        run: |
+          shopt -s nullglob
+          for jar in jars/aurora-*-0.1.0-SNAPSHOT.jar; do
+            name="$(basename "$jar" -0.1.0-SNAPSHOT.jar)"
+            mkdir -p "$name/target"
+            mv "$jar" "$name/target/"
+          done
 
       # Builds every service image locally to prove the Dockerfiles work.
       # Images are never pushed from CI; publishing is a manual release step.

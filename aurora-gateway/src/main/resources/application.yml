@@ -1,8 +1,11 @@
 server:
+  shutdown: graceful
   # host 8080 belongs to another long-running project on this dev machine
   port: 8000
 
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   application:
     name: aurora-gateway
   cloud:
