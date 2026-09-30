@@ -45,6 +45,22 @@ class PaymentServiceTest {
     }
 
     @Test
+    void lateCallbackForClosedOrderAutoRefundsAndSkipsEvent() {
+        // 关单赢了竞态（status=2 CLOSED）后回调才到：mock 通道语义=自动退款
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0)).thenReturn(payment(2));
+        when(orderClient.byId(1001L)).thenReturn(Result.ok(
+                new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
+
+        PaymentOrder result = service.handleMockCallback(1001L);
+
+        org.mockito.Mockito.verify(mapper).markRefunded(1001L);
+        org.mockito.Mockito.verify(publisher, org.mockito.Mockito.never())
+                .sendOrderPaid(org.mockito.Mockito.anyString(), org.mockito.Mockito.anyString());
+        org.assertj.core.api.Assertions.assertThat(result.getStatus())
+                .isEqualTo(PaymentOrder.STATUS_REFUNDED);
+    }
+
+    @Test
     void byOrderIdRejectsOtherUsersUniformlyAsNotFound() {
         // CREATED_ORDER 归属 user 1（见常量定义）
         when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
