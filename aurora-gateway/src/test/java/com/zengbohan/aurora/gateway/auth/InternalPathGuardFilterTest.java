@@ -55,6 +55,33 @@ class InternalPathGuardFilterTest {
     }
 
     @Test
+    void dotSegmentTraversalIsRejected() {
+        // 点段在下游会被 Tomcat 归一化成 /internal/orders/1——必须在网关就拒绝（含 URL 编码形态）
+        for (String path : new String[]{
+                "/api/order/a/../internal/orders/1",
+                "/api/order/%2e%2e/internal/orders/1",
+                "/api/order/internal/../internal/orders/1"}) {
+            AtomicBoolean reached = new AtomicBoolean();
+            MockServerWebExchange exchange = exchangeOnRoute(path);
+            filter.filter(exchange, chainThatMarks(reached)).block();
+            assertThat(reached).as("path " + path + " must not reach downstream").isFalse();
+            assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @Test
+    void actuatorPrometheusIsBlockedAtGateway() {
+        // 指标端点不对网关流量暴露（Prometheus 从宿主直连服务端口抓取）
+        AtomicBoolean reached = new AtomicBoolean();
+        MockServerWebExchange exchange = exchangeOnRoute("/api/order/actuator/prometheus");
+
+        filter.filter(exchange, chainThatMarks(reached)).block();
+
+        assertThat(reached).isFalse();
+        assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
     void normalPathsPassThrough() {
         AtomicBoolean reached = new AtomicBoolean();
         MockServerWebExchange exchange = exchangeOnRoute("/api/order/orders");
