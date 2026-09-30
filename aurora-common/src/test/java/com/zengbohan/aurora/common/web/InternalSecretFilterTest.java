@@ -37,4 +37,13 @@ class InternalSecretFilterTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0));
     }
+
+
+    @Test
+    void actuatorHealthIsWhitelistedWithoutSecret() throws Exception {
+        // 容器/K8s 探针直连服务端口：健康检查不要求内部密钥
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .get("/actuator/health"))
+                .andExpect(status().isNotFound()); // 无该端点的探测路径不 401 即证明过滤器放行
+    }
 }

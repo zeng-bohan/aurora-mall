@@ -209,7 +209,10 @@ public class RpcServer {
             String body = new String(frame.body(), StandardCharsets.UTF_8);
             if (body.startsWith(HANDSHAKE_PREFIX)) {
                 String secret = body.substring(HANDSHAKE_PREFIX.length());
-                if (internalSecret.equals(secret)) {
+                // 常量时间比较：共享密钥不走 String.equals 的短路路径
+                if (java.security.MessageDigest.isEqual(
+                        internalSecret.getBytes(StandardCharsets.UTF_8),
+                        secret.getBytes(StandardCharsets.UTF_8))) {
                     ctx.channel().attr(AttributeKeys.AUTHENTICATED).set(true);
                 } else {
                     ctx.close(); // 密钥错误，断连
