@@ -28,6 +28,9 @@ mybatis-plus:
 aurora:
   config:
     required-keys: aurora.internal.secret
+  cache:
+    bloom:
+      reseed-interval-ms: ${BLOOM_RESEED_MS:300000}
   # 手写 RPC 导出（M3 T8）：true 时随上下文启动 RPC 监听并注册进 nacos
   rpc:
     enabled: ${AURORA_RPC_ENABLED:false}

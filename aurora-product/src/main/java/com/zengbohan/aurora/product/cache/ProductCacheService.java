@@ -36,7 +36,7 @@ public class ProductCacheService {
     private static final Duration DOUBLE_DELETE_DELAY = Duration.ofMillis(500);
 
     private final CacheStore store;
-    private final StringBloomFilter bloomFilter;
+    private final VolatileBloomFilterHolder bloomFilterHolder;
     private final ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
     private final Clock clock;
     private final Executor rebuildExecutor;
@@ -44,13 +44,13 @@ public class ProductCacheService {
     private final long physicalTtlSeconds;
 
     public ProductCacheService(CacheStore store,
-                               StringBloomFilter bloomFilter,
+                               VolatileBloomFilterHolder bloomFilterHolder,
                                Clock clock,
                                @Qualifier("cacheRebuildExecutor") Executor rebuildExecutor,
                                @Qualifier("doubleDeleteScheduler") ScheduledExecutorService doubleDeleteScheduler,
                                @Value("${aurora.cache.physical-ttl-seconds:86400}") long physicalTtlSeconds) {
         this.store = store;
-        this.bloomFilter = bloomFilter;
+        this.bloomFilterHolder = bloomFilterHolder;
         this.clock = clock;
         this.rebuildExecutor = rebuildExecutor;
         this.doubleDeleteScheduler = doubleDeleteScheduler;
@@ -62,7 +62,7 @@ public class ProductCacheService {
 
     public Sku getById(long id, Function<Long, Sku> dbLoader) {
         // bloom has no false negatives: an absent id never reaches cache or DB
-        if (!bloomFilter.mightContain(String.valueOf(id))) {
+        if (!bloomFilterHolder.get().mightContain(String.valueOf(id))) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
         String key = KEY_PREFIX + id;
@@ -168,7 +168,7 @@ public class ProductCacheService {
     }
 
     public void bloomPut(long id) {
-        bloomFilter.put(String.valueOf(id));
+        bloomFilterHolder.get().put(String.valueOf(id));
     }
 
     public void doubleDeleteAfterUpdate(long id, Runnable dbUpdate) {

@@ -85,6 +85,8 @@ PRODUCT_CFG=$(cat <<'YAML'
 aurora:
   cache:
     physical-ttl-seconds: 86400
+    bloom:
+      reseed-interval-ms: 300000
 YAML
 )
 ORDER_CFG=$(cat <<'YAML'
