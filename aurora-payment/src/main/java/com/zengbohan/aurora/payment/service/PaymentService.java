@@ -147,7 +147,8 @@ public class PaymentService {
         return result.data();
     }
 
-    private void publishPaid(PaymentOrder payment) {
+    /** 发送 order-paid 事件并打标；补发 job 复用同一构建路径，保证载荷形状一致。 */
+    public void publishPaid(PaymentOrder payment) {
         OrderSummary order = loadOrder(payment.getOrderId());
         if (order == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "订单服务不可用");
@@ -157,6 +158,9 @@ public class PaymentService {
                     objectMapper.writeValueAsString(new PaidEvent(
                             String.valueOf(payment.getOrderId()),
                             payment.getOrderId(), order.skuId(), order.quantity())));
+            // 发出即打标：崩溃在 send 与 mark 之间时由 PaymentEventRetryJob 补发
+            // （消费端 order/inventory 均幂等，重复投递安全）
+            paymentOrderMapper.markEventPublished(payment.getOrderId());
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("event serialization failed", e);
         }

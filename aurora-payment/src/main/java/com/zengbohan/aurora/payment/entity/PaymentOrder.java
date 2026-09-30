@@ -21,6 +21,8 @@ public class PaymentOrder {
     private Long orderId;
     private BigDecimal amount;
     private Integer status;
+    /** 1 = order-paid 事件已发布（补发 job 依据，见 09 migration）。 */
+    private Integer eventPublished;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 

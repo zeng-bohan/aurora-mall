@@ -6,6 +6,8 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.util.List;
+
 public interface PaymentOrderMapper extends BaseMapper<PaymentOrder> {
 
     @Select("SELECT * FROM payment_orders WHERE order_id = #{orderId}")
@@ -18,4 +20,13 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrder> {
     /** 守卫转移：仅 PAYING → REFUNDED（迟到回调的自动退款，不覆盖已支付）。 */
     @Update("UPDATE payment_orders SET status = 2 WHERE order_id = #{orderId} AND status = 0")
     int markRefunded(@Param("orderId") long orderId);
+
+    /** 事件发布完成后打标（守卫：不重复标记）。 */
+    @Update("UPDATE payment_orders SET event_published = 1 WHERE order_id = #{orderId} AND event_published = 0")
+    int markEventPublished(@Param("orderId") long orderId);
+
+    /** PAID 且事件未发的记录：补发 job 的扫描集（LIMIT 200 防一次拖垮）。 */
+    @Select("SELECT * FROM payment_orders WHERE status = 1 AND event_published = 0 "
+            + "AND created_at <= #{before} LIMIT 200")
+    List<PaymentOrder> findUnpublishedPaid(@Param("before") java.time.LocalDateTime before);
 }
