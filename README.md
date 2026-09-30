@@ -196,7 +196,6 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 - [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) — MQ 最终一致 vs Seata AT 对照实验
 - [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) — OpenFeign vs 手写 RPC 对照（等价性 + 微基准 + 边界）
 - [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件设计取舍与实测数据
-- [docs/agents/](docs/agents/) — AI 协作配置
 
 ## 🤝 协作
 
