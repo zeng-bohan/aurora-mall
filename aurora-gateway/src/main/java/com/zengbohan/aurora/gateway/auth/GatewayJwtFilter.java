@@ -56,9 +56,15 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
         ServerHttpRequest request = exchange.getRequest();
         if (isPublic(request)) {
             // public paths skip auth but still get the internal secret: services
-            // reject any request that did not come through the gateway
+            // reject any request that did not come through the gateway.
+            // 同时清洗客户端自带的身份头——公开端点现在不读它们，但一旦读就是
+            // 即插即用的身份伪造（X-Internal-Secret 用 set 覆盖，无此问题）
             return chain.filter(exchange.mutate()
-                    .request(r -> r.headers(h -> h.set(INTERNAL_SECRET_HEADER, internalSecret)))
+                    .request(r -> r.headers(h -> {
+                        h.remove(USER_ID_HEADER);
+                        h.remove(USER_ROLE_HEADER);
+                        h.set(INTERNAL_SECRET_HEADER, internalSecret);
+                    }))
                     .build());
         }
         String authorization = request.getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
