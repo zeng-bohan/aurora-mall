@@ -125,6 +125,28 @@ class GatewayJwtFilterTest {
     }
 
     @Test
+    void publicPathStripsClientSuppliedIdentityHeaders() {
+        AtomicReference<org.springframework.web.server.ServerWebExchange> captured = new AtomicReference<>();
+        GatewayFilterChain chain = ex -> {
+            captured.set(ex);
+            return Mono.empty();
+        };
+        // 伪造身份头打公开路径：网关必须清洗后再转发
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                org.springframework.mock.http.server.reactive.MockServerHttpRequest
+                        .get("/api/product/1")
+                        .header("X-User-Id", "1")
+                        .header("X-User-Role", "ADMIN")
+                        .build());
+        filter.filter(exchange, chain).block();
+
+        org.springframework.http.HttpHeaders headers = captured.get().getRequest().getHeaders();
+        assertThat(headers.getFirst("X-User-Id")).isNull();
+        assertThat(headers.getFirst("X-User-Role")).isNull();
+        assertThat(headers.getFirst(GatewayJwtFilter.INTERNAL_SECRET_HEADER)).isEqualTo(INTERNAL_SECRET);
+    }
+
+    @Test
     void publicRegisterPostPassesWithoutToken() {
         assertThat(run(exchange(HttpMethod.POST, "/api/user/register", null))).isEqualTo(200);
     }
