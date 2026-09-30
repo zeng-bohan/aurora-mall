@@ -29,7 +29,11 @@ if [[ ! -f "$SECRETS_FILE" ]]; then
 fi
 # shellcheck disable=SC1090
 source "$SECRETS_FILE"
-CHANNEL="${AURORA_CHANNEL_SECRET:-dev-channel-fallback}"
+if [[ -z "${AURORA_CHANNEL_SECRET:-}" ]]; then
+  echo "FATAL: AURORA_CHANNEL_SECRET missing in $SECRETS_FILE - payment callback signature would be unprotected" >&2
+  exit 1
+fi
+CHANNEL="$AURORA_CHANNEL_SECRET"
 
 echo "ensuring namespace '$NS' exists on $NACOS..."
 if curl -fs "http://$NACOS/nacos/v1/console/namespaces" | grep -q "\"namespaceId\":\"$NS\""; then
