@@ -19,6 +19,9 @@ import org.springframework.stereotype.Component;
         selectorExpression = OrderEventPublisher.TAG_ORDER_PAID)
 public class OrderPaidListener implements RocketMQListener<OrderPaidListener.OrderPaidEvent> {
 
+    private static final org.slf4j.Logger log =
+            org.slf4j.LoggerFactory.getLogger(OrderPaidListener.class);
+
     public record OrderPaidEvent(String messageId, long orderId, long skuId, int quantity) {
     }
 
@@ -33,8 +36,7 @@ public class OrderPaidListener implements RocketMQListener<OrderPaidListener.Ord
         boolean applied = orderService.markPaid(event.orderId());
         if (!applied) {
             // state machine refused: already paid (replay) or closed (late payment)
-            org.slf4j.LoggerFactory.getLogger(OrderPaidListener.class)
-                    .info("order {} not marked paid (already paid or closed)", event.orderId());
+            log.info("order {} not marked paid (already paid or closed)", event.orderId());
         }
     }
 }

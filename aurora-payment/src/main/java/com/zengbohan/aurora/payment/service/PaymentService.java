@@ -171,8 +171,4 @@ public class PaymentService {
     public record PaidEvent(String messageId, long orderId, long skuId, int quantity) {
     }
 
-    /** Kept for list-shaped future use (admin views). */
-    List<PaymentOrder> all() {
-        return paymentOrderMapper.selectList(null);
-    }
 }
