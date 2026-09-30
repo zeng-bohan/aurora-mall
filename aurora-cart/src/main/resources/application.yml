@@ -26,6 +26,9 @@ aurora:
     registry-addr: ${NACOS_ADDR:localhost:8848}
 
 management:
+  metrics:
+    tags:
+      application: ${spring.application.name}
   endpoints:
     web:
       exposure:
