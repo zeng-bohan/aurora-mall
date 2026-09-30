@@ -62,6 +62,16 @@ aurora:
     secret: $AURORA_JWT_SECRET
   internal:
     secret: $AURORA_INTERNAL_SECRET
+spring:
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            # on the user request path; do not inherit feign 10s/60s defaults
+            # (heredoc payloads go through the console pipe: keep ascii-only)
+            connect-timeout: 2000
+            read-timeout: 3000
 YAML
 )
 USER_CFG=$(cat <<'YAML'
@@ -87,8 +97,8 @@ aurora:
 YAML
 )
 GATEWAY_CFG=$(cat <<'YAML'
-# 网关限流：路由 id -> 规则；没有规则的路由不限流。
-# 大促/压测前直接改这里发布（@ConfigurationProperties 随刷新事件重绑定，即时生效）。
+# gateway rate limit: route id -> rule; routes without a rule are unlimited.
+# publish new thresholds before peak events; rebinding is immediate.
 aurora:
   rate-limit:
     enabled: true
