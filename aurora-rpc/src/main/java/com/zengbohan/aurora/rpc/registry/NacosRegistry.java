@@ -89,10 +89,15 @@ public class NacosRegistry implements RegistryService, AutoCloseable {
                 listener.accept(aurora);
             }
         };
+        // putIfAbsent 是唯一挂订阅的关口：并发 subscribe 同一服务只挂一条适配器
+        if (adapters.putIfAbsent(service, adapter) != null) {
+            return; // 已有并发订阅者挂好，它负责调 nacos
+        }
         try {
             naming.subscribe(service, group, adapter);
-            adapters.put(service, adapter);
         } catch (NacosException e) {
+            // 失败路径清掉占位，让下一次 subscribe 能重新尝试
+            adapters.remove(service, adapter);
             listeners.remove(service);
             throw new IllegalStateException("nacos subscribe failed for " + service, e);
         }

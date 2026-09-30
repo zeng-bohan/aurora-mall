@@ -166,6 +166,21 @@ class RpcTransportIntegrationTest {
     }
 
     @Test
+    void invokeRightAfterConnectionDropFailsFastNotByTimeout() throws Exception {
+        // 断线事件先跑完、随后 invoke 才入 pending：活性复查让它立即失败而非等满超时
+        server.stop();
+        long deadline = System.currentTimeMillis() + 3000;
+        while (System.currentTimeMillis() < deadline && client.isConnected()) {
+            Thread.sleep(50);
+        }
+        long t0 = System.nanoTime();
+        assertThatThrownBy(() -> client.invoke("x".getBytes(java.nio.charset.StandardCharsets.UTF_8)))
+                .isInstanceOf(RpcUnavailableException.class);
+        long elapsedMillis = (System.nanoTime() - t0) / 1_000_000;
+        assertThat(elapsedMillis).as("断连后的 invoke 应快速失败而非等满超时").isLessThan(500);
+    }
+
+    @Test
     void serverReapsIdleConnections() throws Exception {
         // 服务端读空闲回收：对端崩溃不发 FIN 时，半开连接不能永久占着文件描述符
         RpcServer reapServer = new RpcServer(SECRET, body -> body,

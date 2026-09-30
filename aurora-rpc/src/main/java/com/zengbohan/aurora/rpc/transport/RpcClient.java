@@ -212,6 +212,12 @@ public class RpcClient {
         long requestId = requestIdSeq.incrementAndGet();
         DefaultPromise<byte[]> promise = new DefaultPromise<>(ch.eventLoop());
         pending.put(requestId, promise);
+        // 活性复查：channelInactive 的 failAllPending 可能先于本次 put 跑完，
+        // 不复查的话这条调用要白等满超时
+        if (!ch.isActive()) {
+            pending.remove(requestId);
+            throw new RpcUnavailableException("connection lost to " + host + ":" + port);
+        }
 
         RpcFrame request = RpcFrame.request(requestId, MessageType.REQUEST, JsonSerializerCode.JSON, requestBody);
         // pipeline 以 ByteBuf 为消息类型（LengthFieldBasedFrameDecoder 之后），出站需包一层
