@@ -61,4 +61,21 @@ class TxMessageRetryJobTest {
 
         verify(publisher, never()).resend(anyString(), anyString(), anyString(), anyString());
     }
+
+    @Test
+    void poisonMessageDoesNotStarveTheRestOfTheSweep() {
+        // 第一条 resend 抛异常（毒丸）：第二条仍被处理并标记
+        TxMessage poison = pending(11L, "1001");
+        TxMessage healthy = pending(12L, "1002");
+        when(txMessageMapper.findStalePending(any(LocalDateTime.class)))
+                .thenReturn(List.of(poison, healthy));
+        org.mockito.Mockito.doThrow(new RuntimeException("mq down"))
+                .when(publisher).resend(anyString(), anyString(), anyString(), eq("1001"));
+
+        job.resendStale();
+
+        verify(publisher).resend(anyString(), anyString(), anyString(), eq("1002"));
+        verify(txMessageMapper).markSent(12L);
+        verify(txMessageMapper, never()).markSent(11L);
+    }
 }

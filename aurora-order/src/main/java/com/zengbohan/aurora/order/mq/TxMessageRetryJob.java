@@ -33,9 +33,14 @@ public class TxMessageRetryJob {
     @Scheduled(fixedDelayString = "${aurora.order.tx-retry-interval-ms:30000}", initialDelay = 45_000)
     public void resendStale() {
         for (TxMessage message : txMessageMapper.findStalePending(LocalDateTime.now().minusSeconds(60))) {
-            log.warn("tx_message {} ({}) still pending, resending", message.getId(), message.getBizKey());
-            publisher.resend(message.getTopic(), message.getTag(), message.getPayload(), message.getBizKey());
-            txMessageMapper.markSent(message.getId());
+            try {
+                log.warn("tx_message {} ({}) still pending, resending", message.getId(), message.getBizKey());
+                publisher.resend(message.getTopic(), message.getTag(), message.getPayload(), message.getBizKey());
+                txMessageMapper.markSent(message.getId());
+            } catch (RuntimeException e) {
+                // 毒丸隔离：一条重发失败不能饿死本轮后续消息
+                log.error("tx_message resend failed for id {}", message.getId(), e);
+            }
         }
     }
 }
