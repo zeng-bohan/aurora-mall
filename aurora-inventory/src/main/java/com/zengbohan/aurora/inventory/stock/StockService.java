@@ -70,7 +70,9 @@ public class StockService {
             rebuildKeyFromDb(skuId);
             result = redis.execute(scripts.reserve, List.of(StockLuaScripts.key(skuId)), String.valueOf(quantity));
         }
-        if (result == null) {
+        // 二次仍 MISS（SETNX 竞态等极端情况）绝不能静默当作预扣成功——
+        // redis 实际没扣而订单继续走，超卖从这里开始
+        if (result == null || result == MISSING_KEY) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务异常");
         }
         if (result == INSUFFICIENT) {
