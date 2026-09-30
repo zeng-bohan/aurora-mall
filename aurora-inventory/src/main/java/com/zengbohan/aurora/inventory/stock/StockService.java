@@ -46,7 +46,9 @@ public class StockService {
         if (quantity < 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "库存数量不能为负");
         }
-        redis.opsForValue().set(StockLuaScripts.key(skuId), String.valueOf(quantity));
+        // 先 DB 后 Redis：两步之间崩溃时 key 缺失或仍是旧值，
+        // 由 reserve 的 MISSING_KEY rebuild 与 reconcile 自愈；
+        // 反序（先 Redis）会在窗口内留下"新 Redis + 旧 DB"且 key 存在，无自愈路径
         ProductStock row = stockMapper.selectById(skuId);
         if (row == null) {
             ProductStock created = new ProductStock();
@@ -59,6 +61,7 @@ public class StockService {
             // are in flight: available = quantity + reserved, atomically
             stockMapper.resetAvailable(skuId, quantity);
         }
+        redis.opsForValue().set(StockLuaScripts.key(skuId), String.valueOf(quantity));
     }
 
     public void reserve(long skuId, int quantity) {
