@@ -35,14 +35,17 @@ public class InternalPathGuardFilter implements GlobalFilter, Ordered {
         if (route == null) {
             return chain.filter(exchange);
         }
-        // 路由已匹配、StripPrefix 之后的下游路径 = 原始路径去掉 /api/{service}
-        String raw = exchange.getRequest().getURI().getRawPath();  // 未解码
+        // 路由已匹配。必须按下游实际会看到的形态推算：先按 StripPrefix 语义
+        // 剥掉 /api/{service}（丢弃空段、保留 ; 参数——与 SCG tokenize 一致），
+        // 再做下游侧归一化（剥 ; 参数、折叠空段、解析点段——与 CoyoteAdapter
+        // 映射前顺序一致）。顺序错了 //internal/、internal;x=1、a/..; 三类
+        // 变体都能穿过前缀检查。
         String decoded = exchange.getRequest().getURI().getPath(); // 已解码
-        String downstream = downstreamOf(decoded);
-        // 点段穿越：字面 ../、编码 %2e%2e（raw/解码后任一形态出现都拒）——
-        // 透传给下游会被归一化成内部路径
-        if (hasDotSegment(downstream) || hasDotSegment(raw)
-                || raw.toLowerCase().contains("%2e")
+        String downstream = normalizeDownstream(stripApiAndService(decoded));
+        String raw = exchange.getRequest().getURI().getRawPath();  // 未解码
+        // 编码点段（%2e%2e）：解码后即为点段，上面已拦；raw/decoded 里再兜
+        // 编码形态（客户端故意编码点段本身就可疑，双重编码亦同）
+        if (raw != null && raw.toLowerCase().contains("%2e")
                 || decoded.toLowerCase().contains("%2e")) {
             return reject(exchange);
         }
@@ -54,19 +57,59 @@ public class InternalPathGuardFilter implements GlobalFilter, Ordered {
         return chain.filter(exchange);
     }
 
-    /** 原始路径去掉 /api/{service} 前缀 = StripPrefix 后的下游路径。 */
-    private static String downstreamOf(String decodedPath) {
-        String[] segments = decodedPath.split("/", 4); // "", api, service, rest
-        return segments.length == 4 ? "/" + segments[3] : decodedPath;
-    }
-
-    private static boolean hasDotSegment(String path) {
-        for (String seg : path.split("/")) {
-            if (seg.equals("..") || seg.equals(".")) {
-                return true;
+    /**
+     * StripPrefix=2 语义：丢 /api/{service} 两段。空段丢弃、; 参数原样保留
+     * （与 SCG tokenize 一致——归一化留给下游侧的 normalizeDownstream）。
+     */
+    static String stripApiAndService(String decodedPath) {
+        java.util.List<String> kept = new java.util.ArrayList<>();
+        for (String segment : decodedPath.split("/", -1)) {
+            if (!segment.isEmpty()) {
+                kept.add(segment);
             }
         }
-        return false;
+        if (kept.size() < 2) {
+            return "/";
+        }
+        return "/" + String.join("/", kept.subList(2, kept.size()));
+    }
+
+    /**
+     * 归一化下游路径：剥 ; 路径参数 → 丢弃空段（// 折叠）→ 解析 . 与 ..
+     * （.. 弹出上一段，段不足则忽略）。与 Tomcat CoyoteAdapter 的映射前
+     * 归一化顺序对齐，保证“这里看到的 = 下游匹配到的”。
+     */
+    static String normalizeDownstream(String decodedPath) {
+        String[] rawSegments = decodedPath.split("/", -1);
+        java.util.Deque<String> stack = new java.util.ArrayDeque<>();
+        for (String segment : rawSegments) {
+            if (segment.isEmpty() || segment.equals(".")) {
+                continue; // 空段折叠、当前段跳过
+            }
+            int semi = segment.indexOf(';');
+            if (semi >= 0) {
+                segment = segment.substring(0, semi);
+            }
+            if (segment.isEmpty()) {
+                continue; // 纯路径参数段
+            }
+            if (segment.equals("..")) {
+                stack.pollLast(); // 上跳：弹出最新的段（addLast 与 pollLast 配对）
+            } else {
+                stack.addLast(segment);
+            }
+        }
+        StringBuilder normalized = new StringBuilder("/");
+        java.util.Iterator<String> it = stack.iterator();
+        boolean first = true;
+        while (it.hasNext()) {
+            if (!first) {
+                normalized.append('/');
+            }
+            normalized.append(it.next());
+            first = false;
+        }
+        return normalized.toString();
     }
 
     private static Mono<Void> reject(ServerWebExchange exchange) {

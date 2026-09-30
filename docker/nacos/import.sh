@@ -21,10 +21,16 @@ if [[ ! -f "$SECRETS_FILE" ]]; then
     JWT=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
     INTERNAL=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
   fi
+  if command -v openssl > /dev/null 2>&1; then
+    CHANNEL=$(openssl rand -hex 24)
+  else
+    CHANNEL=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' 
+')
+  fi
   {
     echo "AURORA_JWT_SECRET=dev-jwt-$JWT"
     echo "AURORA_INTERNAL_SECRET=dev-internal-$INTERNAL"
-    echo "AURORA_CHANNEL_SECRET=dev-channel-$INTERNAL"
+    echo "AURORA_CHANNEL_SECRET=dev-channel-$CHANNEL"
   } > "$SECRETS_FILE"
 fi
 # shellcheck disable=SC1090

@@ -42,11 +42,14 @@ restart_default_mode() { # name
   start_service "$name"
 }
 
+# 网关已封 /actuator/** 穿透（M4）：健康探测直连服务端口
 await_healthy() { # name attempts
   local name="$1" attempts="${2:-40}"
+  declare -A PORTS=( [gateway]=8000 [user]=8081 [product]=8082 [cart]=8083 [order]=8084 [inventory]=8085 [payment]=8086 )
+  local port="${PORTS[$name]:-}"
   for _ in $(seq 1 "$attempts"); do
     local code
-    code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/api/$name/actuator/health" 2>/dev/null)
+    code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:${port}/actuator/health" 2>/dev/null)
     [[ "$code" == "200" ]] && return 0
     sleep 3
   done
