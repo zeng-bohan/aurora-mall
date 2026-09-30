@@ -1,5 +1,7 @@
 package com.zengbohan.aurora.payment.mq;
 
+import com.zengbohan.aurora.common.mq.TradeTopics;
+
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.apache.rocketmq.spring.support.RocketMQHeaders;
@@ -14,8 +16,8 @@ import org.springframework.stereotype.Component;
 @Component
 public class PaymentEventPublisher {
 
-    public static final String TOPIC_TRADE = "aurora-trade";
-    public static final String TAG_ORDER_PAID = "tag-order-paid";
+    public static final String TOPIC_TRADE = TradeTopics.TOPIC_TRADE;
+    public static final String TAG_ORDER_PAID = TradeTopics.TAG_ORDER_PAID;
 
     private static final Logger log = LoggerFactory.getLogger(PaymentEventPublisher.class);
 

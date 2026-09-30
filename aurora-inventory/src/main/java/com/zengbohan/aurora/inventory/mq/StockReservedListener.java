@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.inventory.mq;
 
+import com.zengbohan.aurora.common.mq.TradeTopics;
 import com.zengbohan.aurora.inventory.stock.StockService;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
@@ -15,9 +16,9 @@ import org.springframework.stereotype.Component;
 @Component
 @ConditionalOnProperty(name = "rocketmq.name-server")
 @RocketMQMessageListener(
-        topic = "aurora-trade",
+        topic = TradeTopics.TOPIC_TRADE,
         consumerGroup = "aurora-inventory-stock-consumer",
-        selectorExpression = "tag-stock-reserved")
+        selectorExpression = TradeTopics.TAG_STOCK_RESERVED)
 public class StockReservedListener implements RocketMQListener<StockReservedListener.StockReservedEvent> {
 
     public record StockReservedEvent(String messageId, long skuId, int quantity) {
