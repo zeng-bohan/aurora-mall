@@ -34,7 +34,7 @@ class ProductCacheServiceTest {
         clock = new MutableClock(Instant.parse("2026-09-28T00:00:00Z"));
         scheduler = Executors.newSingleThreadScheduledExecutor();
         dbCalls = new AtomicInteger();
-        service = new ProductCacheService(store, new StringBloomFilter(1_000, 0.01),
+        service = new ProductCacheService(store, new VolatileBloomFilterHolder(new StringBloomFilter(1_000, 0.01)),
                 clock, Runnable::run, scheduler, 86_400);
         // seed the bloom so id lookups reach the cache/db path
         service.bloomPut(1L);

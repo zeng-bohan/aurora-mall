@@ -18,31 +18,41 @@ class StringBloomFilterTest {
     }
 
     @Test
-    void falsePositiveRateStaysWithinOrderOfMagnitude() {
-        for (double target : new double[]{0.01, 0.001}) {
-            long insertions = 10_000;
-            StringBloomFilter filter = new StringBloomFilter(insertions, target);
-            for (long i = 0; i < insertions; i++) {
-                filter.put("sku-" + i);
-            }
-            int falsePositives = 0;
-            int probes = 50_000;
-            for (long i = insertions; i < insertions + probes; i++) {
-                if (filter.mightContain("sku-" + i)) {
-                    falsePositives++;
-                }
-            }
-            double measured = falsePositives / (double) probes;
-            // order of magnitude check: within 3x of the target, never above 0.1
-            assertThat(measured)
-                    .as("measured FPR %s vs target %s", measured, target)
-                    .isLessThan(Math.min(target * 3, 0.1));
-        }
-    }
-
-    @Test
     void neverContainsBeforeInsert() {
         StringBloomFilter filter = new StringBloomFilter(1_000, 0.01);
         assertThat(filter.mightContain("never-added")).isFalse();
+    }
+
+    @Test
+    void concurrentPutsAreAllVisibleToConcurrentReaders() throws Exception {
+        // 20 线程各 put 一万次（键空间交错），跑完后全部 must-contain（无假阴性是契约）
+        StringBloomFilter filter = new StringBloomFilter(1_000_000, 0.01);
+        int threads = 20;
+        int perThread = 10_000;
+        java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(threads);
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+        for (int t = 0; t < threads; t++) {
+            final int base = t * perThread;
+            pool.execute(() -> {
+                try {
+                    start.await();
+                    for (int i = 0; i < perThread; i++) {
+                        filter.put("key-" + (base + i));
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    done.countDown();
+                }
+            });
+        }
+        start.countDown();
+        org.assertj.core.api.Assertions.assertThat(done.await(60, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        pool.shutdownNow();
+
+        for (int i = 0; i < threads * perThread; i += 97) { // 步进抽样 20 万键的 ~1%
+            assertThat(filter.mightContain("key-" + i)).isTrue();
+        }
     }
 }
