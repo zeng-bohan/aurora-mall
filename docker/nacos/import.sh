@@ -110,6 +110,9 @@ aurora:
       order:
         limit: 100
         window-seconds: 10
+      user:
+        limit: 200
+        window-seconds: 10
 YAML
 )
 

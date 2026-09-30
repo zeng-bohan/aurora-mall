@@ -21,6 +21,10 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrder> {
     @Update("UPDATE payment_orders SET status = 2 WHERE order_id = #{orderId} AND status = 0")
     int markRefunded(@Param("orderId") long orderId);
 
+    /** 守卫转移：仅 PAID → REFUNDED（迟到支付信号——钱已收、单已关的退款闭环）。 */
+    @Update("UPDATE payment_orders SET status = 2 WHERE order_id = #{orderId} AND status = 1")
+    int markPaidRefunded(@Param("orderId") long orderId);
+
     /** 事件发布完成后打标（守卫：不重复标记）。 */
     @Update("UPDATE payment_orders SET event_published = 1 WHERE order_id = #{orderId} AND event_published = 0")
     int markEventPublished(@Param("orderId") long orderId);

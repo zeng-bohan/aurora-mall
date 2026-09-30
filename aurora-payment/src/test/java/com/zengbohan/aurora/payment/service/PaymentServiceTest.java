@@ -96,6 +96,37 @@ class PaymentServiceTest {
     }
 
     @Test
+    void closeWinningRaceAfterMarkPaidRefundsInsteadOfPublishing() {
+        // markPaid 赢得竞态后复检发现订单已关：退款、不发 order-paid（审查一.2）
+        // 三次读取：方法开头 / markPaid 赢后复检 / 退款后回读
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0)).thenReturn(payment(1)).thenReturn(payment(2));
+        when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER))
+                .thenReturn(Result.ok(new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
+
+        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"),
+                verifier.sign(1001L, "39.80"));
+
+        org.mockito.Mockito.verify(mapper).markRefunded(1001L);
+        org.mockito.Mockito.verify(publisher, org.mockito.Mockito.never())
+                .sendOrderPaid(org.mockito.Mockito.anyString(), org.mockito.Mockito.anyString());
+        org.assertj.core.api.Assertions.assertThat(result.getStatus())
+                .isEqualTo(PaymentOrder.STATUS_REFUNDED);
+    }
+
+    @Test
+    void duplicateCallbackRereadsCurrentStateInsteadOfStaleSnapshot() {
+        // 并发回调：开头读到 PAYING、markPaid 输给别的回调——必须重读而不是用过期快照判 500
+        when(mapper.findByOrderId(1001L)).thenReturn(payment(0)).thenReturn(payment(1));
+        when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
+
+        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"),
+                verifier.sign(1001L, "39.80"));
+
+        org.assertj.core.api.Assertions.assertThat(result.getStatus())
+                .isEqualTo(PaymentOrder.STATUS_PAID);
+    }
+
+    @Test
     void byOrderIdRejectsOtherUsersUniformlyAsNotFound() {
         // CREATED_ORDER 归属 user 1（见常量定义）
         when(mapper.findByOrderId(1001L)).thenReturn(payment(0));

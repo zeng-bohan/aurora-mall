@@ -171,6 +171,12 @@ public class OrderService {
         return orderMapper.transition(orderId, Order.STATUS_CREATED, Order.STATUS_PAID) > 0;
     }
 
+    /** 迟到支付判定：订单是否已关（关单赢了支付竞态）。 */
+    public boolean isClosed(long orderId) {
+        Order order = orderMapper.selectById(orderId);
+        return order != null && order.getStatus() == Order.STATUS_CLOSED;
+    }
+
     /**
      * Delayed-message, scan and compensation entry point. Idempotent and
      * re-entrant: CREATED -> CLOSED, then the stock release, then a

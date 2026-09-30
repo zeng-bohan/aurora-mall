@@ -96,14 +96,21 @@ public class PaymentService {
             return paymentOrderMapper.findByOrderId(orderId);
         }
         boolean first = paymentOrderMapper.markPaid(orderId) > 0;
-        PaymentOrder current = first ? paymentOrderMapper.findByOrderId(orderId) : payment;
-        if (current.getStatus() != PaymentOrder.STATUS_PAID) {
-            // markPaid failed without the row being PAID: impossible in this
-            // state machine unless concurrent writes corrupt it
+        // 永远重读：并发回调/竞态下方法开头的快照可能已过期（用过期对象会误判 500）
+        PaymentOrder current = paymentOrderMapper.findByOrderId(orderId);
+        if (current == null || current.getStatus() != PaymentOrder.STATUS_PAID) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "支付状态异常");
         }
         if (!first) {
             log.info("duplicate callback for order {}; re-publishing paid event", orderId);
+        }
+        // markPaid 赢了竞态也要复检：关单可能恰好在其前后提交——
+        // 钱收了但单已关 → 自动退款，不发 order-paid（对齐迟到回调语义）
+        OrderSummary afterWin = loadOrder(orderId);
+        if (afterWin != null && afterWin.status() == 2) {
+            paymentOrderMapper.markRefunded(orderId);
+            log.warn("close won the race for order {} — payment auto-refunds after markPaid", orderId);
+            return paymentOrderMapper.findByOrderId(orderId);
         }
         publishPaid(current);
         return current;
@@ -162,6 +169,12 @@ public class PaymentService {
         OrderSummary order = loadOrder(payment.getOrderId());
         if (order == null) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "订单服务不可用");
+        }
+        if (order.status() == 2) {
+            // 补发 job 的同源防线：订单已关的 PAID 记录不发事件，转退款
+            paymentOrderMapper.markRefunded(payment.getOrderId());
+            log.warn("skip paid event for closed order {} — auto-refunds", payment.getOrderId());
+            return;
         }
         try {
             publisher.sendOrderPaid(String.valueOf(payment.getOrderId()),

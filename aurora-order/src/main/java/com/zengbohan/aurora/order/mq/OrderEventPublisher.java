@@ -75,4 +75,18 @@ public class OrderEventPublisher {
                 .build();
         template.syncSend(topic + ":" + tag, message);
     }
+
+    /** 迟到支付信号：通知 payment 对已关订单自动退款（payment 侧消费）。 */
+    public void publishRefundRequest(long orderId) {
+        RocketMQTemplate template = templateProvider.getIfAvailable();
+        if (template == null) {
+            log.warn("rocketmq not configured; refund signal skipped for order {}", orderId);
+            return;
+        }
+        Message<String> message = MessageBuilder.withPayload(String.valueOf(orderId))
+                .setHeader(RocketMQHeaders.KEYS, orderId)
+                .build();
+        template.syncSend(TOPIC_TRADE + ":" + TradeTopics.TAG_PAYMENT_REFUND, message);
+        log.info("refund signal sent for order {}", orderId);
+    }
 }
