@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class StringBloomFilterTest {
 
+    // 索引负数边界（h1 + i*h2 == Long.MIN_VALUE 时 Math.abs 仍为负）已由
+    // floorMod 修复消除；FNV 输出无法从公开 API 精确构造该输入，以 code review 覆盖。
+
     @Test
     void noFalseNegativesForInsertedElements() {
         StringBloomFilter filter = new StringBloomFilter(10_000, 0.01);
