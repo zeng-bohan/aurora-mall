@@ -66,8 +66,14 @@ class ServiceDiscoveryTest {
             pool.execute(() -> {
                 try {
                     start.await();
+                    // 均衡器与真实客户端一致：每读线程持有一个，而不是每次 pick 新建
+                    RoundRobinLoadBalancer lb = new RoundRobinLoadBalancer();
                     for (int i = 0; i < 2000; i++) {
-                        ServiceInstance picked = discovery.pick("svc", new RoundRobinLoadBalancer());
+                        ServiceInstance picked = discovery.pick("svc", lb);
+                        if (pickedPorts.size() < 5) {
+                            System.err.println("[DBG] pick#" + picks.get() + " -> " + picked.port()
+                                + " snapshot=" + discovery.snapshot("svc"));
+                        }
                         pickedPorts.add(picked.port()); // 只可能是 1/2/3，其余即撕裂证据
                         picks.incrementAndGet();
                     }
