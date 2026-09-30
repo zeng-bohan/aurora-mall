@@ -11,28 +11,43 @@ import com.zengbohan.aurora.user.mapper.UserMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 class UserServiceTest {
 
     private UserMapper userMapper;
+    private StringRedisTemplate redis;
+    private ValueOperations<String, String> redisValues;
     private UserService userService;
     private final JwtCodec jwtCodec = new JwtCodec("test-secret-0123456789abcdef-0123456789");
 
     @BeforeEach
+    @SuppressWarnings("unchecked")
     void setUp() {
         userMapper = mock(UserMapper.class);
-        userService = new UserService(userMapper, jwtCodec, 1800, 604800);
+        redis = mock(StringRedisTemplate.class);
+        redisValues = mock(ValueOperations.class);
+        // 缺省：无黑名单、无会话失效标记（具体用例自行覆盖 stub）
+        when(redis.hasKey(any())).thenReturn(false);
+        when(redis.opsForValue()).thenReturn(redisValues);
+        when(redisValues.get(any())).thenReturn(null);
+        userService = new UserService(userMapper, jwtCodec, redis, 1800, 604800);
     }
 
     private User activeUser() {
         User user = new User();
+        // 实体无 setter：insert 时由 MP 自增回填，测试里用反射钉住 id
+        org.springframework.test.util.ReflectionTestUtils.setField(user, "id", 1L);
         user.setUsername("bohan");
         user.setPassword(new BCryptPasswordEncoder().encode("secret123"));
         user.setRole(UserService.ROLE_USER);
@@ -102,6 +117,72 @@ class UserServiceTest {
 
         assertThatThrownBy(() -> userService.refresh(new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.accessToken())))
                 .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void rotationInvalidatesTheUsedRefreshToken() {
+        when(userMapper.selectOne(any())).thenReturn(activeUser());
+        when(userMapper.selectById(any())).thenReturn(activeUser());
+        TokenResponse tokens = userService.login(new LoginRequest("bohan", "secret123"));
+
+        userService.refresh(new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.refreshToken()));
+
+        // 旧 refresh 的 jti 被拉黑（一次一换）
+        String usedJti = jwtCodec.decode(tokens.refreshToken()).jti();
+        org.mockito.Mockito.verify(redisValues).set(
+                eq(JwtCodec.BLACKLIST_KEY_PREFIX + usedJti), eq("1"), any());
+    }
+
+    @Test
+    void reusedRefreshTokenIsRejectedViaBlacklist() {
+        when(userMapper.selectOne(any())).thenReturn(activeUser());
+        when(userMapper.selectById(any())).thenReturn(activeUser());
+        TokenResponse tokens = userService.login(new LoginRequest("bohan", "secret123"));
+
+        userService.refresh(new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.refreshToken()));
+
+        // 第二次用同一张旧票：命中黑名单
+        when(redis.hasKey(JwtCodec.BLACKLIST_KEY_PREFIX
+                + jwtCodec.decode(tokens.refreshToken()).jti())).thenReturn(true);
+        assertThatThrownBy(() -> userService.refresh(
+                new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.refreshToken())))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void refreshAfterLogoutIsRejectedBySessionInvalidation() {
+        when(userMapper.selectById(any())).thenReturn(activeUser());
+        // 登出写下的失效时间戳晚于旧票的 iat
+        String oldRefresh = jwtCodec.encode(new JwtCodec.Claims(
+                "1", "USER", "old-jti", JwtCodec.TYP_REFRESH,
+                java.time.Instant.now().minusSeconds(60), java.time.Instant.now().plusSeconds(604800)));
+        when(redisValues.get("aurora:jwt:session-invalid-before:1"))
+                .thenReturn(String.valueOf(java.time.Instant.now().getEpochSecond()));
+
+        assertThatThrownBy(() -> userService.refresh(
+                new com.zengbohan.aurora.user.dto.RefreshRequest(oldRefresh)))
+                .isInstanceOf(BusinessException.class);
+    }
+
+    @Test
+    void freshLoginAfterLogoutCanRefresh() {
+        when(userMapper.selectOne(any())).thenReturn(activeUser());
+        when(userMapper.selectById(any())).thenReturn(activeUser());
+        // 失效时间戳已存在（此前登出过），但新票 iat 更晚
+        when(redisValues.get("aurora:jwt:session-invalid-before:1"))
+                .thenReturn(String.valueOf(java.time.Instant.now().minusSeconds(300).getEpochSecond()));
+        when(redisValues.get(any())).thenAnswer(inv -> {
+            String key = inv.getArgument(0);
+            return key.startsWith("aurora:jwt:session-invalid-before:")
+                    ? String.valueOf(java.time.Instant.now().minusSeconds(300).getEpochSecond())
+                    : null;
+        });
+
+        TokenResponse tokens = userService.login(new LoginRequest("bohan", "secret123"));
+
+        assertThatCode(() -> userService.refresh(
+                new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.refreshToken())))
+                .doesNotThrowAnyException();
     }
 
     @Test

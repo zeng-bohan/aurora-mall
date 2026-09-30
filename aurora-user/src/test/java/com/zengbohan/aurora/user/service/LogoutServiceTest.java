@@ -35,7 +35,7 @@ class LogoutServiceTest {
         redis = mock(StringRedisTemplate.class);
         valueOps = mock(ValueOperations.class);
         when(redis.opsForValue()).thenReturn(valueOps);
-        service = new LogoutService(codec, redis);
+        service = new LogoutService(codec, redis, 604800);
     }
 
     private String accessToken(long ttlSeconds) {
@@ -51,6 +51,17 @@ class LogoutServiceTest {
         service.logout("Bearer " + token);
 
         verify(valueOps).set(JwtCodec.BLACKLIST_KEY_PREFIX + "jti-1", "1", Duration.ofSeconds(1800));
+    }
+
+    @Test
+    void logoutAlsoInvalidatesAllExistingSessions() {
+        String token = accessToken(1800);
+
+        service.logout("Bearer " + token);
+
+        // 会话级失效时间戳，TTL = refresh 寿命
+        verify(valueOps).set("aurora:jwt:session-invalid-before:1",
+                String.valueOf(NOW.getEpochSecond()), Duration.ofSeconds(604800));
     }
 
     @Test
