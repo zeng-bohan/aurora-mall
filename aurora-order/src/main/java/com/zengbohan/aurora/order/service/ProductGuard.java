@@ -5,11 +5,15 @@ import com.zengbohan.aurora.order.client.ProductClient;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** Shared product price/status guard for both placement strategies. */
 @Component
 public class ProductGuard {
+
+    private static final Logger log = LoggerFactory.getLogger(ProductGuard.class);
 
     private final ProductClient productClient;
 
@@ -22,6 +26,7 @@ public class ProductGuard {
         try {
             result = productClient.detail(skuId);
         } catch (RuntimeException e) {
+            log.warn("product detail call failed for sku {}", skuId, e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
         }
         if (result == null) {

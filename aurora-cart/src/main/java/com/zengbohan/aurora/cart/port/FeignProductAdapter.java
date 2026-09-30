@@ -5,6 +5,8 @@ import com.zengbohan.aurora.cart.client.ProductClient;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -18,6 +20,8 @@ import java.util.List;
 @ConditionalOnProperty(name = "aurora.rpc.enabled", havingValue = "false", matchIfMissing = true)
 public class FeignProductAdapter implements ProductPort {
 
+    private static final Logger log = LoggerFactory.getLogger(FeignProductAdapter.class);
+
     private final ProductClient productClient;
 
     public FeignProductAdapter(ProductClient productClient) {
@@ -30,6 +34,7 @@ public class FeignProductAdapter implements ProductPort {
         try {
             result = productClient.detail(id);
         } catch (RuntimeException e) {
+            log.warn("product feign detail failed for id {}", id, e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
         }
         if (result == null) {
@@ -50,6 +55,7 @@ public class FeignProductAdapter implements ProductPort {
         try {
             batch = productClient.batch(ids);
         } catch (RuntimeException e) {
+            log.warn("product feign batch failed for {} ids", ids.size(), e);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "商品服务不可用");
         }
         if (batch == null || batch.code() != ErrorCode.SUCCESS.getCode() || batch.data() == null) {
