@@ -4,9 +4,12 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Component;
 
-/** Loads the stock Lua scripts once; both are atomic single-key operations. */
+/** Loads the stock Lua scripts once; all are atomic operations. */
 @Component
 public class StockLuaScripts {
+
+    /** 释放标记 TTL：7 天，覆盖关单补偿的所有重试窗口。 */
+    public static final String RELEASE_MARKER_TTL_SECONDS = "604800";
 
     public final DefaultRedisScript<Long> reserve;
     public final DefaultRedisScript<Long> rollback;
@@ -22,5 +25,10 @@ public class StockLuaScripts {
 
     public static String key(long skuId) {
         return "aurora:stock:" + skuId;
+    }
+
+    /** 回滚恰好一次的标记 key（KEYS[1] of rollback script）。 */
+    public static String releasedMarkerKey(long orderId) {
+        return "aurora:stock:released:" + orderId;
     }
 }

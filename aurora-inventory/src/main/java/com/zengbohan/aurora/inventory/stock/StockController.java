@@ -20,6 +20,10 @@ public class StockController {
     public record StockRequest(@Min(0) int quantity) {
     }
 
+    /** 释放类请求：orderId 驱动库存侧幂等。 */
+    public record ReleaseRequest(@Min(1) long orderId, @Min(0) int quantity) {
+    }
+
     private final StockService stockService;
 
     public StockController(StockService stockService) {
@@ -46,16 +50,17 @@ public class StockController {
         return Result.ok();
     }
 
-    /** AT 对照：释放 DB 预占（关单路径，at 单专用，不动 redis）。 */
+    /** AT 对照：释放 DB 预占（关单路径，at 单专用，不动 redis）。按订单幂等。 */
     @PostMapping("/{skuId}/release-db")
-    public Result<Void> releaseDb(@PathVariable long skuId, @Valid @RequestBody StockRequest request) {
-        stockService.releaseDb(skuId, request.quantity());
+    public Result<Void> releaseDb(@PathVariable long skuId, @Valid @RequestBody ReleaseRequest request) {
+        stockService.releaseDb(request.orderId(), skuId, request.quantity());
         return Result.ok();
     }
 
+    /** 关单回滚：redis +1 与 DB 释放均按订单幂等，补偿可安全重入。 */
     @PostMapping("/{skuId}/rollback")
-    public Result<Void> rollback(@PathVariable long skuId, @Valid @RequestBody StockRequest request) {
-        stockService.rollback(skuId, request.quantity());
+    public Result<Void> rollback(@PathVariable long skuId, @Valid @RequestBody ReleaseRequest request) {
+        stockService.rollback(request.orderId(), skuId, request.quantity());
         return Result.ok();
     }
 }

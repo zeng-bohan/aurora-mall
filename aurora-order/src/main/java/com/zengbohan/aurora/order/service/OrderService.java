@@ -133,7 +133,8 @@ public class OrderService {
             });
         } catch (RuntimeException e) {
             // 本地事务没成：预扣必须还给用户，否则库存凭空少
-            rollbackStockQuietly(request.skuId(), request.quantity(), "local tx failed for order " + orderId);
+            rollbackStockQuietly(orderId, request.skuId(), request.quantity(),
+                    "local tx failed for order " + orderId);
             throw e;
         }
 
@@ -194,9 +195,11 @@ public class OrderService {
         try {
             if ("at".equals(order.getTxMode())) {
                 // AT orders never touched redis; release the db reservation only
-                inventoryClient.releaseDb(order.getSkuId(), new InventoryClient.StockRequest(order.getQuantity()));
+                inventoryClient.releaseDb(order.getSkuId(),
+                        new InventoryClient.ReleaseRequest(orderId, order.getQuantity()));
             } else {
-                inventoryClient.rollback(order.getSkuId(), new InventoryClient.StockRequest(order.getQuantity()));
+                inventoryClient.rollback(order.getSkuId(),
+                        new InventoryClient.ReleaseRequest(orderId, order.getQuantity()));
             }
         } catch (RuntimeException e) {
             log.error("stock release failed for order {}; redelivery or the compensation scan will retry", orderId, e);
@@ -222,9 +225,9 @@ public class OrderService {
         }
     }
 
-    private void rollbackStockQuietly(long skuId, int quantity, String reason) {
+    private void rollbackStockQuietly(long orderId, long skuId, int quantity, String reason) {
         try {
-            inventoryClient.rollback(skuId, new InventoryClient.StockRequest(quantity));
+            inventoryClient.rollback(skuId, new InventoryClient.ReleaseRequest(orderId, quantity));
         } catch (RuntimeException e) {
             // 补偿失败留给 inventory 对账任务兜底，但必须响亮
             log.error("compensation rollback failed for sku {} x{} ({})", skuId, quantity, reason, e);

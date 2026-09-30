@@ -13,11 +13,15 @@ public interface InventoryClient {
     record StockRequest(int quantity) {
     }
 
+    /** 释放类请求带 orderId：库存侧按订单幂等（补偿可安全重入）。 */
+    record ReleaseRequest(long orderId, int quantity) {
+    }
+
     @PostMapping("/stocks/{skuId}/reserve")
     Result<Void> reserve(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
 
     @PostMapping("/stocks/{skuId}/rollback")
-    Result<Void> rollback(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
+    Result<Void> rollback(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);
 
     /** AT comparison: db-only reservation inside the global transaction. */
     @PostMapping("/stocks/{skuId}/reserve-db")
@@ -25,5 +29,5 @@ public interface InventoryClient {
 
     /** AT order close: release the db reservation only (no redis was touched). */
     @PostMapping("/stocks/{skuId}/release-db")
-    Result<Void> releaseDb(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
+    Result<Void> releaseDb(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);
 }
