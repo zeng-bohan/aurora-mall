@@ -5,7 +5,7 @@ package com.zengbohan.aurora.ratelimit;
  */
 public interface RateLimiter {
 
-    /** 尝试获取 1 个令牌。 */
+    // 尝试获取 1 个令牌。
     default boolean tryAcquire() {
         return tryAcquire(1);
     }

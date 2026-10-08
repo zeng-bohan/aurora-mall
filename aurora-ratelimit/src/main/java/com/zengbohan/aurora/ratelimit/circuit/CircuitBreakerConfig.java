@@ -8,21 +8,21 @@ import java.util.function.LongSupplier;
  */
 public final class CircuitBreakerConfig {
 
-    /** 失败率阈值（百分比，0-100），窗口内达到即熔断。 */
+    // 失败率阈值（百分比，0-100），窗口内达到即熔断。
     final int failureRateThreshold;
-    /** 慢调用率阈值（百分比，0-100）。 */
+    // 慢调用率阈值（百分比，0-100）。
     final int slowCallRateThreshold;
-    /** 慢调用判定阈值：单次耗时超过此值算慢调用。 */
+    // 慢调用判定阈值：单次耗时超过此值算慢调用。
     final long slowCallDurationMillis;
-    /** 最小请求数：窗口内请求数低于此值不判定（避免小样本抖动误熔断）。 */
+    // 最小请求数：窗口内请求数低于此值不判定（避免小样本抖动误熔断）。
     final int minRequestThreshold;
-    /** 半开状态放行的试探数。 */
+    // 半开状态放行的试探数。
     final int halfOpenPermittedCalls;
-    /** OPEN 持续时长，到期转 HALF_OPEN。 */
+    // OPEN 持续时长，到期转 HALF_OPEN。
     final long openDurationMillis;
-    /** 统计窗口时长：失败率/慢调用率的观察窗，与 OPEN 持续时长互相独立。 */
+    // 统计窗口时长：失败率/慢调用率的观察窗，与 OPEN 持续时长互相独立。
     final long statWindowMillis;
-    /** 统计窗口桶数。 */
+    // 统计窗口桶数。
     final int windowBuckets;
     final LongSupplier clock;
     final CircuitBreaker.Listener listener;

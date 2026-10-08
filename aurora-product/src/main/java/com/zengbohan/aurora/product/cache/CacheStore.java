@@ -3,8 +3,8 @@ package com.zengbohan.aurora.product.cache;
 import java.time.Duration;
 
 /**
- * Minimal json-serializing cache abstraction so the caching patterns are
- * unit-testable without a live redis.
+ * 最小化的 JSON 序列化缓存抽象，让缓存模式无需真实 redis
+ * 也能做单元测试。
  */
 public interface CacheStore {
 

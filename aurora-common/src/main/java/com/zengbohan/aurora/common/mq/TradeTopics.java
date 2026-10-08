@@ -10,7 +10,7 @@ public final class TradeTopics {
     public static final String TAG_STOCK_RESERVED = "tag-stock-reserved";
     public static final String TAG_ORDER_CLOSE_TIMEOUT = "tag-order-close-timeout";
     public static final String TAG_ORDER_PAID = "tag-order-paid";
-    /** 迟到支付信号：订单已关但钱已收，payment 收到后自动退款。 */
+    // 迟到支付信号：订单已关但钱已收，payment 收到后自动退款。
     public static final String TAG_PAYMENT_REFUND = "tag-payment-refund";
 
     private TradeTopics() {

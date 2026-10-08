@@ -1,6 +1,6 @@
 package com.zengbohan.aurora.id;
 
-/** A freshly allocated segment covering (maxId - step, maxId]. */
+// 新分配的号段，覆盖区间 (maxId - step, maxId]。
 @FunctionalInterface
 public interface SegmentLoader {
 

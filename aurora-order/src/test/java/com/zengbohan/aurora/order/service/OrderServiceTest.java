@@ -61,7 +61,7 @@ class OrderServiceTest {
         transactionTemplate = mock(TransactionTemplate.class);
         publisher = mock(OrderEventPublisher.class);
 
-        // the mocked template runs the callback inline like a real one would
+        // mock 的模板像真实模板一样内联执行回调
         doAnswer(invocation -> {
             java.util.function.Consumer<org.springframework.transaction.TransactionStatus> callback =
                     invocation.getArgument(0);

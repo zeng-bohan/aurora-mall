@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
- * 网关全局限流过滤器（ADR-0008：接入手写 aurora-ratelimit 的分布式形态）。
+ * 网关全局限流过滤器（接入手写 aurora-ratelimit 的分布式形态）。
  * <p>
  * 按路由 id 取 nacos 下发的规则；Redis ZSET 共享配额（多实例合并计数）。
  * 排在鉴权（-100）之前：过载保护最先卸载流量，登录/注册等公开路径同样受保护。
@@ -31,7 +31,7 @@ public class GatewayRateLimitFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayRateLimitFilter.class);
 
-    /** 业务码：限流（与统一 Result 约定一致，前端按 code 处理）。 */
+    // 业务码：限流（与统一 Result 约定一致，前端按 code 处理）。
     static final String TOO_MANY_REQUESTS_BODY =
             "{\"code\":42900,\"message\":\"请求过于频繁，请稍后再试\"}";
 

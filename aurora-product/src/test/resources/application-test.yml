@@ -4,15 +4,15 @@ spring:
       discovery:
         enabled: false
       config:
-        # starter is on the classpath but tests never import config data;
-        # this only silences spring-cloud's "no spring.config.import" check
+        # starter 在 classpath 上，但测试从不导入配置数据；
+        # 这里只是为了让 spring-cloud 的 "no spring.config.import" 检查安静下来
         import-check:
           enabled: false
 
-# clearly-fake test fixtures: tests never talk to the config center.
-# seed-on-startup=false is the test seam for CI context-load runs: no
-# database there, so the bloom stays empty (detail lookups in tests must
-# seed ids themselves).
+# 明显是假的测试占位值：测试从不访问配置中心.
+# seed-on-startup=false 是 CI 上下文加载运行的测试缝：
+# 那里没有数据库，布隆过滤器保持为空（测试里的详情查询必须
+# 自己播种 id）。
 aurora:
   internal:
     secret: test-only-internal-secret-not-real

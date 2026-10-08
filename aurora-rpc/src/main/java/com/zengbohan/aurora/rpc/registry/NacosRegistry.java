@@ -32,17 +32,17 @@ public class NacosRegistry implements RegistryService, AutoCloseable {
 
     private final NamingService naming;
     private final String group;
-    /** service -> 该服务的消费 listener 列表。 */
+    // service -> 该服务的消费 listener 列表。
     private final Map<String, CopyOnWriteArrayList<Consumer<List<ServiceInstance>>>> listeners =
             new ConcurrentHashMap<>();
-    /** service -> 已挂到 nacos 的适配器（注销时需要原对象）。 */
+    // service -> 已挂到 nacos 的适配器（注销时需要原对象）。
     private final Map<String, EventListener> adapters = new ConcurrentHashMap<>();
 
     public NacosRegistry(String serverAddr) throws NacosException {
         this(NamingFactory.createNamingService(serverAddr), DEFAULT_GROUP);
     }
 
-    /** 注入 NamingService 的构造器，供测试替换实现。 */
+    // 注入 NamingService 的构造器，供测试替换实现。
     NacosRegistry(NamingService naming, String group) {
         this.naming = naming;
         this.group = group;
@@ -134,7 +134,7 @@ public class NacosRegistry implements RegistryService, AutoCloseable {
         }
     }
 
-    /** 只保留 enabled + healthy 的实例。 */
+    // 只保留 enabled + healthy 的实例。
     private static List<ServiceInstance> toAuroraInstances(String service, List<Instance> instances) {
         if (instances == null) {
             return List.of();

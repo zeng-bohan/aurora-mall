@@ -3,18 +3,16 @@ package com.zengbohan.aurora.id;
 import java.time.Clock;
 
 /**
- * Classic 64-bit snowflake layout (41 timestamp / 10 worker / 12 sequence)
- * with a clock-rollback guard: a small backwards jump is waited out, a large
- * one is refused loudly instead of handing out duplicate ids.
+ * 经典 64 位雪花布局（41 位时间戳 / 10 位 worker / 12 位序列），带时钟回拨
+ * 守卫：小幅回拨等待恢复，大幅回拨直接报错拒绝，而不是发出重复 id。
  *
- * The main loop re-evaluates after every wait: while waiting for the next
- * millisecond other threads may have claimed ids there, so the sequence is
- * re-derived from the (possibly advanced) clock instead of reusing the
- * wrapped-around value.
+ * 主循环在每次等待后重新求值：等待下一毫秒期间，其他线程可能已经占用了
+ * 那一毫秒的 id，因此序列号要从（可能已推进的）时钟重新推导，
+ * 而不是复用回绕后的旧值。
  */
 public class SnowflakeIdGenerator implements IdGenerator {
 
-    /** 2025-01-01T00:00:00Z — ids stay positive for ~69 years from here. */
+    // 2025-01-01T00:00:00Z —— 从此刻起 id 在约 69 年内保持为正数。
     static final long EPOCH = 1735689600000L;
     static final long MAX_BACKWARD_MS = 5;
 
@@ -52,8 +50,8 @@ public class SnowflakeIdGenerator implements IdGenerator {
             if (now == lastTimestamp) {
                 sequenceValue = (sequence + 1) & SEQUENCE_MASK;
                 if (sequenceValue == 0) {
-                    // this millisecond is exhausted: wait for the next one and
-                    // re-derive — another thread may have claimed ids there
+                    // 本毫秒的序列已用尽：等待下一毫秒并重新推导——
+                    // 其他线程可能已经占用了那里的 id
                     waitUntil(lastTimestamp + 1);
                     continue;
                 }
@@ -73,7 +71,7 @@ public class SnowflakeIdGenerator implements IdGenerator {
             throw new IllegalStateException(
                     "clock moved backwards by " + backwardMs + "ms; refusing to generate ids");
         }
-        // small drift: wait it out, then re-check from the top
+        // 小幅回拨：等过去，然后从头重新检查
         waitUntil(lastTimestamp);
         if (clock.millis() < lastTimestamp) {
             throw new IllegalStateException(

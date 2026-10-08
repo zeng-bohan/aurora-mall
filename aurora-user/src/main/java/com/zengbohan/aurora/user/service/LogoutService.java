@@ -13,8 +13,8 @@ import org.springframework.stereotype.Service;
 import java.time.Duration;
 
 /**
- * Writes revoked access tokens into the shared redis blacklist the gateway
- * checks on every authenticated request (ADR-0006).
+ * 把已撤销的 access token 写入共享的 redis 黑名单，
+ * 网关在每次鉴权请求时都会检查它。
  */
 @Service
 public class LogoutService {

@@ -16,7 +16,7 @@ public class VolatileBloomFilterHolder {
         return current;
     }
 
-    /** 重播种完成后的原子整体替换。 */
+    // 重播种完成后的原子整体替换。
     public void replace(StringBloomFilter next) {
         this.current = next;
     }

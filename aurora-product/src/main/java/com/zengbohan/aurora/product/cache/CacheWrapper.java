@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 
 import java.time.Instant;
 
-/** Logical-expiry envelope: the redis key outlives expireAt, staleness is judged per read. */
+// 逻辑过期信封：redis key 的存活时间长于 expireAt，是否过期在每次读取时判断。
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class CacheWrapper<V> {
 

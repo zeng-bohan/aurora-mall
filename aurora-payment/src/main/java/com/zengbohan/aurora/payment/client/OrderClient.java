@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 
 
-/** Service-to-service order lookup (internal secret protects the path). */
+// 服务间的订单查询（该路径由内部密钥保护）。
 @FeignClient(name = "aurora-order")
 public interface OrderClient {
 

@@ -13,9 +13,8 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
 
 /**
- * Wraps RocketMQ sends behind one seam. The template resolves lazily: CI
- * context tests run without a name-server, sends log-and-skip there (the
- * local-message retry job covers the same ground in production).
+ * 把 RocketMQ 发送收敛在一处。模板是惰性解析的：CI 上下文测试没有
+ * name-server，那里的发送只记日志并跳过（生产环境由本地消息重发 job 兜底）。
  */
 @Component
 public class OrderEventPublisher {
@@ -34,7 +33,7 @@ public class OrderEventPublisher {
         this.templateProvider = templateProvider;
     }
 
-    /** Half message; the transaction listener confirms against tx_message. */
+    // 半消息；由事务监听器对照 tx_message 做确认。
     public void sendStockReservedTransactionally(String bizKey, String payload) {
         RocketMQTemplate template = templateProvider.getIfAvailable();
         if (template == null) {
@@ -47,7 +46,7 @@ public class OrderEventPublisher {
         template.sendMessageInTransaction(TOPIC_TRADE + ":" + TAG_STOCK_RESERVED, message, bizKey);
     }
 
-    /** Delayed close trigger; the timeout scan job is the safety net. */
+    // 延迟关单触发器；超时扫描 job 是兜底。
     public void sendCloseTimeout(long orderId, int delayLevel) {
         RocketMQTemplate template = templateProvider.getIfAvailable();
         if (template == null) {
@@ -63,7 +62,7 @@ public class OrderEventPublisher {
                 orderId, delayLevel, result.getMsgId());
     }
 
-    /** Plain resend used by the local-message retry job. */
+    // 本地消息重发 job 使用的普通重发。
     public void resend(String topic, String tag, String payload, String bizKey) {
         RocketMQTemplate template = templateProvider.getIfAvailable();
         if (template == null) {
@@ -76,7 +75,7 @@ public class OrderEventPublisher {
         template.syncSend(topic + ":" + tag, message);
     }
 
-    /** 迟到支付信号：通知 payment 对已关订单自动退款（payment 侧消费）。 */
+    // 迟到支付信号：通知 payment 对已关订单自动退款（payment 侧消费）。
     public void publishRefundRequest(long orderId) {
         RocketMQTemplate template = templateProvider.getIfAvailable();
         if (template == null) {

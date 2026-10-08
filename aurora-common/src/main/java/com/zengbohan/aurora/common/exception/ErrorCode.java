@@ -1,8 +1,8 @@
 package com.zengbohan.aurora.common.exception;
 
 /**
- * Business error codes. Segments: 0 success, 1xxxx system, 2xxxx inventory,
- * 4xxxx http-semantics (auth/forbidden/not-found/conflict).
+ * 业务错误码。分段规则：0 成功，1xxxx 系统，2xxxx 库存，
+ * 4xxxx HTTP 语义（鉴权/禁止/不存在/冲突）。
  */
 public enum ErrorCode {
     SUCCESS(0, "success"),

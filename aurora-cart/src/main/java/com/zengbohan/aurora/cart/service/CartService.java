@@ -24,7 +24,7 @@ public class CartService {
         this.productPort = productPort;
     }
 
-    /** Repeated adds of the same sku accumulate quantity (redis HINCRBY). */
+    // 重复添加同一 sku 会累加数量（redis HINCRBY）。
     public void add(long userId, CartItemRequest request) {
         requireProductExists(request.skuId());
         cartStore.increment(userId, request.skuId(), request.quantity());
@@ -43,7 +43,7 @@ public class CartService {
         cartStore.clear(userId);
     }
 
-    /** Line items with product snapshots joined via port batch lookup. */
+    // 行项目与商品快照，通过端口批量查询拼装。
     public List<CartItem> view(long userId) {
         Map<Long, Long> lines = cartStore.entries(userId);
         if (lines.isEmpty()) {

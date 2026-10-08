@@ -23,7 +23,7 @@ public class RedisCartStore implements CartStore {
 
     private static final String KEY_PREFIX = "aurora:cart:";
 
-    /** 购物车滑动过期时间。 */
+    // 购物车滑动过期时间。
     private static final Duration TTL = Duration.ofDays(30);
 
     /**

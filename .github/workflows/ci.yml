@@ -62,8 +62,8 @@ jobs:
             ls "$context"/target/*.jar > /dev/null || { echo "missing jar for $context"; exit 1; }
           done
 
-      # Builds every service image locally to prove the Dockerfiles work.
-      # Images are never pushed from CI; publishing is a manual release step.
+      # 在本地构建每个服务镜像，验证 Dockerfile 可用。
+      # CI 从不推送镜像；发布是手动步骤。
       - name: Build service images
         run: |
           shopt -s nullglob

@@ -11,10 +11,10 @@ import java.util.List;
 public interface OrderMapper extends BaseMapper<Order> {
 
     /**
-     * The state machine: a guarded transition succeeds only from the expected
-     * status, so concurrent events (pay vs close) cannot both win.
+     * 状态机：带守卫的状态迁移只在期望状态下成功，
+     * 因此并发事件（支付 vs 关单）不可能同时获胜。
      *
-     * @return 1 when the transition applied, 0 when the row was in another state
+     * @return 迁移成功返回 1；该行处于其他状态时返回 0
      */
     @Update("UPDATE orders SET status = #{to} WHERE id = #{id} AND status = #{from}")
     int transition(@Param("id") long id, @Param("from") int from, @Param("to") int to);
@@ -22,7 +22,7 @@ public interface OrderMapper extends BaseMapper<Order> {
     @Select("SELECT * FROM orders WHERE status = 0 AND created_at <= #{before} LIMIT 200")
     List<Order> findTimedOut(@Param("before") java.time.LocalDateTime before);
 
-    /** Compensation scan: closed orders whose stock release never completed. */
+    // 补偿扫描：已关闭但库存释放从未完成的订单。
     @Update("UPDATE orders SET stock_released = 1 WHERE id = #{id} AND stock_released = 0")
     int markStockReleased(@Param("id") long id);
 

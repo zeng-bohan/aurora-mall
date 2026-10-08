@@ -12,9 +12,9 @@ import java.io.IOException;
 import java.util.UUID;
 
 /**
- * Propagates a trace id across the request lifecycle: accepts an inbound
- * X-Trace-Id (set by the gateway or an upstream service) or mints one, exposes
- * it via MDC for logging and echoes it on the response.
+ * 在整个请求生命周期内传递 trace id：接受入站的 X-Trace-Id
+ * （由网关或上游服务设置），没有则自行生成；
+ * 通过 MDC 暴露给日志，并在响应中原样回传。
  */
 @Component
 public class TraceIdFilter extends OncePerRequestFilter {

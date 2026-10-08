@@ -32,7 +32,7 @@ class CartServiceTest {
     private static final ProductSnapshot MUG =
             new ProductSnapshot(1L, "Aurora Mug", new BigDecimal("29.90"), 100, 1);
 
-    /** 假端口：可编程返回与故障。 */
+    // 假端口：可编程返回与故障。
     private static final class FakeProductPort implements ProductPort {
         final Map<Long, ProductSnapshot> catalog = new HashMap<>(Map.of(1L, MUG));
         boolean outage;

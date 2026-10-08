@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** /internal/** 经网关一律 404（不暴露存在性）；其他路径照常。 */
+// /internal/** 经网关一律 404（不暴露存在性）；其他路径照常。
 class InternalPathGuardFilterTest {
 
     private InternalPathGuardFilter filter;

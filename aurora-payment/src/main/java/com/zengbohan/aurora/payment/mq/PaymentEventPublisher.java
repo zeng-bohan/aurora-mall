@@ -12,7 +12,7 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
 
-/** Emits payment results onto the trade topic. */
+// 把支付结果发送到交易 topic。
 @Component
 public class PaymentEventPublisher {
 

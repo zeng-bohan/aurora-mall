@@ -2,13 +2,13 @@ package com.zengbohan.aurora.cart.store;
 
 import java.util.Map;
 
-/** Hash-shaped cart storage so service logic is testable without redis. */
+// 哈希结构的购物车存储，让服务层逻辑无需 redis 也能测试。
 public interface CartStore {
 
-    /** Atomic quantity increment; creates the line when absent. */
+    // 原子累加数量；行不存在时创建。
     long increment(long userId, long skuId, long delta);
 
-    /** Overwrite the quantity for an existing or new line. */
+    // 覆盖已有或新建行的数量。
     void put(long userId, long skuId, long quantity);
 
     void remove(long userId, long skuId);

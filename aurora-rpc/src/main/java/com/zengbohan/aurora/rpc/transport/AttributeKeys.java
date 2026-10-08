@@ -7,7 +7,7 @@ import io.netty.util.AttributeKey;
  */
 public final class AttributeKeys {
 
-    /** 该连接是否已通过内部密钥握手。 */
+    // 该连接是否已通过内部密钥握手。
     public static final AttributeKey<Boolean> AUTHENTICATED = AttributeKey.valueOf("aurora.rpc.authenticated");
 
     private AttributeKeys() {

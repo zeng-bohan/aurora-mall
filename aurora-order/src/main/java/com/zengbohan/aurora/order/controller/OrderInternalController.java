@@ -12,8 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.math.BigDecimal;
 
 /**
- * Service-to-service order lookup (payment initiation). Reached only with
- * the internal secret - no user context on this path by design.
+ * 服务间的订单查询（支付发起用）。只有携带内部密钥才能访问——
+ * 该路径按设计不含用户上下文。
  */
 @RestController
 public class OrderInternalController {

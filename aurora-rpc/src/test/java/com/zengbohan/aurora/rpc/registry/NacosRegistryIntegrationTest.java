@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 真 Nacos 往返：本地 compose 起 Nacos 后跑（注册 → 订阅推送 → 注销推送）。
  * Nacos 不可达时自动跳过（同 StockLuaIntegrationTest 模式），CI 无 Nacos 保持绿。
- * Run locally: docker compose up -d nacos
+ * 本地运行：docker compose up -d nacos
  */
 class NacosRegistryIntegrationTest {
 

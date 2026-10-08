@@ -16,7 +16,7 @@ import java.util.function.LongSupplier;
  */
 public class SlidingWindowRateLimiter implements RateLimiter {
 
-    /** 默认桶数：窗口切成 10 段，精度与开销的折中。 */
+    // 默认桶数：窗口切成 10 段，精度与开销的折中。
     private static final int DEFAULT_BUCKET_COUNT = 10;
 
     private final int limit;
@@ -31,7 +31,7 @@ public class SlidingWindowRateLimiter implements RateLimiter {
         this(limit, window, bucketCount, System::currentTimeMillis);
     }
 
-    /** 注入时钟的构造器，供测试控制时间。 */
+    // 注入时钟的构造器，供测试控制时间。
     SlidingWindowRateLimiter(int limit, Duration window, int bucketCount, LongSupplier clock) {
         if (limit <= 0) {
             throw new IllegalArgumentException("limit must be positive: " + limit);

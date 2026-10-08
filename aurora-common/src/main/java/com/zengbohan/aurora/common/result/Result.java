@@ -3,8 +3,8 @@ package com.zengbohan.aurora.common.result;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 
 /**
- * Unified API response envelope. Business errors ride HTTP 200 with a non-zero
- * code; infrastructure failures return HTTP 5xx via GlobalExceptionHandler.
+ * 统一的 API 响应信封。业务错误走 HTTP 200 + 非零 code；
+ * 基础设施故障经 GlobalExceptionHandler 返回 HTTP 5xx。
  */
 public record Result<T>(int code, String message, T data) {
 

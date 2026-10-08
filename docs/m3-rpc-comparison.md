@@ -1,10 +1,10 @@
 # M3 对照实验：OpenFeign vs 手写 RPC（aurora-rpc）
 
-日期：2026-09-30 · 状态：已完成（M3 交付物） · 关联：ADR-0008、[Spec #22](https://github.com/zeng-bohan/aurora-mall/issues/22)
+日期：2026-09-30 · 状态：已完成（M3 交付物） · 关联：[Spec #22](https://github.com/zeng-bohan/aurora-mall/issues/22)
 
 ## 对照的问题
 
-ADR-0008 承诺服务间调用有两条可切换的传输路径：Spring Cloud 成熟的 OpenFeign（HTTP/JSON + Ribbon 式负载均衡），与手写的 aurora-rpc（自定义二进制协议 + Netty + 自研注册发现/负载均衡/熔断）。切换只改一个配置项（`aurora.rpc.enabled`），业务代码零改动。本报告回答三个问题：**功能是否等价？代价是什么？各自边界在哪？**
+本设计承诺服务间调用有两条可切换的传输路径：Spring Cloud 成熟的 OpenFeign（HTTP/JSON + Ribbon 式负载均衡），与手写的 aurora-rpc（自定义二进制协议 + Netty + 自研注册发现/负载均衡/熔断）。切换只改一个配置项（`aurora.rpc.enabled`），业务代码零改动。本报告回答三个问题：**功能是否等价？代价是什么？各自边界在哪？**
 
 ## 机制对比
 

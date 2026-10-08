@@ -11,7 +11,7 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
  */
 public class JsonSerializer implements Serializer {
 
-    /** 协议默认序列化编号。 */
+    // 协议默认序列化编号。
     public static final byte CODE = 1;
 
     private final ObjectMapper mapper;

@@ -127,7 +127,7 @@ class ProtocolCodecTest {
         assertThat(codec.deserialize(bytes, Outer.class)).isEqualTo(payload);
     }
 
-    /** 嵌套结构往返的样例载荷。 */
+    // 嵌套结构往返的样例载荷。
     record Inner(String value) {
     }
 

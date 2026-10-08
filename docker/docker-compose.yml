@@ -10,13 +10,13 @@ services:
       MYSQL_DATABASE: aurora_mall
       TZ: Asia/Shanghai
     ports:
-      # host 3306/6379 belong to other long-running projects on this machine;
-      # services running on the host connect via localhost:13306 / localhost:16379
+      # 宿主机的 3306/6379 被本机其他长期运行的项目占用；
+      # 在宿主机上运行的服务通过 localhost:13306 / localhost:16379 连接
       - "127.0.0.1:13306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
-      # schema-per-service DDL, applied by the official image on first boot
-      # (existing volumes need the script applied manually once)
+      # 每服务一库的 DDL，首次启动时由官方镜像自动执行
+      # （已有数据卷时需手动执行一次脚本）
       - ./mysql/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-paurora123"]
@@ -64,8 +64,8 @@ services:
   rocketmq-namesrv:
     image: apache/rocketmq:5.3.1
     container_name: aurora-rocketmq-namesrv
-    # image ships no /home/rocketmq/logs dir, so volume mounts land root-owned;
-    # run as root instead of uid 3000 to keep the store/log paths writable
+    # 镜像里没有 /home/rocketmq/logs 目录，挂载卷会归属 root；
+    # 因此以 root 而非 uid 3000 运行，保证存储/日志路径可写
     user: "0"
     command: sh mqnamesrv
     ports:
@@ -91,8 +91,8 @@ services:
       rocketmq-namesrv:
         condition: service_healthy
     ports:
-      # brokerIP1 advertises 127.0.0.1 so clients running on the host (IDE/mvn) can connect;
-      # in-compose callers of the broker are not expected until M4+.
+      # brokerIP1 通告 127.0.0.1，让宿主机上的客户端（IDE/mvn）可以连接；
+      # M4 之前不预期编排内有调用方访问该 broker。
       - "127.0.0.1:10909:10909"
       - "127.0.0.1:10911:10911"
     volumes:
@@ -114,10 +114,10 @@ services:
     container_name: aurora-seata-server
     environment:
       TZ: Asia/Shanghai
-      # host-reachable address: services on the host resolve this via nacos
+      # 宿主可达地址：宿主机上的服务通过 nacos 解析到此
       SEATA_IP: "127.0.0.1"
-      # inject registry config without replacing the image's default yml
-      # (a full-file mount broke web-application-type/logback defaults)
+      # 注入注册中心配置，而不替换镜像自带的默认 yml
+      # （整文件挂载曾破坏 web-application-type/logback 默认值）
       SPRING_APPLICATION_JSON: '{"seata":{"registry":{"type":"nacos","nacos":{"application":"seata-server","server-addr":"nacos:8848","group":"DEFAULT_GROUP","cluster":"default"}}}}'
     ports:
       - "127.0.0.1:8091:8091"
@@ -125,8 +125,8 @@ services:
       nacos:
         condition: service_healthy
 
-  # dev convenience beyond the spec's service list: namesrv/broker visualization
-  # (image ships no curl/wget/bash, so smoke.sh probes it host-side instead)
+  # spec 服务清单之外的开发便利项：namesrv/broker 可视化界面
+  # （镜像里没有 curl/wget/bash，因此改由 smoke.sh 从宿主机侧探测）
   rocketmq-dashboard:
     image: apacherocketmq/rocketmq-dashboard:latest
     container_name: aurora-rocketmq-dashboard
@@ -138,8 +138,8 @@ services:
     ports:
       - "127.0.0.1:8180:8080"
 
-  # 9.7 line: H2 storage keeps the dev stack single-container and light;
-  # SkyWalking 10 dropped H2 (would need BanyanDB/ES) — revisit at M4
+  # 9.7 这一代：H2 存储让开发栈保持单容器、轻量；
+  # SkyWalking 10 移除了 H2（需要 BanyanDB/ES）——M4 时再评估
   skywalking-oap:
     image: apache/skywalking-oap-server:9.7.0
     container_name: aurora-skywalking-oap
@@ -152,8 +152,8 @@ services:
       - "127.0.0.1:11800:11800"
       - "127.0.0.1:12800:12800"
     healthcheck:
-      # OAP 9.7 has no /healthcheck HTTP route and the image ships wget, not curl;
-      # a 200 on the prometheus telemetry port proves the server is fully started
+      # OAP 9.7 没有 /healthcheck HTTP 路由，且镜像自带 wget 而非 curl；
+      # prometheus 遥测端口返回 200 即证明服务已完全启动
       test: ["CMD-SHELL", "wget -qO- http://localhost:1234/metrics >/dev/null 2>&1"]
       interval: 15s
       timeout: 5s

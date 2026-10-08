@@ -440,7 +440,7 @@ class RpcTransportIntegrationTest {
         }
     }
 
-    /** 等到首次调用成功（连接 + 握手就绪）。 */
+    // 等到首次调用成功（连接 + 握手就绪）。
     private boolean awaitFirstSuccess(RpcClient client) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 3000;
         while (System.currentTimeMillis() < deadline) {
@@ -454,7 +454,7 @@ class RpcTransportIntegrationTest {
         return false;
     }
 
-    /** 申请一个空闲端口（绑定后立即释放，存在理论上的竞态，测试场景可接受）。 */
+    // 申请一个空闲端口（绑定后立即释放，存在理论上的竞态，测试场景可接受）。
     private static int freePort() throws Exception {
         try (java.net.ServerSocket socket = new java.net.ServerSocket(0)) {
             return socket.getLocalPort();

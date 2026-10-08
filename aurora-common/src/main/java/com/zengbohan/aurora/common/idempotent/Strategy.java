@@ -1,8 +1,8 @@
 package com.zengbohan.aurora.common.idempotent;
 
 public enum Strategy {
-    /** Redis SETNX guard: duplicate calls fail fast with DUPLICATE_REQUEST. */
+    // Redis SETNX 守卫：重复调用以 DUPLICATE_REQUEST 快速失败。
     REDIS,
-    /** Dedup-table guard: duplicate calls are skipped silently (MQ consumers). */
+    // 去重表守卫：重复调用静默跳过（MQ 消费者）。
     DB_DEDUP
 }

@@ -5,7 +5,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** In-memory CacheStore that counts reads and can freeze "physical" expiry. */
+// 内存版 CacheStore：统计读取次数，并可冻结"物理"过期。
 public class FakeCacheStore implements CacheStore {
 
     private final Map<String, String> data = new ConcurrentHashMap<>();

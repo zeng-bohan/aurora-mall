@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# M0 smoke: bring the infra stack up and assert every service is healthy.
-# Services without a healthcheck count as healthy while their status is "Up".
+# M0 冒烟：拉起中间件栈并断言每个服务健康。
+# 没有 healthcheck 的服务，只要状态为 "Up" 即视为健康。
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -37,7 +37,7 @@ probe() {
   fi
 }
 
-# containers whose images ship no probe binary are probed from the host instead
+# 镜像里没有探测二进制的容器，改从宿主机侧探测
 probe "rocketmq dashboard http://localhost:8180" http://localhost:8180
 probe "skywalking ui   http://localhost:8090" http://localhost:8090
 

@@ -2,6 +2,6 @@ package com.zengbohan.aurora.id;
 
 public interface IdGenerator {
 
-    /** Next globally unique, roughly increasing id. */
+    // 下一个全局唯一、大致递增的 id。
     long nextId();
 }

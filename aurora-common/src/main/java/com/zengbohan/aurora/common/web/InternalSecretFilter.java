@@ -14,13 +14,12 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
 /**
- * Defense against bypassing the gateway: every service-to-service request
- * carries the shared X-Internal-Secret header (the gateway injects it on
- * forwarded traffic, Feign adds it on outgoing calls). Requests without the
- * correct value are rejected at 401 before reaching any controller.
+ * 防止绕过网关：每个服务间请求都携带共享的 X-Internal-Secret 头
+ * （网关在转发流量时注入，Feign 在出站调用时添加）。值不正确的请求
+ * 在触达任何 Controller 之前就以 401 拒绝。
  *
- * The bean only exists when aurora.internal.secret is configured (T5 moves
- * the value into the nacos config center with fail-fast startup).
+ * 该 Bean 只在配置了 aurora.internal.secret 时存在（T5 把该值迁入
+ * nacos 配置中心，并在启动时快速失败）。
  */
 @Component
 @ConditionalOnProperty(name = "aurora.internal.secret")
@@ -37,7 +36,7 @@ public class InternalSecretFilter extends OncePerRequestFilter {
         this.expected = expected;
     }
 
-    /** 容器/K8s 探针直连服务端口：健康检查与 Prometheus 抓取免内部密钥。 */
+    // 容器/K8s 探针直连服务端口：健康检查与 Prometheus 抓取免内部密钥。
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String uri = request.getRequestURI();

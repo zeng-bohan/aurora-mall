@@ -8,11 +8,11 @@ package com.zengbohan.aurora.rpc.transport;
 public final class StatusCodes {
 
     public static final byte OK = 0;
-    /** 业务处理器抛出异常。 */
+    // 业务处理器抛出异常。
     public static final byte ERROR = 1;
-    /** 服务端业务线程池已满（过载保护），稍后重试。 */
+    // 服务端业务线程池已满（过载保护），稍后重试。
     public static final byte OVERLOADED = 2;
-    /** 未通过内部密钥握手（配置错误）。 */
+    // 未通过内部密钥握手（配置错误）。
     public static final byte UNAUTHORIZED = 3;
 
     private StatusCodes() {

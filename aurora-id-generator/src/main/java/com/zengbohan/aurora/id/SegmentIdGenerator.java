@@ -5,9 +5,8 @@ import com.zengbohan.aurora.id.SegmentLoader.Segment;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Segment (leaf) allocator with double buffering: when the current segment is
- * 60% consumed the next one is already fetched, so the switch at exhaustion
- * is O(1). Synchronized internally — callers share one instance freely.
+ * 号段（leaf）分配器，双缓冲：当前号段消耗到 60% 时就预先取好下一段，
+ * 因此耗尽时的切换是 O(1)。内部已加同步——调用方可自由共享同一实例。
  */
 public class SegmentIdGenerator implements IdGenerator {
 
@@ -27,13 +26,13 @@ public class SegmentIdGenerator implements IdGenerator {
 
     @Override
     public synchronized long nextId() {
-        // switch/prefetch BEFORE computing, so offset stays within [0, step)
+        // 先切换/预取再计算，保证 offset 落在 [0, step) 内
         if (current == null || offset.get() >= current.step()) {
             switchTo(takePrefetchedOrLoad());
         } else if (prefetched == null && !prefetchFailed
                 && offset.get() >= current.step() * PREFETCH_THRESHOLD) {
-            // best effort: the exhaustion switch retries the load and surfaces
-            // the real failure; swallow here so current ids keep flowing
+            // 尽力而为：耗尽切换时会重试加载并抛出真正的失败；
+            // 这里先吞掉，让当前号段继续发号
             try {
                 prefetched = loader.next(bizTag);
             } catch (RuntimeException e) {

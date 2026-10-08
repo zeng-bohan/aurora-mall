@@ -69,7 +69,7 @@ class GatewayJwtFilterTest {
             return 200;
         }
         if (exchange.getResponse().getStatusCode() == HttpStatus.UNAUTHORIZED) {
-            // T2 AC: every 401 carries the unified envelope, not a bare status
+            // T2 验收项：每个 401 都带统一信封，而不是裸状态码
             String body = exchange.getResponse().getBodyAsString().block();
             assertThat(body).contains("\"code\":40100");
             return 401;

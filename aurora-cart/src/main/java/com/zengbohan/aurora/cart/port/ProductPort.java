@@ -12,9 +12,9 @@ import java.util.List;
  */
 public interface ProductPort {
 
-    /** 商品详情；不存在返回 null。 */
+    // 商品详情；不存在返回 null。
     ProductSnapshot detail(long id);
 
-    /** 批量查询；缺失的 id 不在结果中。 */
+    // 批量查询；缺失的 id 不在结果中。
     List<ProductSnapshot> batch(List<Long> ids);
 }

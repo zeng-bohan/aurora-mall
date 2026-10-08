@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class CircuitBreakerTest {
 
-    /** 测试用假时钟（毫秒）。 */
+    // 测试用假时钟（毫秒）。
     private long now;
 
     private CircuitBreakerConfig.Builder config() {
@@ -176,7 +176,7 @@ class CircuitBreakerTest {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } catch (Exception e) {
-                    // ok
+                    // 未抛异常即通过
                 } finally {
                     done.countDown();
                 }

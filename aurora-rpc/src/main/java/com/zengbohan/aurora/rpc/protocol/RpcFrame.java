@@ -29,12 +29,12 @@ public final class RpcFrame {
         return new RpcFrame(requestId, type, serializerCode, (byte) 0, requireBody(body));
     }
 
-    /** 响应帧，status 携带业务结果码。 */
+    // 响应帧，status 携带业务结果码。
     public static RpcFrame response(long requestId, byte serializerCode, byte status, byte[] body) {
         return new RpcFrame(requestId, MessageType.RESPONSE, serializerCode, status, requireBody(body));
     }
 
-    /** decode 的后半段：头元数据 + 切出的真实 body 组装成完整帧。 */
+    // decode 的后半段：头元数据 + 切出的真实 body 组装成完整帧。
     static RpcFrame from(FrameHeader header, byte[] body) {
         return new RpcFrame(header.requestId(), header.type(), header.serializerCode(),
                 header.status(), body);
@@ -71,7 +71,7 @@ public final class RpcFrame {
         return body.length;
     }
 
-    /** 内部可见的直接引用，避免编解码时不必要的拷贝。 */
+    // 内部可见的直接引用，避免编解码时不必要的拷贝。
     byte[] bodyRef() {
         return body;
     }

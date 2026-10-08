@@ -76,7 +76,7 @@ trap restore_feign EXIT
 
 echo "[chain D] rpc-mode equivalence: cart -> product over the handwritten rpc"
 
-# 0) seed: local-sql promotion to ADMIN (same as smoke-flows) + admin-created product
+# 0) 准备：本地 SQL 提权为 ADMIN（与 smoke-flows 相同）+ 管理端创建商品
 req POST /api/user/register "" "{\"username\":\"$USERNAME\",\"password\":\"secret123\",\"nickname\":\"rpc\"}"
 grep -qF '"code":0' <<<"$RESP" && ok "seed user registered" || bad "seed user registered"
 if ! docker exec aurora-mysql mysql -uroot -p"$MYSQL_PASSWORD" -e \
@@ -90,14 +90,14 @@ assert_body '"code":0' "seed product created (admin)"
 SKU=$(grep -oE '"data":[0-9]+' <<<"$RESP" | grep -oE '[0-9]+')
 [[ -n "$SKU" ]] && ok "seed product id=$SKU" || { bad "seed product id"; exit 1; }
 
-# 1) switch cart+product to rpc mode
+# 1) 把 cart+product 切到 rpc 模式
 echo "  ... 以 AURORA_RPC_ENABLED=true 重启 cart+product"
 restart_rpc_mode product
 restart_rpc_mode cart
 await_healthy product && await_healthy cart && ok "rpc-mode services healthy" || { bad "rpc-mode services healthy"; exit 1; }
 sleep 3 # nacos subscription first snapshot
 
-# 2) same golden path over the handwritten rpc
+# 2) 用同一条黄金路径走手写 rpc
 req POST /api/cart/carts/items "$TOKEN" "{\"skuId\":$SKU,\"quantity\":2}"
 assert_body '"code":0' "rpc mode: add to cart"
 req GET /api/cart/carts "$TOKEN"
@@ -109,7 +109,7 @@ assert_body '"code":10001' "rpc mode: unknown sku -> 10001 (null contract)"
 req GET /api/cart/carts "$TOKEN"
 grep -qF '"skuId":999999999' <<<"$RESP" && bad "unknown sku not written" || ok "unknown sku not written"
 
-# 3) restore default (feign) mode so the stack is left as found
+# 3) 恢复默认（feign）模式，让环境保持原样
 echo "  ... 还原 Feign 模式"
 restore_feign
 await_healthy product && await_healthy cart && ok "feign mode restored" || bad "feign mode restored"

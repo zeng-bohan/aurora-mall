@@ -79,7 +79,7 @@ class FrameDecoderTest {
         in.release();
     }
 
-    /** 把 ByteBuf 读成 byte[]（decodeHeader 需要）。 */
+    // 把 ByteBuf 读成 byte[]（decodeHeader 需要）。
     private static byte[] toBytes(ByteBuf buf) {
         byte[] bytes = new byte[buf.readableBytes()];
         buf.getBytes(buf.readerIndex(), bytes);

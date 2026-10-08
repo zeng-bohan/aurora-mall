@@ -27,13 +27,13 @@ import java.util.Map;
 @ConfigurationProperties(prefix = "aurora.rate-limit")
 public class RateLimitProperties {
 
-    /** 全局开关。 */
+    // 全局开关。
     private boolean enabled = true;
 
-    /** 路由 id → 限流规则；没有规则的路径直接放行。 */
+    // 路由 id → 限流规则；没有规则的路径直接放行。
     private Map<String, Rule> routes = new LinkedHashMap<>();
 
-    /** 装配期校验全部规则（过滤器构造时调用，@RefreshScope 重建即重跑）。 */
+    // 装配期校验全部规则（过滤器构造时调用，@RefreshScope 重建即重跑）。
     public void validateAll() {
         routes.forEach((route, rule) -> rule.validate(route));
     }
@@ -56,9 +56,9 @@ public class RateLimitProperties {
 
     public static class Rule {
 
-        /** 窗口内允许的最大请求数。 */
+        // 窗口内允许的最大请求数。
         private int limit;
-        /** 滑动窗口时长（秒）。 */
+        // 滑动窗口时长（秒）。
         private int windowSeconds = 1;
 
         public int getLimit() {
@@ -77,7 +77,7 @@ public class RateLimitProperties {
             this.windowSeconds = windowSeconds;
         }
 
-        /** fail-fast：坏规则（非正配额/窗口）在装配期暴露，而不是运行期静默失效。 */
+        // fail-fast：坏规则（非正配额/窗口）在装配期暴露，而不是运行期静默失效。
         public void validate(String route) {
             if (limit <= 0) {
                 throw new IllegalStateException("rate-limit rule for route '" + route + "' needs a positive limit");

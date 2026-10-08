@@ -16,7 +16,7 @@ public class BusinessFailureException extends RuntimeException {
         this.failureType = failureType;
     }
 
-    /** 远端业务异常的原始类型名（客户端透传给 RpcRemoteException）。 */
+    // 远端业务异常的原始类型名（客户端透传给 RpcRemoteException）。
     public String getFailureType() {
         return failureType;
     }

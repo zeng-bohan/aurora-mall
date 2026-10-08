@@ -16,7 +16,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** Local-message safety net: stale pending rows are resent then marked. */
+// 本地消息兜底：过期的 pending 行会被重发并标记。
 class TxMessageRetryJobTest {
 
     private TxMessageMapper txMessageMapper;

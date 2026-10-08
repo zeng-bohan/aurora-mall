@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Publish aurora's runtime config into the nacos config center (namespace dev).
-# Run once after `docker compose up -d`, before starting any service.
+# 把 aurora 的运行时配置发布到 nacos 配置中心（dev 命名空间）。
+# 在 `docker compose up -d` 之后、启动任何服务之前执行一次。
 #
-# Secrets are generated on first run into .secrets.env (gitignored) so real
-# values never enter the repository; re-runs reuse the existing file.
+# 首次运行时把密钥生成到 .secrets.env（已被 gitignore），真实值
+# 永不进入仓库；重复执行复用已有文件。
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -80,8 +80,8 @@ spring:
       client:
         config:
           default:
-            # on the user request path; do not inherit feign 10s/60s defaults
-            # (heredoc payloads go through the console pipe: keep ascii-only)
+            # 位于用户请求路径上；不要沿用 feign 的 10s/60s 默认值
+            # （heredoc 内容经控制台管道传输：保持纯 ascii）
             connect-timeout: 2000
             read-timeout: 3000
 YAML
@@ -111,8 +111,8 @@ aurora:
 YAML
 )
 GATEWAY_CFG=$(cat <<'YAML'
-# gateway rate limit: route id -> rule; routes without a rule are unlimited.
-# publish new thresholds before peak events; rebinding is immediate.
+# 网关限流：路由 id -> 规则；没有规则的路由不受限。
+# 大促前发布新阈值；重新绑定立即生效。
 aurora:
   rate-limit:
     enabled: true

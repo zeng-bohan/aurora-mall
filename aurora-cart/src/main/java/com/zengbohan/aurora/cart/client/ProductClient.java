@@ -12,7 +12,7 @@ import java.util.List;
 @FeignClient(name = "aurora-product")
 public interface ProductClient {
 
-    /** Business misses (unknown id) come back as HTTP 200 with code 40400. */
+    // 业务未命中（未知 id）以 HTTP 200 + code 40400 返回。
     @GetMapping("/products/{id}")
     Result<ProductSnapshot> detail(@PathVariable("id") long id);
 

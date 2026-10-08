@@ -53,11 +53,11 @@ public class RpcClient {
 
     private EventLoopGroup group;
     private volatile Channel channel;
-    /** requestId → 在途调用的响应 promise。 */
+    // requestId → 在途调用的响应 promise。
     private final Map<Long, DefaultPromise<byte[]>> pending = new ConcurrentHashMap<>();
     private final AtomicLong requestIdSeq = new AtomicLong();
     private volatile boolean running;
-    /** 上次发 ping 的时刻（纳秒），实现心跳间隔与重连退避解耦。 */
+    // 上次发 ping 的时刻（纳秒），实现心跳间隔与重连退避解耦。
     private volatile long lastPingNanos;
 
     public RpcClient(String host, int port, String internalSecret) {
@@ -108,7 +108,7 @@ public class RpcClient {
         }
     }
 
-    /** 当前是否持有活跃连接（健康检查/测试观察用）。 */
+    // 当前是否持有活跃连接（健康检查/测试观察用）。
     public boolean isConnected() {
         Channel ch = channel;
         return ch != null && ch.isActive();
@@ -181,11 +181,11 @@ public class RpcClient {
         ch.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(handshake)));
     }
 
-    /** 子类/测试钩子：连接就绪回调。 */
+    // 子类/测试钩子：连接就绪回调。
     protected void onConnected(Channel ch) {
     }
 
-    /** 空闲超过心跳间隔才发 ping：请求本身在流动时不额外打扰。 */
+    // 空闲超过心跳间隔才发 ping：请求本身在流动时不额外打扰。
     private void maybeHeartbeat() {
         Channel ch = channel;
         if (ch == null || !ch.isActive()) {
@@ -250,7 +250,7 @@ public class RpcClient {
         }
     }
 
-    /** 在途调用全部立即失败（断线/停止时调用；按 key 移除保证幂等）。 */
+    // 在途调用全部立即失败（断线/停止时调用；按 key 移除保证幂等）。
     void failAllPending(Throwable cause) {
         for (Map.Entry<Long, DefaultPromise<byte[]>> entry : pending.entrySet()) {
             DefaultPromise<byte[]> p = pending.remove(entry.getKey());

@@ -22,7 +22,7 @@ class SnowflakeIdGeneratorTest {
 
     private static final long BASE_MILLIS = SnowflakeIdGenerator.EPOCH + 1000;
 
-    /** Clock replaying a scripted list of millis values, then holding the last. */
+    // 按脚本回放毫秒值列表、之后固定停留在最后一个值的时钟。
     private static class ScriptedClock extends Clock {
         private final List<Long> script;
         private final AtomicInteger index = new AtomicInteger();
@@ -52,7 +52,7 @@ class SnowflakeIdGeneratorTest {
         }
     }
 
-    /** Clock that steps forward one millisecond on every read. */
+    // 每次读取都前进一毫秒的时钟。
     private static class SteppingClock extends Clock {
         private final AtomicLong current;
 
@@ -95,7 +95,7 @@ class SnowflakeIdGeneratorTest {
 
     @Test
     void smallClockRollbackIsWaitedOut() {
-        // now=1000 -> id; now=998 (2ms back, within tolerance) -> waitUntil(1000) -> 1000
+        // now=1000 -> 发 id；now=998（回拨 2ms，在容差内）-> waitUntil(1000) -> 1000
         ScriptedClock clock = new ScriptedClock(List.of(BASE_MILLIS, BASE_MILLIS - 2, BASE_MILLIS));
         SnowflakeIdGenerator generator = new SnowflakeIdGenerator(1, clock);
 
@@ -127,8 +127,8 @@ class SnowflakeIdGeneratorTest {
     @Test
     void concurrentGenerationProducesUniqueIds() throws Exception {
         SnowflakeIdGenerator generator = new SnowflakeIdGenerator(7);
-        // ticket promised 1000 concurrent threads; 100 threads x 100 ids is a
-        // stronger uniqueness pressure without the CI runner's thread limits
+        // 需求单承诺 1000 并发线程；100 线程 × 100 个 id 在不触及
+        // CI runner 线程上限的前提下提供了更强的唯一性压力
         int threads = 100;
         int perThread = 100;
         Set<Long> ids = ConcurrentHashMap.newKeySet();

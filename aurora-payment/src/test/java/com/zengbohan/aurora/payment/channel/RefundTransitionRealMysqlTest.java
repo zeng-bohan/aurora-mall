@@ -78,7 +78,7 @@ class RefundTransitionRealMysqlTest {
         }
     }
 
-    /** 守卫 SQL 的真实有效性：PAYING→REFUNDED 与 PAID→REFUNDED 都必须在真库上生效。 */
+    // 守卫 SQL 的真实有效性：PAYING→REFUNDED 与 PAID→REFUNDED 都必须在真库上生效。
     @Test
     void mergedRefundGuardTransitionsBothPayingAndPaidRowsOnRealDatabase() throws SQLException {
         long payingId = insertPaymentWithStatus(0); // PAYING（迟到回调路径）
@@ -96,7 +96,7 @@ class RefundTransitionRealMysqlTest {
         assertThat(statusOf(paidId)).isEqualTo(2);
     }
 
-    /** REFUNDED 行不再被守卫转移（幂等：重复信号不翻转已退款状态）。 */
+    // REFUNDED 行不再被守卫转移（幂等：重复信号不翻转已退款状态）。
     @Test
     void alreadyRefundedRowIsNotMovedAgain() throws SQLException {
         long id = insertPaymentWithStatus(1);

@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
-/** Scan fallback for the delayed message: closes overdue CREATED orders. */
+// 延迟消息的扫描兜底：关闭已超期的 CREATED 订单。
 @Component
 public class CloseTimeoutJob {
 
@@ -35,7 +35,7 @@ public class CloseTimeoutJob {
                 log.error("timed-out close failed for order {}", overdue.getId(), e);
             }
         }
-        // compensation sweep: closed orders whose stock release failed earlier
+        // 补偿扫描：此前库存释放失败的已关闭订单
         for (Order stranded : orderMapper.findUnreleasedClosed()) {
             try {
                 orderService.closeIfPending(stranded.getId());

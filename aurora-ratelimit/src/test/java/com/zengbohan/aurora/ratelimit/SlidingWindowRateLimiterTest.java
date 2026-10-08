@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
  */
 class SlidingWindowRateLimiterTest {
 
-    /** 测试用假时钟（毫秒）。 */
+    // 测试用假时钟（毫秒）。
     private long now;
 
     private SlidingWindowRateLimiter limiter(int limit, Duration window, int buckets) {

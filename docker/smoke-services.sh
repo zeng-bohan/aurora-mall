@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# M0 acceptance seam: gateway health + every service's health on its own port.
-# Prereq: `docker compose up -d` (infra) and the 7 Spring services running on
-# the host (see README runbook), gateway on :8000.
+# M0 验收缝：网关健康检查 + 每个服务各自端口上的健康检查。
+# 前置条件：`docker compose up -d`（中间件）以及 7 个 Spring 服务运行在
+# 宿主机上（见 README 运行手册），网关监听 :8000。
 # 注意：网关已封 /actuator/** 穿透（指标端点不暴露给网关流量），服务健康改为
 # 直连各自端口探测——这本身就是"内部端点不对用户流量开放"语义的一部分。
 set -euo pipefail

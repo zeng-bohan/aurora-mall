@@ -17,7 +17,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 补发 job：PAID 未发布的记录被重发并打标；毒丸不饿死后续；无待补发不动作。 */
+// 补发 job：PAID 未发布的记录被重发并打标；毒丸不饿死后续；无待补发不动作。
 class PaymentEventRetryJobTest {
 
     private PaymentOrderMapper mapper;

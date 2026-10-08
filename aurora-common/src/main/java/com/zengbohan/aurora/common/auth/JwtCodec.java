@@ -14,14 +14,14 @@ import java.time.Instant;
 import java.util.Base64;
 
 /**
- * Hand-rolled HS256 JWT codec (ADR-0006): deliberately free of JWT libraries
- * so signing, verification and expiry semantics stay inspectable.
+ * 手写 HS256 JWT 编解码器：刻意不依赖 JWT 库，
+ * 让签名、校验与过期语义保持可读可审。
  */
 public class JwtCodec {
 
     public static final String TYP_ACCESS = "access";
     public static final String TYP_REFRESH = "refresh";
-    /** Shared redis key namespace for revoked-token blacklist (gateway writes checks, user writes entries). */
+    // 已撤销 token 黑名单共用的 redis key 前缀（网关负责查询，user 负责写入）。
     public static final String BLACKLIST_KEY_PREFIX = "aurora:jwt:blacklist:";
 
     private static final Base64.Encoder B64 = Base64.getUrlEncoder().withoutPadding();
@@ -45,7 +45,7 @@ public class JwtCodec {
         this.clock = clock;
     }
 
-    /** Current instant per this codec's clock — consumers use it so TTL math and decode agree. */
+    // 本编解码器时钟下的当前时刻——消费方用它，让 TTL 计算与解码保持一致。
     public Instant now() {
         return clock.instant();
     }

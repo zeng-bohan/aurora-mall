@@ -10,7 +10,7 @@ import javax.sql.DataSource;
 @Configuration
 public class IdGeneratorConfig {
 
-    /** Order ids come from the handwritten segment allocator (ADR-0008). */
+    // 订单 id 来自手写号段分配器。
     @Bean
     public SegmentIdGenerator orderIdGenerator(DataSource dataSource) {
         return new SegmentIdGenerator("order", new JdbcSegmentLoader(dataSource, "aurora_id.leaf_alloc"));

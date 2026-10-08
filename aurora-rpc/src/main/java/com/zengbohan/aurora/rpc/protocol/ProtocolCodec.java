@@ -23,16 +23,16 @@ import java.util.Map;
  */
 public final class ProtocolCodec {
 
-    /** 定长头字节数。 */
+    // 定长头字节数。
     public static final int HEADER_LENGTH = 18;
 
-    /** 魔数：0xA0 0xB0。 */
+    // 魔数：0xA0 0xB0。
     public static final short MAGIC = (short) 0xA0B0;
 
-    /** 协议版本。 */
+    // 协议版本。
     public static final byte VERSION = 1;
 
-    /** body 长度上限，防止恶意/错位帧分配巨量内存（10MB）。 */
+    // body 长度上限，防止恶意/错位帧分配巨量内存（10MB）。
     public static final int MAX_BODY_LENGTH = 10 * 1024 * 1024;
 
     /**
@@ -43,7 +43,7 @@ public final class ProtocolCodec {
         return newFrameDecoder(MAX_BODY_LENGTH);
     }
 
-    /** 可配 body 上限的拆包器：部署想收紧单帧内存时用。 */
+    // 可配 body 上限的拆包器：部署想收紧单帧内存时用。
     public static LengthFieldBasedFrameDecoder newFrameDecoder(int maxBodyLength) {
         if (maxBodyLength <= 0) {
             throw new IllegalArgumentException("maxBodyLength must be positive: " + maxBodyLength);
@@ -71,7 +71,7 @@ public final class ProtocolCodec {
         register(new JsonSerializer());
     }
 
-    /** 注册序列化实现，按 code 覆盖。 */
+    // 注册序列化实现，按 code 覆盖。
     public ProtocolCodec register(Serializer serializer) {
         serializers.put(serializer.code(), serializer);
         return this;
@@ -90,12 +90,12 @@ public final class ProtocolCodec {
         return serializer;
     }
 
-    /** 序列化指定值，使用默认（JSON）实现。 */
+    // 序列化指定值，使用默认（JSON）实现。
     public byte[] serialize(Object value) throws Exception {
         return serializer(JsonSerializer.CODE).serialize(value);
     }
 
-    /** 反序列化，使用默认（JSON）实现。 */
+    // 反序列化，使用默认（JSON）实现。
     public <T> T deserialize(byte[] bytes, Class<T> type) throws Exception {
         return serializer(JsonSerializer.CODE).deserialize(bytes, type);
     }
@@ -114,7 +114,7 @@ public final class ProtocolCodec {
         return mapper.convertValue(fromValue, mapper.getTypeFactory().constructType(toType));
     }
 
-    /** 按指定实现序列化（proxy 层用于带 code 的帧）。 */
+    // 按指定实现序列化（proxy 层用于带 code 的帧）。
     public byte[] serialize(Object value, byte serializerCode) throws Exception {
         return serializer(serializerCode).serialize(value);
     }
@@ -189,7 +189,7 @@ public final class ProtocolCodec {
         return RpcFrame.from(header, body);
     }
 
-    /** 仅测试用：写魔数到指定偏移。 */
+    // 仅测试用：写魔数到指定偏移。
     static void writeMagic(byte[] target) {
         ByteBuffer.wrap(target).putShort(OFF_MAGIC, MAGIC);
     }

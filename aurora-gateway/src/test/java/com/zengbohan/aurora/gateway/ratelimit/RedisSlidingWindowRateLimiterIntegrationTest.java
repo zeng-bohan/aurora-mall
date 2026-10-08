@@ -22,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * 真 Redis 的分布式限流：并发限额精确、窗口滑动后配额恢复。
  * 无 Redis 自动跳过（同 StockLuaIntegrationTest 模式），CI 无 Redis 保持绿。
- * Run locally: docker compose up -d redis
+ * 本地运行：docker compose up -d redis
  */
 class RedisSlidingWindowRateLimiterIntegrationTest {
 

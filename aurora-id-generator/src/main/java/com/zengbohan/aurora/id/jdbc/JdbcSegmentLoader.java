@@ -10,8 +10,8 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 
 /**
- * MySQL-flavoured segment loader: UPDATE ... SET max_id = LAST_INSERT_ID(max_id + step)
- * makes the allocation and the read-back a single atomic statement per row.
+ * MySQL 风格的号段加载器：UPDATE ... SET max_id = LAST_INSERT_ID(max_id + step)
+ * 让分配与回读在每行上成为一条原子语句。
  */
 public class JdbcSegmentLoader implements SegmentLoader {
 

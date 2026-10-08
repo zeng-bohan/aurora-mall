@@ -21,7 +21,7 @@ import java.util.UUID;
 @Component
 public class RedisSlidingWindowRateLimiter {
 
-    /** 返回 1 = 放行，0 = 限流。 */
+    // 返回 1 = 放行，0 = 限流。
     private static final RedisScript<Long> SCRIPT = new DefaultRedisScript<>("""
             local key    = KEYS[1]
             local now    = tonumber(ARGV[1])
@@ -45,7 +45,7 @@ public class RedisSlidingWindowRateLimiter {
         this.redis = redis;
     }
 
-    /** 尝试占用一个配额；true = 放行。全程响应式，不阻塞事件循环。 */
+    // 尝试占用一个配额；true = 放行。全程响应式，不阻塞事件循环。
     public Mono<Boolean> tryAcquire(String key, int limit, Duration window) {
         long now = System.currentTimeMillis();
         long windowMillis = window.toMillis();

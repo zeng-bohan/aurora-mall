@@ -4,7 +4,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** In-memory CartStore for unit tests. */
+// 单元测试用的内存版 CartStore。
 public class InMemoryCartStore implements CartStore {
 
     private final Map<Long, Map<Long, Long>> carts = new HashMap<>();
@@ -14,7 +14,7 @@ public class InMemoryCartStore implements CartStore {
         Map<Long, Long> cart = carts.computeIfAbsent(userId, k -> new LinkedHashMap<>());
         long next = cart.getOrDefault(skuId, 0L) + delta;
         if (next <= 0) {
-            // mirrors the redis lua: a line at or below zero leaves the cart
+            // 与 redis lua 行为一致：数量小于等于零的行会被移出购物车
             cart.remove(skuId);
             return 0L;
         }

@@ -14,7 +14,7 @@ public class TokenBucketRateLimiter implements RateLimiter {
     private final double capacity;
     private final LongSupplier nanoClock;
 
-    /** 当前令牌数，由本对象锁保护。 */
+    // 当前令牌数，由本对象锁保护。
     private double tokens;
     private long lastRefillNanos;
 
@@ -22,7 +22,7 @@ public class TokenBucketRateLimiter implements RateLimiter {
         this(ratePerSecond, capacity, System::nanoTime);
     }
 
-    /** 注入时钟的构造器，供测试控制时间。 */
+    // 注入时钟的构造器，供测试控制时间。
     TokenBucketRateLimiter(double ratePerSecond, double capacity, LongSupplier nanoClock) {
         if (!Double.isFinite(ratePerSecond) || ratePerSecond <= 0) {
             throw new IllegalArgumentException("ratePerSecond must be positive: " + ratePerSecond);

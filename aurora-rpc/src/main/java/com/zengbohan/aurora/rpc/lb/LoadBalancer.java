@@ -10,6 +10,6 @@ import java.util.List;
  */
 public interface LoadBalancer {
 
-    /** 从非空实例列表中挑选；列表由调用方保证非空。 */
+    // 从非空实例列表中挑选；列表由调用方保证非空。
     ServiceInstance pick(List<ServiceInstance> instances);
 }

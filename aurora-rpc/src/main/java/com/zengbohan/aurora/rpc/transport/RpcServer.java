@@ -42,22 +42,22 @@ public class RpcServer {
 
     private static final Logger log = System.getLogger(RpcServer.class.getName());
 
-    /** 业务处理器：收到请求体，返回响应体；可抛异常（会被编码为错误 status 回传，不断连）。 */
+    // 业务处理器：收到请求体，返回响应体；可抛异常（会被编码为错误 status 回传，不断连）。
     public interface RequestHandler {
         byte[] handle(byte[] requestBody) throws Exception;
     }
 
 
-    /** 默认读空闲回收阈值：3 个客户端心跳周期（客户端默认 30s 心跳）。 */
+    // 默认读空闲回收阈值：3 个客户端心跳周期（客户端默认 30s 心跳）。
     private static final long DEFAULT_IDLE_TIMEOUT_MILLIS = 90_000;
-    /** 默认业务池：8 线程 + 256 有界队列。 */
+    // 默认业务池：8 线程 + 256 有界队列。
     private static final int DEFAULT_POOL_THREADS = 8;
     private static final int DEFAULT_POOL_QUEUE = 256;
 
     private final String internalSecret;
     private final RequestHandler handler;
     private final ExecutorService businessPool;
-    /** 业务池是否由本服务端创建（创建的才由 stop() 关闭，注入的归注入方管）。 */
+    // 业务池是否由本服务端创建（创建的才由 stop() 关闭，注入的归注入方管）。
     private final boolean ownsBusinessPool;
     private final long idleTimeoutMillis;
 
@@ -113,7 +113,7 @@ public class RpcServer {
         return start(0); // 0 = 随机端口，测试互不冲突
     }
 
-    /** 绑定指定端口启动（0 = 随机端口）；重启同端口场景用。 */
+    // 绑定指定端口启动（0 = 随机端口）；重启同端口场景用。
     public synchronized int start(int port) throws InterruptedException {
         if (this.serverChannel != null) {
             throw new IllegalStateException("server already started on port " + this.port);
@@ -170,7 +170,7 @@ public class RpcServer {
         };
     }
 
-    /** 服务端帧处理：握手鉴权 + 请求分发 + 心跳响应 + 空闲回收。 */
+    // 服务端帧处理：握手鉴权 + 请求分发 + 心跳响应 + 空闲回收。
     private class ServerFrameHandler extends SimpleChannelInboundHandler<io.netty.buffer.ByteBuf> {
 
         @Override
@@ -215,7 +215,7 @@ public class RpcServer {
             }
         }
 
-        /** 派发到业务池；池满时以 OVERLOADED 回绝（不堆积内存、不断连），调用方可退避重试。 */
+        // 派发到业务池；池满时以 OVERLOADED 回绝（不堆积内存、不断连），调用方可退避重试。
         private void dispatch(ChannelHandlerContext ctx, RpcFrame frame) {
             long requestId = frame.requestId();
             byte serializerCode = frame.serializerCode();
@@ -246,7 +246,7 @@ public class RpcServer {
                     message.getBytes(StandardCharsets.UTF_8));
         }
 
-        /** 响应回显请求的 serializerCode：协议两端按请求协商实现，不在响应上单方面改写。 */
+        // 响应回显请求的 serializerCode：协议两端按请求协商实现，不在响应上单方面改写。
         private void respondWith(ChannelHandlerContext ctx, long requestId, byte serializerCode,
                 byte status, byte[] body) {
             RpcFrame response = RpcFrame.response(requestId, serializerCode, status, body);

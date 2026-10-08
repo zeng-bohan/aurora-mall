@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 服务间 Feign 调用的内部密钥注入（ADR-0006）：收敛自 cart/order/payment
+ * 服务间 Feign 调用的内部密钥注入：收敛自 cart/order/payment
  * 三份重复的 FeignConfig（M2 评审标记，M3 T8 收敛）。
  * <p>
  * 双重守卫：{@code @ConditionalOnClass} 挡住不带 openfeign 的 gateway；
@@ -22,7 +22,7 @@ import org.springframework.context.annotation.Configuration;
 @ConditionalOnProperty("aurora.internal.secret")
 public class InternalSecretFeignConfig {
 
-    /** 出站调用携带内部密钥 + 当前 traceId（跨服务日志关联，外部审查一.4）。 */
+    // 出站调用携带内部密钥 + 当前 traceId（跨服务日志关联，外部审查一.4）。
     @Bean
     public RequestInterceptor internalSecretInterceptor(
             @Value("${aurora.internal.secret}") String internalSecret) {

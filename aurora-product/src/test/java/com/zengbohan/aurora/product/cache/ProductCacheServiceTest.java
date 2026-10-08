@@ -37,12 +37,12 @@ class ProductCacheServiceTest {
         service = new ProductCacheService(store, new VolatileBloomFilterHolder(new StringBloomFilter(1_000, 0.01)),
                 new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
                 clock, Runnable::run, scheduler, 86_400);
-        // seed the bloom so id lookups reach the cache/db path
+        // 播种布隆过滤器，让 id 查询能走到缓存/DB 路径
         service.bloomPut(1L);
         service.bloomPut(2L);
     }
 
-    /** DB loader used as Function<Long, Sku>: counts calls and returns sku-{id}. */
+    // 作为 Function<Long, Sku> 使用的 DB loader：统计调用次数并返回 sku-{id}。
     private Sku loadSku(Long id) {
         dbCalls.incrementAndGet();
         Sku s = new Sku();
@@ -71,7 +71,7 @@ class ProductCacheServiceTest {
         assertThatThrownBy(() -> service.getById(2L, this::notFound)).isInstanceOf(BusinessException.class);
         assertThat(dbCalls.get()).isEqualTo(1);
 
-        // second read hits the null sentinel in cache, no DB round trip
+        // 第二次读取命中缓存中的空值哨兵，不再回源 DB
         assertThatThrownBy(() -> service.getById(2L, this::notFound)).isInstanceOf(BusinessException.class);
         assertThat(dbCalls.get()).isEqualTo(1);
     }
@@ -92,17 +92,17 @@ class ProductCacheServiceTest {
         service.getById(1L, this::loadSku);
         assertThat(dbCalls.get()).isEqualTo(1);
 
-        // age the entry past its 10-minute logical expiry
+        // 把该条目推到 10 分钟逻辑过期之后
         clock.advance(Duration.ofMinutes(11));
 
-        // stale value is served immediately, and exactly one rebuild ran
+        // 立即返回旧值，且只发生一次重建
         Sku stale = service.getById(1L, this::loadSku);
         assertThat(stale.getTitle()).isEqualTo("sku-1");
         assertThat(dbCalls.get()).isEqualTo(2);
-        // inline executor released the mutex after the rebuild
+        // 内联执行器在重建后释放了互斥锁
         assertThat(store.has("aurora:product:mutex:1")).isFalse();
 
-        // subsequent read is served from the refreshed entry, no more DB
+        // 后续读取由刷新后的条目提供，不再回源 DB
         Sku refreshed = service.getById(1L, this::loadSku);
         assertThat(refreshed.getTitle()).isEqualTo("sku-1");
         assertThat(dbCalls.get()).isEqualTo(2);
@@ -135,8 +135,8 @@ class ProductCacheServiceTest {
         assertThat(done.await(5, TimeUnit.SECONDS)).isTrue();
         pool.shutdownNow();
 
-        // every reader got a value (stale or fresh); mutex keeps rebuild count
-        // strictly below the reader count instead of one-per-thread
+        // 每个读线程都拿到了值（旧值或新值）；互斥锁让重建次数
+        // 严格小于读线程数，而不是每个线程各重建一次
         assertThat(results).hasSize(readers)
                 .allSatisfy(s -> assertThat(s.getTitle()).isEqualTo("sku-1"));
         assertThat(dbCalls.get()).isLessThan(readers);
@@ -144,14 +144,14 @@ class ProductCacheServiceTest {
 
     @Test
     void staleMutexFallsBackToDbInsteadOfFalse404() {
-        // simulate a dead rebuilder: mutex held, cache empty
+        // 模拟重建者已死：互斥锁被持有，缓存为空
         store.setIfAbsent("aurora:product:mutex:1", "1", java.time.Duration.ofSeconds(10));
 
         Sku loaded = service.getById(1L, this::loadSku);
 
         assertThat(loaded.getTitle()).isEqualTo("sku-1");
         assertThat(dbCalls.get()).isEqualTo(1);
-        // the foreign mutex is not ours to release
+        // 这把别人的互斥锁不该由我们释放
         assertThat(store.has("aurora:product:mutex:1")).isTrue();
     }
 
@@ -159,22 +159,22 @@ class ProductCacheServiceTest {
     void doubleDeleteRunsDelayedSecondEvict() throws Exception {
         service.getById(1L, this::loadSku);
 
-        // update changes the title but writes through the same double-delete helper
+        // 更新只改标题，但仍走同一个双删助手
         service.doubleDeleteAfterUpdate(1L, () -> {
             dbCalls.incrementAndGet();
         });
 
-        // first delete is immediate
+        // 第一次删除是立即执行的
         String key = "aurora:product:sku:1";
         assertThat(store.has(key)).isFalse();
 
         Thread.sleep(700); // scheduler delay is 500ms
-        // delayed second delete also ran (no key resurrected)
+        // 延迟的第二次删除也执行了（没有 key 复活）
         assertThat(store.has(key)).isFalse();
         scheduler.shutdownNow();
     }
 
-    /** Clock the test can move without waiting on wall time. */
+    // 测试可任意拨动的时钟，无需等待真实时间流逝。
     static class MutableClock extends Clock {
         private Instant now;
 

@@ -20,7 +20,7 @@ class ProductAdapterWiringTest {
             .withUserConfiguration(FeignSupport.class, RpcSupport.class,
                     FeignProductAdapter.class, RpcProductAdapter.class);
 
-    /** Feign client 用 mock 顶替：装配测试的对象是适配器条件，不是 Feign 本身。 */
+    // Feign client 用 mock 顶替：装配测试的对象是适配器条件，不是 Feign 本身。
     @Configuration
     static class FeignSupport {
         @Bean
@@ -29,7 +29,7 @@ class ProductAdapterWiringTest {
         }
     }
 
-    /** RPC 开启时的最小支撑：ProductRpcApi 代理用 stub（装配条件测试不连 nacos）。 */
+    // RPC 开启时的最小支撑：ProductRpcApi 代理用 stub（装配条件测试不连 nacos）。
     @Configuration
     static class RpcSupport {
         @Bean
@@ -73,7 +73,7 @@ class ProductAdapterWiringTest {
         });
     }
 
-    /** 注解驱动导出（评审修复）：带 @AuroraRpcService 的 bean 自动进导出器。 */
+    // 注解驱动导出（评审修复）：带 @AuroraRpcService 的 bean 自动进导出器。
     @com.zengbohan.aurora.rpc.proxy.AuroraRpcService(ProductRpcApi.class)
     static class AnnotatedService implements ProductRpcApi {
         @Override

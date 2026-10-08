@@ -18,7 +18,7 @@ import com.zengbohan.aurora.id.SegmentLoader.Segment;
 
 class SegmentIdGeneratorTest {
 
-    /** Deterministic loader serving queued segments and counting calls. */
+    // 确定性 loader：按队列返回号段并统计调用次数。
     private static class FakeLoader implements SegmentLoader {
         private final ArrayDeque<Segment> segments = new ArrayDeque<>();
         private final AtomicInteger calls = new AtomicInteger();
@@ -62,9 +62,9 @@ class SegmentIdGeneratorTest {
             ids.add(generator.nextId());
         }
 
-        // 1..250 across three segment boundaries, zero gaps or duplicates
+        // 跨三个号段边界生成 1..250，无空洞无重复
         assertThat(ids).hasSize(250).contains(1L, 100L, 101L, 200L, 201L, 250L);
-        // initial load + prefetch at 60% + prefetch again at exhaustion, no fourth load
+        // 首次加载 + 60% 时预取 + 耗尽时再次预取，没有第四次加载
         assertThat(loader.calls.get()).isEqualTo(3);
     }
 

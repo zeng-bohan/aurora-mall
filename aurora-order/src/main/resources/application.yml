@@ -29,18 +29,18 @@ mybatis-plus:
 aurora:
   config:
     required-keys: aurora.internal.secret
-  # mq = ADR-0003 main path (default); at = Seata AT comparison scenario
+  # mq = 主链路（默认）；at = Seata AT 对比场景
   tx:
     mode: ${AURORA_TX_MODE:mq}
   order:
-    # RocketMQ delay level 16 = 30min; smoke tests shrink it via the config center
+    # RocketMQ 延迟级别 16 = 30 分钟；冒烟测试通过配置中心调小它
     close-delay-level: 16
     close-timeout-seconds: 1800
     tx-retry-interval-ms: 30000
     close-scan-interval-ms: 60000
 
 seata:
-  # AT 对照实验开关：默认关闭（ADR-0003 mq 主链路），经配置中心开启
+  # AT 对照实验开关：默认关闭（mq 主链路），经配置中心开启
   enabled: ${SEATA_ENABLED:false}
   application-id: aurora-order
   tx-service-group: aurora_tx_group

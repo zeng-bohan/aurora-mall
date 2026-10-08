@@ -20,9 +20,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 /**
- * The ADR-0004 read/write pattern for product detail: cache aside + null
- * caching + bloom filter + logical expiry + mutex rebuild + randomized
- * physical TTL; admin writes do delete-then-delayed-double-delete.
+ * 商品详情的读写模式：cache aside + 空值缓存 + 布隆过滤器 + 逻辑过期 +
+ * 互斥重建 + 随机化物理 TTL；管理端写入走"先删缓存、再延迟双删"。
  */
 @Service
 @RefreshScope
@@ -57,13 +56,13 @@ public class ProductCacheService {
         this.rebuildExecutor = rebuildExecutor;
         this.doubleDeleteScheduler = doubleDeleteScheduler;
         this.physicalTtlSeconds = physicalTtlSeconds;
-        // logged on every (re)creation: a config-center TTL change rebuilds this
-        // @RefreshScope bean and prints the new value here
+        // 每次（重新）创建都打日志：配置中心改 TTL 会重建这个 @RefreshScope Bean，
+        // 在这里打印出新值
         log.info("product cache ready: physical ttl {}s", physicalTtlSeconds);
     }
 
     public Sku getById(long id, Function<Long, Sku> dbLoader) {
-        // bloom has no false negatives: an absent id never reaches cache or DB
+        // 布隆过滤器没有假阴性：不存在的 id 不会触达缓存或 DB
         if (!bloomFilterHolder.get().mightContain(String.valueOf(id))) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
@@ -106,7 +105,7 @@ public class ProductCacheService {
                 store.delete(MUTEX_PREFIX + id);
             }
         }
-        // lost the mutex race: poll for the winner's write before deciding
+        // 没抢到互斥锁：先轮询胜出者的写入，再做判断
         for (int i = 0; i < 4; i++) {
             try {
                 TimeUnit.MILLISECONDS.sleep(50);
@@ -116,14 +115,14 @@ public class ProductCacheService {
             CacheWrapper<Sku> wrapper = readWrapper(key);
             if (wrapper != null) {
                 if (wrapper.getData() == null) {
-                    // the winner cached a real miss
+                    // 胜出者缓存了一次真实的未命中
                     throw new BusinessException(ErrorCode.NOT_FOUND);
                 }
                 return wrapper.getData();
             }
         }
-        // winner is slow or its mutex is stale: a duplicate DB load beats a
-        // false 404 for a product that exists
+        // 胜出者太慢或它的互斥锁已过期：宁可重复查一次 DB，
+        // 也不要对存在的商品返回假 404
         Sku sku = dbLoader.apply(id);
         writeWrapper(key, sku);
         return skuOrThrow(sku);
@@ -141,7 +140,7 @@ public class ProductCacheService {
                 }
             });
         }
-        // logical-expiry contract: serve stale while a single rebuilder refreshes
+        // 逻辑过期契约：单个重建者刷新期间照常返回旧值
         return wrapper.getData();
     }
 
@@ -152,7 +151,7 @@ public class ProductCacheService {
         }
         Duration logical = LOGICAL_TTL;
         CacheWrapper<Sku> wrapper = new CacheWrapper<>(sku, clock.instant().plus(logical));
-        // physical ttl outlives logical expiry plus jitter so rebuilds stay seamless
+        // 物理 TTL 长于逻辑过期加上抖动，让重建过程无缝衔接
         Duration physical = Duration.ofSeconds(physicalTtlSeconds)
                 .plusSeconds(ThreadLocalRandom.current().nextLong(0, 3600));
         store.put(key, json(wrapper), physical);

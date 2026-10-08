@@ -69,8 +69,8 @@ class AtOrderPlacerTest {
         assertThatThrownBy(() -> placer.placeAt(7L, new PlaceOrderRequest(1L, 2)))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.INVENTORY_INSUFFICIENT.getCode());
-        // the order row was already written locally: undoing it is exactly what
-        // the global transaction (undo_log) is being compared for
+        // 订单行已在本地写入：撤销它正是全局事务（undo_log）
+        // 用来做对比的地方
         verify(orderMapper).insert(any(Order.class));
     }
 

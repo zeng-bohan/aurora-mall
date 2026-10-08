@@ -25,7 +25,7 @@ public class RpcServiceExporter {
     private final ProtocolCodec codec;
     private final String host;
     private final String internalSecret;
-    /** 服务名（接口全名）→ 实现。 */
+    // 服务名（接口全名）→ 实现。
     private final Map<String, Object> catalog = new ConcurrentHashMap<>();
 
     private RpcServer server;
@@ -39,7 +39,7 @@ public class RpcServiceExporter {
         this.internalSecret = internalSecret;
     }
 
-    /** 注册一个服务实现；服务名 = 接口全名。 */
+    // 注册一个服务实现；服务名 = 接口全名。
     public RpcServiceExporter export(Class<?> api, Object impl) {
         if (!api.isInterface()) {
             throw new IllegalArgumentException("api must be an interface: " + api.getName());
@@ -51,12 +51,12 @@ public class RpcServiceExporter {
         return this;
     }
 
-    /** 启动传输（随机端口）并把本机每个服务注册进注册中心。 */
+    // 启动传输（随机端口）并把本机每个服务注册进注册中心。
     public synchronized int start() {
         return start(0); // 0 = 随机端口，测试互不冲突
     }
 
-    /** 绑定指定端口启动（0 = 随机端口）；注解驱动导出用 aurora.rpc.port。 */
+    // 绑定指定端口启动（0 = 随机端口）；注解驱动导出用 aurora.rpc.port。
     public synchronized int start(int bindPort) {
         if (server != null) {
             throw new IllegalStateException("exporter already started on port " + port);

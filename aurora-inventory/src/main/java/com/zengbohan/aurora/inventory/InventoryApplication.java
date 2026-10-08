@@ -5,7 +5,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
-// Root scan picks up aurora-common's web seam (advice + trace filter + idempotency).
+// 根扫描会带上 aurora-common 的 web 缝（advice + trace filter + idempotency）。
 @SpringBootApplication(scanBasePackages = "com.zengbohan.aurora")
 @MapperScan("com.zengbohan.aurora.inventory.mapper")
 @EnableScheduling

@@ -11,10 +11,10 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Fail-fast guard for config-center-managed keys: lists every key from
- * aurora.config.required-keys that the environment cannot resolve, with a
- * hint pointing at the import script. Services declare the keys they need;
- * an empty list (common's own tests) is a no-op.
+ * 配置中心托管键的快速失败守卫：列出 aurora.config.required-keys 中
+ * 环境无法解析的每一个键，并给出
+ * 指向导入脚本的提示。各服务声明自己需要的键；
+ * 空清单（common 自身的测试）为空操作。
  */
 @Component
 public class ConfigPresenceVerifier implements InitializingBean {

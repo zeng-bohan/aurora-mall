@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-/** Periodic redis-vs-db reconciliation (ADR-0003 safety net). */
+// 周期性的 redis 与 DB 对账（兜底）。
 @Component
 @ConditionalOnProperty(name = "rocketmq.name-server")
 public class StockReconcileJob {

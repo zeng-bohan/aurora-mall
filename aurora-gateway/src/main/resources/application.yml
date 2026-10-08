@@ -1,6 +1,6 @@
 server:
   shutdown: graceful
-  # host 8080 belongs to another long-running project on this dev machine
+  # 宿主机的 8080 被本开发机上的另一个长期运行项目占用
   port: 8000
 
 spring:
@@ -62,8 +62,8 @@ management:
       exposure:
         include: health,info,prometheus
 
-# aurora.jwt.secret / aurora.internal.secret come from the nacos config center
-# (application-default.yml import); startup fails fast when they are missing
+# aurora.jwt.secret / aurora.internal.secret 来自 nacos 配置中心
+# （由 application-default.yml 导入）；缺失时启动会快速失败
 
 spring.data.redis:
   host: ${REDIS_HOST:localhost}

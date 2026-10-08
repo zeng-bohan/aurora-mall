@@ -7,7 +7,7 @@ package com.zengbohan.aurora.rpc.protocol;
  */
 public interface Serializer {
 
-    /** 序列化实现编号，写入协议头供对端识别。 */
+    // 序列化实现编号，写入协议头供对端识别。
     byte code();
 
     byte[] serialize(Object value) throws Exception;

@@ -4,16 +4,15 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLongArray;
 
 /**
- * Hand-written bloom filter (ADR-0004): FNV-1a 64-bit base hash with double
- * hashing for the k probes, optimal m/k derived from target insertions and
- * false-positive rate. No false negatives by construction.
+ * 手写布隆过滤器：FNV-1a 64 位基础哈希 + 双哈希生成 k 个探针，
+ * m/k 由目标插入量与假阳性率推导出最优值。
  * <p>
  * 线程安全：位图用 {@link AtomicLongArray}，写走 CAS 循环（| 语义），
  * 读走 get——播种线程/请求线程/管理写线程并发正确。
  * <p>
  * 多实例局限：每 JVM 一份本地位图，多实例部署时其他实例对新建商品直接 404
- * （无假阴性承诺只在单实例成立）。演进方向见 docs/adr/0004-caching.md：
- * Redis 位图共享版留给 M5 秒杀；当前以定期重播种收敛窗口。
+ * （无假阴性承诺只在单实例成立）。Redis 位图共享版留给 M5 秒杀；
+ * 当前以定期重播种收敛窗口。
  */
 public final class StringBloomFilter {
 

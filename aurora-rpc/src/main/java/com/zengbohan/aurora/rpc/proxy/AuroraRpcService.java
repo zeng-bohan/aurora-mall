@@ -18,6 +18,6 @@ import java.lang.annotation.Target;
 @Target(ElementType.TYPE)
 public @interface AuroraRpcService {
 
-    /** 对外暴露的服务接口。 */
+    // 对外暴露的服务接口。
     Class<?> value();
 }

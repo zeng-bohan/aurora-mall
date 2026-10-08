@@ -7,7 +7,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** /stocks/** 携带 X-User-Id 一律 403（外部审查一.1 的服务侧纵深）。 */
+// /stocks/** 携带 X-User-Id 一律 403（外部审查一.1 的服务侧纵深）。
 class StockUserIdentityGuardFilterTest {
 
     private StockUserIdentityGuardFilter filter;

@@ -26,8 +26,8 @@ mybatis-plus:
   global-config:
     banner: false
 
-# secret from the nacos config center; aurora.cache.physical-ttl-seconds
-# also lives there (aurora-product.yml) so it can be refreshed at runtime
+# secret 来自 nacos 配置中心；aurora.cache.physical-ttl-seconds
+# 也放在那里（aurora-product.yml），以便运行时刷新
 aurora:
   config:
     required-keys: aurora.internal.secret

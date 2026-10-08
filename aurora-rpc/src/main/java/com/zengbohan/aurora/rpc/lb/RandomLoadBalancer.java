@@ -5,7 +5,7 @@ import com.zengbohan.aurora.rpc.registry.ServiceInstance;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
 
-/** 随机策略：ThreadLocalRandom 免竞争。 */
+// 随机策略：ThreadLocalRandom 免竞争。
 public class RandomLoadBalancer implements LoadBalancer {
 
     @Override

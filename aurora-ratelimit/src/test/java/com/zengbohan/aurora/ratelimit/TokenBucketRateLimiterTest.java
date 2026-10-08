@@ -16,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException
  */
 class TokenBucketRateLimiterTest {
 
-    /** 测试用假时钟（纳秒）。 */
+    // 测试用假时钟（纳秒）。
     private long nanos;
 
     private TokenBucketRateLimiter limiter(double ratePerSecond, double capacity) {

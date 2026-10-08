@@ -13,8 +13,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * T2 AC: downstream services READ the identity headers the gateway injects.
- * This exercises the receiving side (service port, not the gateway).
+ * T2 验收项：下游服务读取网关注入的身份头。
+ * 这里验证的是接收侧（服务端口，而非网关）。
  */
 @SpringBootTest
 @AutoConfigureMockMvc

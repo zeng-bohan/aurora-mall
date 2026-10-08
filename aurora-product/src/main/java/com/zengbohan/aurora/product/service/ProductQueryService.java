@@ -31,13 +31,13 @@ public class ProductQueryService {
                         .orderByDesc(Sku::getId));
     }
 
-    /** Admin view: every status, so off-shelf items stay manageable. */
+    // 管理端视图：包含所有状态，让已下架商品仍可管理。
     public Page<Sku> adminPage(long current, long size) {
         return skuMapper.selectPage(new Page<>(current, Math.min(size, 100)),
                 new LambdaQueryWrapper<Sku>().orderByDesc(Sku::getId));
     }
 
-    /** Batch lookup for cart snapshots; unknown ids are simply absent from the result. */
+    // 购物车快照的批量查询；未知 id 直接不出现在结果里。
     public List<Sku> batch(List<Long> ids) {
         if (ids == null || ids.isEmpty()) {
             return List.of();

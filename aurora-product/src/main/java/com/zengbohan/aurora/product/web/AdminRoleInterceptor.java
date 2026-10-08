@@ -10,7 +10,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.nio.charset.StandardCharsets;
 
-/** 读网关注入的 X-User-Role：@RequireAdmin 端点非 ADMIN 直接 403 信封。 */
+// 读网关注入的 X-User-Role：@RequireAdmin 端点非 ADMIN 直接 403 信封。
 @Component
 public class AdminRoleInterceptor implements HandlerInterceptor {
 

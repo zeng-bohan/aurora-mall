@@ -54,10 +54,10 @@ public class CacheConfig {
     }
 
     /**
-     * Seeded with every sku id at startup; admin creates extend it.
-     * Sized for 100k ids at 1% false positives. The seed query is skipped when
-     * aurora.cache.bloom.seed-on-startup=false (test seam: context-load tests
-     * run on CI runners with no database).
+     * 启动时用全部 sku id 播种；管理端新建的商品会继续加入。
+     * 容量按 10 万 id、1% 假阳性设计。当 aurora.cache.bloom.seed-on-startup=false
+     * 时跳过播种查询（测试缝：上下文加载测试
+     * 跑在没有数据库的 CI runner 上）。
      */
     @Bean
     public VolatileBloomFilterHolder skuBloomFilterHolder(SkuMapper skuMapper,
@@ -71,7 +71,7 @@ public class CacheConfig {
 
     /**
      * 定期重播种：多实例/漏种收敛。整体构建新过滤器后原子换入，
-     * 读路径永远拿完整实例；shared-nothing 本地bitmap 的多实例局限见 ADR-0004。
+     * 读路径永远拿完整实例；shared-nothing 本地位图的多实例局限见 StringBloomFilter。
      * seed-on-startup=false（无库测试缝）时整个 job 不装配。
      */
     @Bean

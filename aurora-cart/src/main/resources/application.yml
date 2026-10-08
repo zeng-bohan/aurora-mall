@@ -16,7 +16,7 @@ spring.data.redis:
   host: ${REDIS_HOST:localhost}
   port: ${REDIS_PORT:16379}
 
-# secret from the nacos config center (see application-default.yml)
+# secret 来自 nacos 配置中心（见 application-default.yml）
 aurora:
   config:
     required-keys: aurora.internal.secret

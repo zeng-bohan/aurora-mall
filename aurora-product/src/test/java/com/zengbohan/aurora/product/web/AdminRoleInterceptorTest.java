@@ -13,7 +13,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-/** ADMIN 角色拦截器：无角色/错误角色 403，ADMIN 放行；无注解端点不受影响。 */
+// ADMIN 角色拦截器：无角色/错误角色 403，ADMIN 放行；无注解端点不受影响。
 class AdminRoleInterceptorTest {
 
     private MockMvc mockMvc;

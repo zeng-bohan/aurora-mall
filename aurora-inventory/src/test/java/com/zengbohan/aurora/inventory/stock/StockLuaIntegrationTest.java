@@ -18,13 +18,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The stock Lua scripts executed against a REAL redis (localhost:16379 on this
- * dev box). Skipped automatically when no redis is reachable, so CI runners
- * without one stay green - the unit tests mock execute() and can only prove
- * the mapping, not the script semantics this test exists for: concurrent
- * decrement cannot oversell and rollback restores exactly.
+ * 库存 Lua 脚本对着真实的 redis 执行（本机开发环境是 localhost:16379）。
+ * 无 redis 可达时自动跳过，因此没有 redis 的 CI runner 依然保持绿色——
+ * 单元测试 mock 了 execute()，只能证明映射关系，证明不了本测试存在的意义
+ * 所在的脚本语义：并发扣减不会超卖、回滚能精确还原。
  *
- * Run locally: docker compose up -d redis
+ * 本地运行：docker compose up -d redis
  */
 class StockLuaIntegrationTest {
 

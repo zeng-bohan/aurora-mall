@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# M1 acceptance seam: one command walks the whole golden path through the
-# gateway and asserts every response. Prereq: `docker compose up -d`,
-# `nacos/import.sh`, and all 7 services running (see README runbook).
+# M1 验收缝：一条命令走完整条黄金路径（经网关），
+# 并断言每个响应。前置条件：`docker compose up -d`、
+# `nacos/import.sh`，且 7 个服务都已启动（见 README 运行手册）。
 set -uo pipefail
 
 BASE="${BASE:-http://localhost:8000}"
@@ -144,10 +144,10 @@ req GET "/api/product/admin/products" "$NEW_TOKEN"
 assert_status 200 "admin list requires token"
 assert_body "\"title\":\"$TITLE\"" "admin list includes the product"
 
-# ---- M2: trade chains ----------------------------------------------------
+# ---- M2：交易链路 ----------------------------------------------------
 
 seed_stock() { # skuId quantity: reset the db row and drop the redis key so the
-               # reserve path rebuilds from the db view
+               # 预占路径按 DB 视图重建
   docker exec aurora-mysql mysql -uroot -p"${MYSQL_PASSWORD:-aurora123}" -e \
     "INSERT INTO aurora_inventory.product_stock (sku_id, available, reserved) VALUES ($1, $2, 0) ON DUPLICATE KEY UPDATE available=$2, reserved=0;" 2>/dev/null
   docker exec aurora-redis redis-cli DEL "aurora:stock:$1" > /dev/null
@@ -256,7 +256,7 @@ nacos_publish_order 16 1800 && ok "nacos: close config restored (level 16)"
 
 echo
 step "chain C: gateway rate limit via nacos, over-limit 429 then recovery"
-# flush residual window members so the count starts clean
+# 清空窗口内的残留成员，让计数从干净状态开始
 docker exec aurora-redis redis-cli DEL "aurora:rl:product" > /dev/null
 nacos_publish_gateway 2 10 && ok "nacos: product route limited to 2 req / 10s"
 sleep 3 # nacos config listener fires RefreshEvent; @ConfigurationProperties rebinds

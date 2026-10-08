@@ -4,7 +4,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.cloud.openfeign.EnableFeignClients;
 
-// Root scan picks up aurora-common's web seam (advice + trace filter + internal secret).
+// 根扫描会带上 aurora-common 的 web 缝（advice + trace filter + internal secret）。
 @SpringBootApplication(scanBasePackages = "com.zengbohan.aurora")
 @EnableFeignClients(basePackages = "com.zengbohan.aurora.cart.client")
 public class CartApplication {

@@ -11,10 +11,10 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDateTime;
 
 /**
- * Local-message safety net: any tx_message still pending after the grace
- * window gets resent as a plain message (consumer side is idempotent), then
- * marked sent. Covers a producer crash right after commit and any broker
- * confirmation loss.
+ * 本地消息兜底：宽限期后仍处于 pending 的 tx_message
+ * 会以普通消息重发（消费端幂等），随后
+ * 标记为已发送。覆盖生产者刚提交就崩溃
+ * 以及 broker 确认丢失的情况。
  */
 @Component
 @ConditionalOnProperty(name = "rocketmq.name-server")
