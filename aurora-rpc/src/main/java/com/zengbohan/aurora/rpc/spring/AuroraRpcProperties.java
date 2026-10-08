@@ -11,7 +11,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *     registry-addr: localhost:8848
  *     timeout-millis: 3000       # 单次调用等待
  *     host: 127.0.0.1            # 提供端上报地址（消费端忽略）
- *     port: 9181                 # 提供端 RPC 监听端口（消费端忽略）
+ *     port: 0                    # 提供端 RPC 监听端口；0 = 随机（默认）
+ *                                # 注册到注册中心的是实际绑定端口，多实例/同机多服务不会撞端口
  * </pre>
  */
 @ConfigurationProperties(prefix = "aurora.rpc")
@@ -21,7 +22,7 @@ public class AuroraRpcProperties {
     private String registryAddr = "localhost:8848";
     private long timeoutMillis = 3000;
     private String host = "127.0.0.1";
-    private int port = 9181;
+    private int port = 0;
 
     public boolean isEnabled() {
         return enabled;

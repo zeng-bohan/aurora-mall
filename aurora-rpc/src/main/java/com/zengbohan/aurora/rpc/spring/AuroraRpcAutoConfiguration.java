@@ -15,6 +15,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.SmartLifecycle;
+
+import java.util.Map;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -68,15 +70,36 @@ public class AuroraRpcAutoConfiguration {
      * 注解驱动导出：扫描全部 {@link AuroraRpcService} 标记的 bean，随上下文启动
      * 导出器（Netty 监听 properties.port + 注册中心上报），关闭时注销并停服。
      * 业务侧只需标注解，不再手写导出装配。
+     * <p>
+     * 纯消费方（没有任何 @AuroraRpcService）不启动监听器：这类服务只出站调用，
+     * 开监听既无意义，又会让多个消费方抢同一个 {@code aurora.rpc.port}——
+     * cart 与 product 同机部署时会 BindException（2026-10-08 实测）。
      */
     @Bean
     public SmartLifecycle rpcExporterLifecycle(ApplicationContext context, NacosRegistry registry,
             ProtocolCodec codec, AuroraRpcProperties properties,
             @Value("${aurora.internal.secret}") String internalSecret) {
+        Map<String, Object> providers = context.getBeansWithAnnotation(AuroraRpcService.class);
+        if (providers.isEmpty()) {
+            // 消费方：不占端口、不注册，生命周期为空操作
+            return new SmartLifecycle() {
+                @Override
+                public void start() {
+                }
+
+                @Override
+                public void stop() {
+                }
+
+                @Override
+                public boolean isRunning() {
+                    return false;
+                }
+            };
+        }
         RpcServiceExporter exporter = new RpcServiceExporter(registry, codec,
                 properties.getHost(), internalSecret);
-        context.getBeansWithAnnotation(AuroraRpcService.class)
-                .values()
+        providers.values()
                 .forEach(bean -> {
                     AuroraRpcService annotation =
                             bean.getClass().getAnnotation(AuroraRpcService.class);

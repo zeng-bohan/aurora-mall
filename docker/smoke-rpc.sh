@@ -6,8 +6,19 @@
 set -uo pipefail
 
 BASE="${BASE:-http://localhost:8000}"
+# 仓库根 = 本脚本所在目录的上一级（脚本可能从任意 cwd 调用）
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASS=0
 FAIL=0
+
+# 早退兜底：任何路径离开都要把 cart+product 还原成 Feign 模式，不留 RPC 状态
+RESTORED=0
+restore_feign() {
+  [[ "$RESTORED" == "1" ]] && return
+  RESTORED=1
+  restart_default_mode product
+  restart_default_mode cart
+}
 
 req() { # method path token json-body
   local args=(-sS -X "$1" -H 'Content-Type: application/json')
@@ -20,9 +31,9 @@ ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1 (resp=${RESP:0:160})"; }
 assert_body() { grep -qF "$1" <<<"$RESP" && ok "$2" || bad "$2 (missing '$1')"; }
 
-start_service() { # name [extra-env]
+start_service() { # name
   local name="$1"
-  java -Xms128m -Xmx256m -jar "aurora-$name/target/aurora-$name-0.1.0-SNAPSHOT.jar" \
+  java -Xms128m -Xmx256m -jar "$ROOT/aurora-$name/target/aurora-$name-0.1.0-SNAPSHOT.jar" \
     > /tmp/"$name".log 2>&1 &
 }
 
@@ -58,13 +69,18 @@ await_healthy() { # name attempts
 
 STAMP=$(date +%s)
 USERNAME="rpc$STAMP"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-aurora123}"
+
+# 任何退出路径都还原 Feign 模式（早退/报错/中断都不留 RPC 状态）
+trap restore_feign EXIT
 
 echo "[chain D] rpc-mode equivalence: cart -> product over the handwritten rpc"
 
 # 0) seed: local-sql promotion to ADMIN (same as smoke-flows) + admin-created product
 req POST /api/user/register "" "{\"username\":\"$USERNAME\",\"password\":\"secret123\",\"nickname\":\"rpc\"}"
 grep -qF '"code":0' <<<"$RESP" && ok "seed user registered" || bad "seed user registered"
-if ! docker exec aurora-mysql mysql -uroot -paurora123 -e   "UPDATE aurora_user.users SET role='ADMIN' WHERE username='$USERNAME';" 2>/dev/null; then
+if ! docker exec aurora-mysql mysql -uroot -p"$MYSQL_PASSWORD" -e \
+  "UPDATE aurora_user.users SET role='ADMIN' WHERE username='$USERNAME';" 2>/dev/null; then
   bad "admin promotion (local seed)"; exit 1
 fi
 req POST /api/user/login "" "{\"username\":\"$USERNAME\",\"password\":\"secret123\"}"
@@ -95,8 +111,7 @@ grep -qF '"skuId":999999999' <<<"$RESP" && bad "unknown sku not written" || ok "
 
 # 3) restore default (feign) mode so the stack is left as found
 echo "  ... 还原 Feign 模式"
-restart_default_mode product
-restart_default_mode cart
+restore_feign
 await_healthy product && await_healthy cart && ok "feign mode restored" || bad "feign mode restored"
 
 if [[ $FAIL -eq 0 ]]; then

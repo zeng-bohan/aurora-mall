@@ -105,4 +105,28 @@ class ProductAdapterWiringTest {
                     assertThat(context).hasBean("rpcExporterLifecycle");
                 });
     }
+
+    /**
+     * 纯消费方不启监听器（2026-10-08 实测回归）：cart 没有任何 @AuroraRpcService，
+     * 若仍开 RPC 监听会占住固定端口，与 product 的导出端口冲突导致其 BindiException。
+     */
+    @Test
+    void consumerWithoutExportsDoesNotStartRpcListener() {
+        new ApplicationContextRunner()
+                .withPropertyValues("aurora.rpc.enabled=true")
+                .withConfiguration(AutoConfigurations.of(
+                        com.zengbohan.aurora.rpc.spring.AuroraRpcAutoConfiguration.class))
+                .withBean(com.zengbohan.aurora.rpc.registry.NacosRegistry.class,
+                        () -> org.mockito.Mockito.mock(
+                                com.zengbohan.aurora.rpc.registry.NacosRegistry.class))
+                .run(context -> {
+                    org.springframework.context.SmartLifecycle lifecycle =
+                            context.getBean("rpcExporterLifecycle",
+                                    org.springframework.context.SmartLifecycle.class);
+                    // 空目录：start() 是空操作，running 保持 false（真导出器会置 true）
+                    assertThat(lifecycle.isRunning())
+                            .as("消费方不应启动 RPC 监听器")
+                            .isFalse();
+                });
+    }
 }

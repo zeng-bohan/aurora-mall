@@ -39,7 +39,8 @@ aurora:
     enabled: ${AURORA_RPC_ENABLED:false}
     registry-addr: ${NACOS_ADDR:localhost:8848}
     host: ${RPC_HOST:127.0.0.1}
-    port: ${RPC_PORT:9181}
+    # 0 = 随机端口（默认）：注册中心上报真实绑定端口，同机多实例不撞端口
+    port: ${RPC_PORT:0}
 
 management:
   metrics:
