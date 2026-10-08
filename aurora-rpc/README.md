@@ -23,7 +23,7 @@
 - **requestId → Future 挂起**：客户端每次调用分配唯一 requestId，响应按 requestId 找回挂起的 promise；断线时在途 Future **立即失败**（而非等超时），`stop()` 同样立即失败在途调用
 - **超时快速失败**：`promise.get(timeout)`，超时抛 `RpcTimeoutException`；发送失败立即失败该调用
 - **心跳与断线重连**：心跳间隔独立于重连退避（连接空闲超过 `heartbeatIntervalMillis` 才发 ping，不随退避周期抖动）；客户端读空闲（3 个心跳周期无响应）判定失联主动断开；服务端重启后客户端按退避自动重连，调用自动恢复
-- **处理器异常以 status 回传**：业务处理器抛异常时，服务端以 `status=ERROR` + 消息回传而**不**断连；调用方收到 `RpcRemoteException`（"对端业务失败"），与 `RpcUnavailableException`（"对端不可达"）语义区分；响应回显请求的 serializerCode（两端按请求协商实现）
+- **业务异常以 status=OK 载荷回传**：业务处理器抛 `BusinessFailureException` 时，服务端以 `status=OK` + `exceptionType` 载荷回传而**不**断连；调用方还原为 `RpcRemoteException`（"对端业务失败"，不计入熔断）。系统异常才走 `status=ERROR`，映射为 `RpcUnavailableException`（"对端不可达/系统失败"）；响应回显请求的 serializerCode（两端按请求协商实现）
 - 消息类型：pipeline 以 `ByteBuf` 为消息类型（`LengthFieldBasedFrameDecoder` 之后），出站写入用 `Unpooled.wrappedBuffer` 包装；拆包配置统一走 `ProtocolCodec.newFrameDecoder()`（body 上限可配）
 
 ### 动态代理与熔断接入（消费端）
