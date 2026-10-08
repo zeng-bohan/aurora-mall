@@ -18,14 +18,17 @@ public class CircuitBreaker {
 
     private final Object lock = new Object();
     private CircuitBreakerState state = CircuitBreakerState.CLOSED;
-    /** OPEN 起始时刻。 */
+    // OPEN 起始时刻。
     private long openedAt;
-    /** HALF_OPEN 已放行的试探数。 */
+    // HALF_OPEN 已放行的试探数。
     private int halfOpenInFlight;
-    /** HALF_OPEN 试探成功数。 */
+    // HALF_OPEN 试探成功数。
     private int halfOpenSuccesses;
+    /** HALF_OPEN 轮次号：每次进入 HALF_OPEN 递增。迟到探针的结果按轮次作废——
+     *  HALF_OPEN→OPEN→HALF_OPEN 后 state 会同值，需要 generation 区分。 */
+    private int halfOpenGeneration;
 
-    /** 统计窗口：维度 0=总次数、1=失败数、2=慢调用数。 */
+    // 统计窗口：维度 0=总次数、1=失败数、2=慢调用数。
     private final RingWindow window;
 
     public CircuitBreaker(CircuitBreakerConfig config) {
@@ -50,7 +53,7 @@ public class CircuitBreaker {
      */
     public <T> T execute(Callable<T> call) throws Exception {
         Permission permission = acquirePermission();
-        if (permission == Permission.REJECT) {
+        if (permission.kind() == Permission.Kind.REJECT) {
             throw new CircuitOpenException("circuit breaker is OPEN, call fast-failed");
         }
         long startNanos = System.nanoTime();
@@ -61,11 +64,11 @@ public class CircuitBreaker {
             return result;
         } finally {
             long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
-            recordResult(success, elapsedMillis, permission == Permission.PROBE);
+            recordResult(success, elapsedMillis, permission);
         }
     }
 
-    /** 不抛受检异常的便捷变体：包裹 Supplier。 */
+    // 不抛受检异常的便捷变体：包裹 Supplier。
     public <T> T executeSupplier(java.util.function.Supplier<T> supplier) {
         try {
             return execute(supplier::get);
@@ -77,14 +80,18 @@ public class CircuitBreaker {
         }
     }
 
-    /** 一次调用的放行判定结果。 */
-    private enum Permission {
-        /** 熔断打开或半开试探满员：快速失败。 */
-        REJECT,
-        /** CLOSED 正常放行。 */
-        NORMAL,
-        /** HALF_OPEN 试探放行。 */
-        PROBE
+    // 一次调用的放行判定结果：kind + 放行时的 HALF_OPEN 轮次（仅 PROBE 有意义）。
+    private record Permission(Kind kind, int generation) {
+        enum Kind {
+            // 熔断打开或半开试探满员：快速失败。
+            REJECT,
+            // CLOSED 正常放行。
+            NORMAL,
+            // HALF_OPEN 试探放行。
+            PROBE
+        }
+        static final Permission REJECT = new Permission(Kind.REJECT, 0);
+        static final Permission NORMAL = new Permission(Kind.NORMAL, 0);
     }
 
     private Permission acquirePermission() {
@@ -98,28 +105,39 @@ public class CircuitBreaker {
                     return Permission.REJECT;
                 }
                 halfOpenInFlight++;
-                return Permission.PROBE;
+                return new Permission(Permission.Kind.PROBE, halfOpenGeneration);
             }
             return Permission.NORMAL;
         }
     }
 
-    /** OPEN 持续时长到达则转 HALF_OPEN。调用方需持锁。 */
+    // OPEN 持续时长到达则转 HALF_OPEN。调用方需持锁。
     private void checkOpenTimeout() {
         if (state == CircuitBreakerState.OPEN
                 && config.clock.getAsLong() - openedAt >= config.openDurationMillis) {
             transitionTo(CircuitBreakerState.HALF_OPEN);
             halfOpenInFlight = 0;
             halfOpenSuccesses = 0;
+            halfOpenGeneration++;
         }
     }
 
-    private void recordResult(boolean success, long elapsedMillis, boolean halfOpenProbe) {
+    private void recordResult(boolean success, long elapsedMillis, Permission permission) {
         boolean slow = elapsedMillis >= config.slowCallDurationMillis;
 
         synchronized (lock) {
-            recordIntoBucket(success, slow);
-            if (halfOpenProbe) {
+            boolean probe = permission.kind() == Permission.Kind.PROBE;
+            if (!probe) {
+                // 只有常态调用进统计窗：OPEN 期间的探针结果计入窗口会把陈旧
+                // 失败率/慢调用率带进下一轮 CLOSED，互相放大
+                recordIntoBucket(success, slow);
+            }
+            if (probe) {
+                // 迟到探针：轮次或状态已推进，结果不生效，计数不回滚
+                if (permission.generation() != halfOpenGeneration
+                        || state != CircuitBreakerState.HALF_OPEN) {
+                    return;
+                }
                 halfOpenInFlight--;
                 if (!success) {
                     transitionTo(CircuitBreakerState.OPEN);
@@ -140,7 +158,7 @@ public class CircuitBreaker {
         }
     }
 
-    /** 记录一次调用到当前滑动窗口桶（三维：total / failure / slow）。 */
+    // 记录一次调用到当前滑动窗口桶（三维：total / failure / slow）。
     private void recordIntoBucket(boolean success, boolean slow) {
         long now = config.clock.getAsLong();
         window.add(now, 0, 1);
@@ -152,7 +170,7 @@ public class CircuitBreaker {
         }
     }
 
-    /** CLOSED 下是否达到熔断阈值（失败率或慢调用率）。 */
+    // CLOSED 下是否达到熔断阈值（失败率或慢调用率）。
     private boolean shouldOpen() {
         long[] sums = window.sums(config.clock.getAsLong());
         long total = sums[0];
@@ -179,7 +197,7 @@ public class CircuitBreaker {
         window.reset();
     }
 
-    /** 状态变更监听（为 M4 指标留缝）。 */
+    // 状态变更监听（为 M4 指标留缝）。
     public interface Listener {
         void onStateChange(CircuitBreakerState from, CircuitBreakerState to);
     }

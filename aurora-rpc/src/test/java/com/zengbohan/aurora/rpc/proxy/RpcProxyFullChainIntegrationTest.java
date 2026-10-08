@@ -29,7 +29,7 @@ class RpcProxyFullChainIntegrationTest {
 
     private static final String SECRET = "it-secret-0123456789";
 
-    /** 样例服务接口。 */
+    // 样例服务接口。
     interface EchoApi {
         String echo(String msg);
 
@@ -41,8 +41,17 @@ class RpcProxyFullChainIntegrationTest {
 
         String boom();
 
-        /** 泛型容器返回值：回归 List<ProductSnapshot> 形态的擦除还原。 */
+        // 泛型容器返回值：回归 List<ProductSnapshot> 形态的擦除还原。
         List<Pojo> listPojo();
+
+        // byte/short/char/boolean 返回值：代理侧按声明类型装箱（审查九）。
+        default byte flag() { return 42; }
+
+        default short small() { return 1000; }
+
+        default char grade() { return 'A'; }
+
+        default boolean ok() { return true; }
 
         record Pojo(String name, List<Integer> values) {
         }
@@ -104,6 +113,10 @@ class RpcProxyFullChainIntegrationTest {
         // 泛型容器返回值元素还原为具体 record（而非 Map）
         assertThat(api.listPojo()).containsExactly(new EchoApi.Pojo("in-list", List.of(9)));
         assertThat(api.add(2, 3)).isEqualTo(5); // 原始类型返回
+        assertThat(api.flag()).isEqualTo((byte) 42); // byte 返回值按类型还原
+        assertThat(api.small()).isEqualTo((short) 1000); // short 返回值按类型还原
+        assertThat(api.grade()).isEqualTo('A'); // char 返回值（JSON 字符串）还原
+        assertThat(api.ok()).isTrue(); // boolean 返回值
         assertThat(api.roundTrip(new EchoApi.Pojo("abc", List.of(1, 2))))
                 .isEqualTo(new EchoApi.Pojo("ABC", List.of(1, 2))); // 嵌套 record + 集合往返
         api.fireAndForget();

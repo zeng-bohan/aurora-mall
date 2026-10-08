@@ -96,6 +96,20 @@ class PaymentServiceTest {
     }
 
     @Test
+    void callbackAmountMustMatchStoredPaymentAmount() {
+        // 签名合法但金额不属于本单：签名只证明来自渠道，不证明属于本单
+        PaymentOrder mismatch = payment(0);
+        mismatch.setAmount(new BigDecimal("49.80"));
+        when(mapper.findByOrderId(1001L)).thenReturn(mismatch);
+
+        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"),
+                verifier.sign(1001L, "39.80")))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.PARAM_ERROR.getCode());
+        verify(mapper, never()).markPaid(1001L);
+    }
+
+    @Test
     void closeWinningRaceAfterMarkPaidRefundsInsteadOfPublishing() {
         // markPaid 赢得竞态后复检发现订单已关：退款、不发 order-paid（审查一.2）
         // 三次读取：方法开头 / markPaid 赢后复检 / 退款后回读
@@ -238,7 +252,7 @@ class PaymentServiceTest {
         PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80"));
 
         assertThat(result.getStatus()).isEqualTo(PaymentOrder.STATUS_PAID);
-        // replay is the recovery channel for a lost publish
+        // 重放是发布丢失后的恢复通道
         verify(publisher).sendOrderPaid(eq("1001"), anyString());
     }
 

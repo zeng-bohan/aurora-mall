@@ -7,6 +7,7 @@ import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.idempotent.Idempotent;
 import com.zengbohan.aurora.common.idempotent.Strategy;
+import com.zengbohan.aurora.common.result.RemoteCall;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
 import com.zengbohan.aurora.order.client.InventoryClient;
@@ -27,12 +28,11 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Order lifecycle (ADR-0003 main path): idempotent request guard -> redis
- * stock reserve -> local transaction (order + tx_message together) ->
- * transactional message confirmed against tx_message -> delayed close
- * message. Every failure window has a named net: reserve failure rolls the
- * redis decrement back inline, a post-commit send failure is picked up by
- * the tx_message retry job, and a lost close message by the timeout scan.
+ * 订单生命周期（主链路）：幂等请求守卫 -> redis 预占库存 ->
+ * 本地事务（order 与 tx_message 一起提交）-> 以 tx_message 为准确认
+ * 事务消息 -> 延迟关单消息。每个失败窗口都有明确的兜底：
+ * 预占失败就地回滚 redis 扣减，提交后的发送失败由 tx_message 重发 job
+ * 捞出，关单消息丢失则由超时扫描兜底。
  */
 @Service
 @org.springframework.cloud.context.config.annotation.RefreshScope
@@ -53,7 +53,6 @@ public class OrderService {
     private final int closeDelayLevel;
     private final long closeTimeoutSeconds;
     private final String txMode;
-    private final boolean seataEnabled;
 
     public OrderService(ObjectMapper objectMapper,SegmentIdGenerator idGenerator,
                         ProductGuard productGuard,
@@ -79,18 +78,16 @@ public class OrderService {
         this.closeDelayLevel = closeDelayLevel;
         this.closeTimeoutSeconds = closeTimeoutSeconds;
         this.txMode = txMode;
-        this.seataEnabled = seataEnabled;
-        if ("at".equals(txMode) && !seataEnabled) {
-            // mode=at without the seata starter enabled would run plain local
-            // transactions and leave a committed order behind on branch
-            // failure - refuse to boot instead of failing silently
+        if (Order.TX_MODE_AT.equals(txMode) && !seataEnabled) {
+            // mode=at 但未启用 seata starter 时，实际只会走普通本地事务，
+            // 分支失败会留下已提交的订单——直接拒绝启动，而不是静默失败
             throw new IllegalStateException(
                     "aurora.tx.mode=at requires seata.enabled=true; otherwise the global transaction is inert"
                             + " and a failed branch leaves the order committed without rollback");
         }
     }
 
-    /** Read-only accessor for the close scan job's deadline math. */
+    // 只读访问器：供关单扫描 job 计算截止时间。
     public long closeTimeoutSeconds() {
         return closeTimeoutSeconds;
     }
@@ -100,9 +97,9 @@ public class OrderService {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "缺少 Idempotency-Key 请求头");
         }
-        if ("at".equals(txMode)) {
-            // Seata AT comparison scenario; @GlobalTransactional lives on the
-            // separate bean call so the proxy actually wraps it
+        if (Order.TX_MODE_AT.equals(txMode)) {
+            // Seata AT 对比场景；@GlobalTransactional 放在独立 Bean 的方法上，
+            // 代理才能真正包裹它
             return atOrderPlacer.placeAt(userId, request);
         }
         ProductSnapshot product = productGuard.load(request.skuId());
@@ -121,7 +118,7 @@ public class OrderService {
                 order.setQuantity(request.quantity());
                 order.setTotalAmount(total);
                 order.setStatus(Order.STATUS_CREATED);
-                order.setTxMode("mq");
+                order.setTxMode(Order.TX_MODE_MQ);
                 orderMapper.insert(order);
 
                 TxMessage message = new TxMessage();
@@ -166,24 +163,22 @@ public class OrderService {
         return toView(order);
     }
 
-    /** Used by the payment flow (T5): CREATED -> PAID, idempotent on replay. */
+    // 供支付链路使用（T5）：CREATED -> PAID，重放幂等。
     public boolean markPaid(long orderId) {
         return orderMapper.transition(orderId, Order.STATUS_CREATED, Order.STATUS_PAID) > 0;
     }
 
-    /** 迟到支付判定：订单是否已关（关单赢了支付竞态）。 */
+    // 迟到支付判定：订单是否已关（关单赢了支付竞态）。
     public boolean isClosed(long orderId) {
         Order order = orderMapper.selectById(orderId);
         return order != null && order.getStatus() == Order.STATUS_CLOSED;
     }
 
     /**
-     * Delayed-message, scan and compensation entry point. Idempotent and
-     * re-entrant: CREATED -> CLOSED, then the stock release, then a
-     * stock_released marker. A release failure throws WITHOUT the marker, so
-     * redelivery (MQ retry) or the compensation scan re-enters here and
-     * finishes the release - a closed order can never keep the stock locked
-     * forever. Paid or fully-released orders resolve to no-ops.
+     * 延迟消息、扫描与补偿的统一入口。幂等且可重入：CREATED -> CLOSED，
+     * 随后释放库存，最后打 stock_released 标记。释放失败会抛异常且不落标记，
+     * 于是重投递（MQ 重试）或补偿扫描会重新进入本方法把释放做完——
+     * 已关闭的订单不可能永远锁着库存。已支付或已完全释放的订单落到空操作。
      */
     public boolean closeIfPending(long orderId) {
         Order order = orderMapper.selectById(orderId);
@@ -200,8 +195,8 @@ public class OrderService {
             log.info("order {} already closed but stock unreleased; compensating", orderId);
         }
         try {
-            if ("at".equals(order.getTxMode())) {
-                // AT orders never touched redis; release the db reservation only
+            if (Order.TX_MODE_AT.equals(order.getTxMode())) {
+                // AT 订单从未触碰 redis；只释放 DB 预占
                 inventoryClient.releaseDb(order.getSkuId(),
                         new InventoryClient.ReleaseRequest(orderId, order.getQuantity()));
             } else {
@@ -218,19 +213,12 @@ public class OrderService {
     }
 
     private void reserveStock(long skuId, int quantity) {
-        Result<Void> result;
-        try {
-            result = inventoryClient.reserve(skuId, new InventoryClient.StockRequest(quantity));
-        } catch (RuntimeException e) {
-            log.warn("inventory reserve call failed for sku {} x{}", skuId, quantity, e);
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务不可用");
-        }
-        if (result != null && result.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {
+        Result<Void> result = RemoteCall.invoke("库存", "sku " + skuId + " x" + quantity,
+                () -> inventoryClient.reserve(skuId, new InventoryClient.StockRequest(quantity)));
+        if (result.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {
             throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
         }
-        if (result == null || result.code() != ErrorCode.SUCCESS.getCode()) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务不可用");
-        }
+        RemoteCall.requireSuccess(result, "库存");
     }
 
     private void rollbackStockQuietly(long orderId, long skuId, int quantity, String reason) {
@@ -245,7 +233,7 @@ public class OrderService {
     private String stockReservedPayload(long orderId, PlaceOrderRequest request) {
         try {
             return objectMapper.writeValueAsString(new StockReservedEvent(
-                    String.valueOf(orderId), request.skuId(), request.quantity()));
+                    String.valueOf(orderId), orderId, request.skuId(), request.quantity()));
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("event serialization failed", e);
         }
@@ -256,7 +244,7 @@ public class OrderService {
                 order.getQuantity(), order.getTotalAmount(), order.getStatus());
     }
 
-    /** Wire format consumed by aurora-inventory. */
-    public record StockReservedEvent(String messageId, long skuId, int quantity) {
+    // aurora-inventory 消费的 wire 格式。
+    public record StockReservedEvent(String messageId, long orderId, long skuId, int quantity) {
     }
 }

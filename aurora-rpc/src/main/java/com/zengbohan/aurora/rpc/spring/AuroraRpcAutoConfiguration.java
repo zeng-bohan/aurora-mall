@@ -12,6 +12,7 @@ import com.zengbohan.aurora.rpc.proxy.RpcProxyFactory;
 import com.zengbohan.aurora.rpc.registry.NacosRegistry;
 import com.zengbohan.aurora.rpc.registry.ServiceDiscovery;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.aop.support.AopUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.SmartLifecycle;
@@ -23,7 +24,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * aurora-rpc 的 Spring 胶水（ADR-0008：核心零依赖，装配在此可选包）。
+ * aurora-rpc 的 Spring 胶水（核心零依赖，装配在此可选包）。
  * {@code aurora.rpc.enabled=true} 时装配注册发现 + 代理工厂全家桶；
  * 注册中心/负载均衡均可被使用方自己的 bean 覆盖（@ConditionalOnMissingBean）。
  */
@@ -101,8 +102,14 @@ public class AuroraRpcAutoConfiguration {
                 properties.getHost(), internalSecret);
         providers.values()
                 .forEach(bean -> {
+                    // AOP/CGLIB 代理上直接 getAnnotation 拿不到声明类上的注解——
+                    // @Idempotent 等切面生效后 provider bean 必为代理
                     AuroraRpcService annotation =
-                            bean.getClass().getAnnotation(AuroraRpcService.class);
+                            AopUtils.getTargetClass(bean).getAnnotation(AuroraRpcService.class);
+                    if (annotation == null) {
+                        throw new IllegalStateException(
+                                "@AuroraRpcService missing on provider bean " + bean.getClass());
+                    }
                     exporter.export(annotation.value(), bean);
                 });
         return new SmartLifecycle() {

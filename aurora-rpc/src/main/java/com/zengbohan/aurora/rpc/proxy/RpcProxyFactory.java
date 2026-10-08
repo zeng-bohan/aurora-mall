@@ -62,7 +62,7 @@ public class RpcProxyFactory {
                 .build();
     }
 
-    /** 测试观察：指定接口的熔断器当前状态。 */
+    // 测试观察：指定接口的熔断器当前状态。
     CircuitBreakerState breakerStateForTest(Class<?> api) {
         CircuitBreaker breaker = breakers.get(api);
         return breaker == null ? null : breaker.state();
@@ -105,7 +105,7 @@ public class RpcProxyFactory {
         return (T) Proxy.newProxyInstance(api.getClassLoader(), new Class<?>[]{api}, handler);
     }
 
-    /** 传输段：返回载荷（可能含业务失败标记）；可用性异常计入熔断。 */
+    // 传输段：返回载荷（可能含业务失败标记）；可用性异常计入熔断。
     private InvocationResult callRemote(Invocation invocation) {
         var instance = discovery.pick(invocation.interfaceName(), loadBalancer);
         var client = clientPool.get(instance);
@@ -128,7 +128,7 @@ public class RpcProxyFactory {
         return names;
     }
 
-    /** 原始类型返回值：按声明装箱（null 会以 NPE 暴露——语义与本地调用一致）。 */
+    // 原始类型返回值：按声明装箱（null 会以 NPE 暴露——语义与本地调用一致）。
     private static Object primitiveBoxed(Object value, Class<?> returnType) {
         if (value == null) {
             throw new IllegalStateException("remote returned null for primitive " + returnType.getName());
@@ -145,9 +145,25 @@ public class RpcProxyFactory {
         if (returnType == float.class) {
             return ((Number) value).floatValue();
         }
-        if (returnType == boolean.class || returnType == byte.class
-                || returnType == short.class || returnType == char.class) {
-            return value; // JSON 数字/字符按目标原始类型自动拆箱
+        if (returnType == boolean.class) {
+            return ((Boolean) value).booleanValue();
+        }
+        if (returnType == byte.class) {
+            return ((Number) value).byteValue();
+        }
+        if (returnType == short.class) {
+            return ((Number) value).shortValue();
+        }
+        if (returnType == char.class) {
+            // 数字按 ASCII/码位转，字符串取首字符（JSON 字符通常落为 String 或 Number）
+            if (value instanceof Number n) {
+                return (char) n.intValue();
+            }
+            String s = (String) value;
+            if (s.isEmpty()) {
+                throw new IllegalStateException("remote returned empty string for char");
+            }
+            return s.charAt(0);
         }
         return value;
     }

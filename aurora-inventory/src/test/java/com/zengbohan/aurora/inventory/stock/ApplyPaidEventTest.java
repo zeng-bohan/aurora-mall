@@ -22,7 +22,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-/** applyPaidEvent（支付确认的库存位移）——支付/关单竞态的爆点，专项覆盖。 */
+// applyPaidEvent（支付确认的库存位移）——支付/关单竞态的爆点，专项覆盖。
 class ApplyPaidEventTest {
 
     private StringRedisTemplate redis;
@@ -41,6 +41,11 @@ class ApplyPaidEventTest {
         @Override
         public void remove(String bizType, String bizKey) {
             rows.remove(bizType + ":" + bizKey);
+        }
+
+        @Override
+        public boolean exists(String bizType, String bizKey) {
+            return rows.contains(bizType + ":" + bizKey);
         }
     }
 
@@ -68,7 +73,7 @@ class ApplyPaidEventTest {
     void firstDeliveryConfirmsPaymentAtomically() {
         when(mapper.confirmPayment(1L, 3)).thenReturn(1);
 
-        assertThat(service.applyPaidEvent("msg-1", 1L, 3)).isTrue();
+        assertThat(service.applyPaidEvent("msg-1", 101L, 1L, 3)).isTrue();
 
         Mockito.verify(mapper).confirmPayment(1L, 3);
     }
@@ -77,10 +82,21 @@ class ApplyPaidEventTest {
     void redeliveryIsDeduped() {
         when(mapper.confirmPayment(1L, 3)).thenReturn(1);
 
-        assertThat(service.applyPaidEvent("msg-1", 1L, 3)).isTrue();
-        assertThat(service.applyPaidEvent("msg-1", 1L, 3)).isFalse();
+        assertThat(service.applyPaidEvent("msg-1", 101L, 1L, 3)).isTrue();
+        assertThat(service.applyPaidEvent("msg-1", 101L, 1L, 3)).isFalse();
 
         Mockito.verify(mapper, Mockito.times(1)).confirmPayment(1L, 3);
+    }
+
+    @Test
+    void paidEventForReleasedOrderIsConsumedWithoutDeduction() {
+        // 关单已释放（dedup 行存在）：reserved 永久为 0，confirmPayment 必然失败。
+        // 该消息必须直接消费掉——不能无限重投进 DLQ
+        dedup.tryInsert("stock-release", "102");
+
+        assertThat(service.applyPaidEvent("msg-4", 102L, 1L, 3)).isTrue();
+
+        Mockito.verify(mapper, Mockito.never()).confirmPayment(1L, 3);
     }
 
     @Test
@@ -89,7 +105,7 @@ class ApplyPaidEventTest {
         when(mapper.confirmPayment(1L, 3)).thenReturn(0);
         when(mapper.selectById(1L)).thenReturn(row(97, 0));
 
-        assertThatThrownBy(() -> service.applyPaidEvent("msg-2", 1L, 3))
+        assertThatThrownBy(() -> service.applyPaidEvent("msg-2", 102L, 1L, 3))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("will retry");
     }
@@ -100,7 +116,7 @@ class ApplyPaidEventTest {
         when(mapper.confirmPayment(999L, 3)).thenReturn(0);
         when(mapper.selectById(999L)).thenReturn(null);
 
-        assertThatThrownBy(() -> service.applyPaidEvent("msg-3", 999L, 3))
+        assertThatThrownBy(() -> service.applyPaidEvent("msg-3", 103L, 999L, 3))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("will retry");
     }

@@ -7,9 +7,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Payment success -> CREATED orders move to PAID. markPaid is a guarded
- * transition, so duplicate deliveries and a racing close both resolve to
- * exactly one winner.
+ * 支付成功 -> CREATED 订单转为 PAID。markPaid 是带守卫的
+ * 状态迁移，因此重复投递与并发的关单
+ * 最终恰好只有一个获胜者。
  */
 @Component
 @ConditionalOnProperty(name = "rocketmq.name-server")
@@ -41,7 +41,15 @@ public class OrderPaidListener implements RocketMQListener<OrderPaidListener.Ord
             // 关单场景钱已收、库存已回滚——必须发退款信号闭环，不能静默丢弃
             if (orderService.isClosed(event.orderId())) {
                 log.warn("late payment for CLOSED order {} — publishing refund signal", event.orderId());
-                publisher.publishRefundRequest(event.orderId());
+                try {
+                    publisher.publishRefundRequest(event.orderId());
+                } catch (RuntimeException e) {
+                    // 退款信号未发出绝不可静默丢弃：抛错让 order-paid 重投，
+                    // markPaid 幂等、isClosed 判真，重投后重发同一信号
+                    log.error("refund signal publish failed for order {}; will retry via redelivery",
+                            event.orderId(), e);
+                    throw e;
+                }
             } else {
                 log.info("order {} already paid (replay ignored)", event.orderId());
             }

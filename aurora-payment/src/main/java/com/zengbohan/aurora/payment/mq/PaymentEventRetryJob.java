@@ -27,6 +27,9 @@ public class PaymentEventRetryJob {
     private final PaymentOrderMapper paymentOrderMapper;
     private final PaymentService paymentService;
 
+    // 补发上限：超过视为永久失败，停扫靠 event_failed。
+    private static final int MAX_ATTEMPTS = 10;
+
     public PaymentEventRetryJob(PaymentOrderMapper paymentOrderMapper,
                                 PaymentService paymentService) {
         this.paymentOrderMapper = paymentOrderMapper;
@@ -44,8 +47,15 @@ public class PaymentEventRetryJob {
                 // 复用业务侧构建路径：载荷形状与首发一致（消费端强类型绑定）
                 paymentService.publishPaid(payment);
             } catch (RuntimeException e) {
-                // 毒丸隔离：一条补发失败不能饿死本轮后续记录
+                // 毒丸隔离：一条补发失败不能饿死本轮后续记录；同时推进有界重试
                 log.error("paid event republish failed for order {}", payment.getOrderId(), e);
+                paymentOrderMapper.incrementPublishAttempts(payment.getOrderId());
+                int attempts = (payment.getPublishAttempts() == null ? 0 : payment.getPublishAttempts()) + 1;
+                if (attempts >= MAX_ATTEMPTS) {
+                    paymentOrderMapper.markEventFailed(payment.getOrderId());
+                    log.error("paid event for order {} failed {} times, giving up auto-retry",
+                            payment.getOrderId(), attempts);
+                }
             }
         }
     }

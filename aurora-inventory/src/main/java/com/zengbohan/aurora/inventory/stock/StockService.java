@@ -15,9 +15,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.util.List;
 
 /**
- * Two-layer stock (ADR-0003): Redis is the sellable number (reserved events
- * land in the DB asynchronously), MySQL is the ledger. The reconcile job
- * restores missing keys from the DB view available - reserved.
+ * 双层库存：Redis 存可售数量（预占事件异步落库），MySQL 是账本。
+ * 对账任务用 DB 视图（available - reserved）重建缺失的 key。
  */
 @Service
 public class StockService {
@@ -57,8 +56,8 @@ public class StockService {
             created.setReserved(0);
             stockMapper.insert(created);
         } else {
-            // keep the invariant sellable == quantity even while reservations
-            // are in flight: available = quantity + reserved, atomically
+            // 即使在预占在途期间也保持"可售 == quantity"不变式：
+            // available = quantity + reserved，原子完成
             stockMapper.resetAvailable(skuId, quantity);
         }
         redis.opsForValue().set(StockLuaScripts.key(skuId), String.valueOf(quantity));
@@ -84,9 +83,8 @@ public class StockService {
     }
 
     /**
-     * Order-cancelled path: the redis sellable number goes back up AND the DB
-     * reservation is released, so the two layers converge without waiting for
-     * the reconcile job.
+     * 订单取消路径：Redis 可售数量回升，同时释放 DB 预占，两层无需等待
+     * 对账任务即可自行收敛。
      * <p>
      * 双侧各自按 orderId 幂等：redis 用 SETNX 标记（恰好一次 INCRBY，挡住
      * MQ close listener 与超时扫描并发、以及"INCRBY 后、标记落库前崩溃"的
@@ -114,29 +112,35 @@ public class StockService {
     }
 
     /**
-     * Applies one stock-reserved event to the DB ledger. The dedup insert and
-     * the atomic update share one transaction: a crash between them rolls the
-     * dedup row back, so the redelivered message is processed, never lost.
-     * The reserved counter moves via atomic SQL - no read-modify-write races
-     * between consumers.
+     * 把一条 stock-reserved 事件应用到 DB 账本。去重插入与原子更新在同一事务：
+     * 两者之间崩溃会回滚去重行，因此重投递的消息一定会被处理，不会丢失。
+     * reserved 计数走原子 SQL 更新——消费者之间不存在读-改-写竞态。
      *
-     * @return true when first applied, false for a redelivered (deduped) message
+     * @return 首次应用返回 true；重投递（被去重）返回 false
      */
     @Transactional
-    public boolean applyReservedEvent(String messageId, long skuId, int quantity) {
+    public boolean applyReservedEvent(String messageId, long orderId, long skuId, int quantity) {
         if (!dedupStore.tryInsert("stock-reserved", messageId)) {
             return false;
         }
         if (stockMapper.incrementReserved(skuId, quantity) == 0) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
+        // 关单已赢竞态：release 的 decrement 因预扣未落库记账而落空，唯一对冲点
+        // 在这里——本事件到达后补扣，reserved 恰好归零。exists 探测必须在
+        // incrementReserved 之后（双方都先对 sku 行加写锁，后提交方的探测必见
+        // 先提交方）。
+        if (dedupStore.exists("stock-release", String.valueOf(orderId))) {
+            int undone = stockMapper.decrementReserved(skuId, quantity);
+            log.warn("stock-reserved for released order {} neutralized (compensated reserved back to 0, undone={})",
+                    orderId, undone);
+        }
         return true;
     }
 
     /**
-     * AT comparison path: DB-only reservation (no redis, no MQ). The guarded
-     * UPDATE is the branch data seata rolls back through undo_log when the
-     * global transaction fails.
+     * AT 对比路径：只做 DB 预占（不用 redis、不用 MQ）。这条带守卫的 UPDATE
+     * 就是 seata 在全局事务失败时通过 undo_log 回滚的分支数据。
      */
     public void reserveDb(long skuId, int quantity) {
         if (quantity < 1) {
@@ -147,7 +151,7 @@ public class StockService {
         }
     }
 
-    /** AT order close: release the db reservation only (no redis was touched).
+    /** AT 关单：只释放 DB 预占（从未触碰 redis）。
      *  同样按 orderId 去重——关单补偿重入不能双扣 reserved。 */
     public void releaseDb(long orderId, long skuId, int quantity) {
         if (quantity < 1) {
@@ -164,15 +168,20 @@ public class StockService {
     }
 
     /**
-     * Payment-confirmed ledger move: available and reserved both drop by the
-     * quantity under the same transactional dedup as the reserve path. A
-     * missing reservation is retried (reserved event may still be in flight);
-     * the dedup row rolls back with the throw so the retry re-processes.
+     * 支付确认后的账本迁移：available 与 reserved 同时减去 quantity，去重方式
+     * 与预占路径一致（同一事务内）。预占尚未落账时抛异常触发重试（reserved
+     * 事件可能仍在途）；去重行随异常回滚，重试会重新处理。
      */
     @Transactional
-    public boolean applyPaidEvent(String messageId, long skuId, int quantity) {
+    public boolean applyPaidEvent(String messageId, long orderId, long skuId, int quantity) {
         if (!dedupStore.tryInsert("order-paid", messageId)) {
             return false;
+        }
+        // 关单赢竞态且预扣已被中和：reserved 已是 0，confirmPayment 永久失败。
+        // 这类消息标记已处理直接消费，不能进入无限重投/DLQ（钱在支付侧走退款闭环）。
+        if (dedupStore.exists("stock-release", String.valueOf(orderId))) {
+            log.warn("order-paid for released order {} consumed without stock deduction", orderId);
+            return true;
         }
         if (stockMapper.confirmPayment(skuId, quantity) == 0) {
             throw new IllegalStateException(
@@ -191,15 +200,15 @@ public class StockService {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
         long sellable = row.getAvailable() - row.getReserved();
-        // SETNX: only fills a missing key. A blind SET here would clobber a
-        // reservation that landed between the lua miss and this write.
+        // SETNX：只填补缺失的 key。此处若用无条件 SET，会覆盖在
+        // lua 未命中与本次写入之间落下的预占。
         redis.opsForValue().setIfAbsent(StockLuaScripts.key(skuId), String.valueOf(sellable));
         log.info("rebuilt stock key for sku {} from db (sellable {})", skuId, sellable);
     }
 
-    /** Delta log between redis and the db view; missing keys are rebuilt.
-     *  A malformed value is warned and skipped - one bad key must not abort
-     *  the whole sweep (the same defensive parse the cart store uses). */
+    /** redis 与 DB 视图的差异日志；缺失的 key 会被重建。
+     *  值格式错误只告警并跳过——单个坏 key 不能中断整轮扫描
+     *  （与 cart store 相同的防御式解析）。 */
     public void reconcile() {
         for (ProductStock row : stockMapper.selectList(null)) {
             String key = StockLuaScripts.key(row.getSkuId());
@@ -218,7 +227,9 @@ public class StockService {
                 continue;
             }
             if (redisStock != dbSellable) {
-                log.warn("reconcile: sku {} redis={} db-sellable={} (in-flight reserved events explain this window)",
+                // 在途 reserved 事件窗口是有界的且编排已可收敛；此处只告警不修复，
+                // 漂移持续（跨多个 reconcile 周期）即为真实丢失/错账信号。
+                log.warn("reconcile: sku {} redis={} db-sellable={} (bounded by in-flight reserved events unless persistent)",
                         row.getSkuId(), redisStock, dbSellable);
             }
         }

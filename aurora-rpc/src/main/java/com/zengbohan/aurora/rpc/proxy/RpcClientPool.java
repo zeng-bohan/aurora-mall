@@ -27,7 +27,7 @@ public class RpcClientPool implements AutoCloseable {
         this.requestTimeoutMillis = requestTimeoutMillis;
     }
 
-    /** 取（或建）到指定实例的连接；不可达时抛 RpcUnavailableException 并回收条目。 */
+    // 取（或建）到指定实例的连接；不可达时抛 RpcUnavailableException 并回收条目。
     public RpcClient get(ServiceInstance instance) {
         String key = instance.host() + ":" + instance.port();
         RpcClient client = clients.computeIfAbsent(key, k -> {
@@ -42,7 +42,7 @@ public class RpcClientPool implements AutoCloseable {
             }
             return client;
         } catch (RpcUnavailableException | InterruptedException e) {
-            clients.remove(key);
+            clients.remove(key, client);
             // 两个失败分支都必须停掉 client：Netty 线程组 + 重连任务否则永久泄漏
             client.stop();
             if (e instanceof InterruptedException) {

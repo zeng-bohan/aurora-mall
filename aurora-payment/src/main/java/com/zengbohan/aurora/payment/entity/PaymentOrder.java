@@ -13,7 +13,7 @@ public class PaymentOrder {
     public static final int STATUS_PAYING = 0;
     public static final int STATUS_PAID = 1;
 
-    /** 迟到回调：订单已关单时 mock 通道语义为自动退款。 */
+    // 迟到回调：订单已关单时 mock 通道语义为自动退款。
     public static final int STATUS_REFUNDED = 2;
 
     @TableId(type = IdType.AUTO)
@@ -21,8 +21,11 @@ public class PaymentOrder {
     private Long orderId;
     private BigDecimal amount;
     private Integer status;
-    /** 1 = order-paid 事件已发布（补发 job 依据，见 09 migration）。 */
+    // 1 = order-paid 事件已发布（补发 job 依据，见 09 migration）。
     private Integer eventPublished;
+    // 补发尝试次数与放弃标记（11 migration）。
+    private Integer publishAttempts;
+    private Integer eventFailed;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -52,6 +55,14 @@ public class PaymentOrder {
 
     public void setStatus(Integer status) {
         this.status = status;
+    }
+
+    public Integer getPublishAttempts() {
+        return publishAttempts;
+    }
+
+    public Integer getEventFailed() {
+        return eventFailed;
     }
 
     public LocalDateTime getCreatedAt() {

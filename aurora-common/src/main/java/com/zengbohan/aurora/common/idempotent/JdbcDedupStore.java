@@ -7,8 +7,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * Lazily resolves JdbcTemplate for the same reason as the redis store: the
- * bean always registers, contexts without a datasource fail only on use.
+ * 与 redis store 相同的原因，惰性解析 JdbcTemplate：
+ * 该 Bean 总是注册，没有数据源的上下文只在实际使用时才失败。
  */
 @Component
 public class JdbcDedupStore implements DedupStore {
@@ -45,5 +45,18 @@ public class JdbcDedupStore implements DedupStore {
         } catch (DuplicateKeyException e) {
             return false;
         }
+    }
+
+    @Override
+    public boolean exists(String bizType, String bizKey) {
+        JdbcTemplate jdbc = jdbcProvider.getIfAvailable();
+        if (jdbc == null) {
+            throw new IllegalStateException(
+                    "DedupStore needs a JdbcTemplate bean; add spring-jdbc and a datasource");
+        }
+        Integer n = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM " + table + " WHERE biz_type = ? AND biz_key = ?",
+                Integer.class, bizType, bizKey);
+        return n != null && n > 0;
     }
 }

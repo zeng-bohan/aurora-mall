@@ -65,6 +65,11 @@ class StockServiceTest {
         public void remove(String bizType, String bizKey) {
             rows.remove(bizType + ":" + bizKey);
         }
+
+        @Override
+        public boolean exists(String bizType, String bizKey) {
+            return rows.contains(bizType + ":" + bizKey);
+        }
     }
 
     private void luaReserveReturns(long value) {
@@ -101,7 +106,7 @@ class StockServiceTest {
     @Test
     void reserveMissingKeyRebuildsFromDbViewAndRetries() {
         when(mapper.selectById(1L)).thenReturn(row(1L, 100, 20));
-        // first attempt: key missing (-1); after rebuild the retry succeeds (98)
+        // 第一次尝试：key 缺失（-1）；重建后重试成功（98）
         when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString()))
                 .thenReturn(-1L)
                 .thenReturn(98L);
@@ -181,7 +186,7 @@ class StockServiceTest {
     void applyReservedEventFirstDeliveryIncrementsAtomically() {
         when(mapper.incrementReserved(1L, 5)).thenReturn(1);
 
-        assertThat(service.applyReservedEvent("msg-1", 1L, 5)).isTrue();
+        assertThat(service.applyReservedEvent("msg-1", 101L, 1L, 5)).isTrue();
 
         verify(mapper).incrementReserved(1L, 5);
     }
@@ -190,29 +195,43 @@ class StockServiceTest {
     void applyReservedEventRedeliverySkipsDb() {
         when(mapper.incrementReserved(1L, 5)).thenReturn(1);
 
-        assertThat(service.applyReservedEvent("msg-1", 1L, 5)).isTrue();
-        assertThat(service.applyReservedEvent("msg-1", 1L, 5)).isFalse();
+        assertThat(service.applyReservedEvent("msg-1", 101L, 1L, 5)).isTrue();
+        assertThat(service.applyReservedEvent("msg-1", 101L, 1L, 5)).isFalse();
 
         verify(mapper, Mockito.times(1)).incrementReserved(1L, 5);
+    }
+
+    @Test
+    void applyReservedEventNeutralizesWhenReleaseAlreadyCommitted() {
+        // 关单赢竞态：release 的 decrement 落空但 dedup 行已提交，
+        // 预扣事件到达时必须自行对冲（increment + decrement），reserved 归零
+        when(mapper.incrementReserved(1L, 5)).thenReturn(1);
+        when(mapper.decrementReserved(1L, 5)).thenReturn(1);
+        dedup.tryInsert("stock-release", "101");
+
+        assertThat(service.applyReservedEvent("msg-3", 101L, 1L, 5)).isTrue();
+
+        verify(mapper).incrementReserved(1L, 5);
+        verify(mapper).decrementReserved(1L, 5);
     }
 
     @Test
     void applyReservedEventUnknownSkuThrowsNotFound() {
         when(mapper.incrementReserved(999L, 5)).thenReturn(0);
 
-        assertThatThrownBy(() -> service.applyReservedEvent("msg-2", 999L, 5))
+        assertThatThrownBy(() -> service.applyReservedEvent("msg-2", 102L, 999L, 5))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
     }
 
     @Test
     void applyReservedEventIsTransactional() throws NoSuchMethodException {
-        // the dedup row and the reserved update must share one transaction:
-        // a crash between them rolls the dedup back so redelivery re-applies.
-        // (rollback itself needs a real tx manager -> covered by the live
-        // smoke chain; here we pin the contract)
+        // 去重行与 reserved 更新必须在同一事务：
+        // 两者之间崩溃会回滚去重行，重投递便会重新应用。
+        // （回滚本身需要真实的 tx manager -> 由线上冒烟链覆盖；
+        // 这里只固定契约）
         assertThat(StockService.class
-                .getMethod("applyReservedEvent", String.class, long.class, int.class)
+                .getMethod("applyReservedEvent", String.class, long.class, long.class, int.class)
                 .getAnnotation(org.springframework.transaction.annotation.Transactional.class))
                 .isNotNull();
     }

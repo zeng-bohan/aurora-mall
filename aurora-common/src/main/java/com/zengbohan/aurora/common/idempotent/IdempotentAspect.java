@@ -44,15 +44,16 @@ public class IdempotentAspect {
                 RedisIdempotentStore store = require(redisStores,
                         "RedisIdempotentStore (needs redis on the classpath) for @Idempotent(REDIS)");
                 String fullKey = bizType + ":" + key;
-                if (!store.tryAcquire(fullKey, idempotent.ttlSeconds())) {
+                String token = store.tryAcquire(fullKey, idempotent.ttlSeconds());
+                if (token == null) {
                     throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
                 }
                 try {
                     yield pjp.proceed();
                 } catch (Throwable failure) {
-                    // the call did not succeed, so the guard must not block the
-                    // retry: release the key before surfacing the failure
-                    store.release(fullKey);
+                    // 本次调用没有成功，守卫不能挡住重试：按 token 做 CAS 释放，
+                    // 这样慢的首次尝试不会删掉后来投递重新获取的守卫
+                    store.release(fullKey, token);
                     throw failure;
                 }
             }
@@ -65,11 +66,9 @@ public class IdempotentAspect {
                 try {
                     yield pjp.proceed();
                 } catch (Throwable failure) {
-                    // symmetric with the REDIS branch: a failed call must not
-                    // leave the guard behind, or redelivery gets skipped and
-                    // the message is silently lost. (Inside a caller-owned
-                    // transaction the rollback already removed the row; this
-                    // covers the bare-annotation case.)
+                    // 与 REDIS 分支对称：调用失败不能留下守卫，
+                    // 否则重投递会被跳过、消息被静默丢弃。（在调用方自有事务里，
+                    // 回滚已经删掉了该行；这里覆盖的是裸注解场景。）
                     store.remove(bizType, key);
                     throw failure;
                 }

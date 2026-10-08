@@ -36,7 +36,7 @@ class IdempotentAspectTest {
         calls = new AtomicInteger();
     }
 
-    /** Minimal ObjectProvider stand-in returning a single available bean. */
+    // 最小化的 ObjectProvider 替身，返回单个可用 Bean。
     private static class TestProvider<T> implements org.springframework.beans.factory.ObjectProvider<T> {
         private final T bean;
 
@@ -66,20 +66,27 @@ class IdempotentAspectTest {
     }
 
     private static class FakeRedis implements RedisIdempotentStore {
-        private final Set<String> keys = new HashSet<>();
         private String lastKey;
         private long lastTtl;
 
+        private final java.util.Map<String, String> tokens = new java.util.HashMap<>();
+
         @Override
-        public boolean tryAcquire(String key, long ttlSeconds) {
+        public String tryAcquire(String key, long ttlSeconds) {
             lastKey = key;
             lastTtl = ttlSeconds;
-            return keys.add(key);
+            if (tokens.containsKey(key)) {
+                return null;
+            }
+            tokens.put(key, key + "-token");
+            return key + "-token";
         }
 
         @Override
-        public void release(String key) {
-            keys.remove(key);
+        public void release(String key, String token) {
+            if (token != null && token.equals(tokens.get(key))) {
+                tokens.remove(key);
+            }
         }
     }
 
@@ -95,9 +102,14 @@ class IdempotentAspectTest {
         public void remove(String bizType, String bizKey) {
             rows.remove(bizType + ":" + bizKey);
         }
+
+        @Override
+        public boolean exists(String bizType, String bizKey) {
+            return rows.contains(bizType + ":" + bizKey);
+        }
     }
 
-    /** Target methods the aspect is reflected against. */
+    // 切面反射的目标方法。
     @SuppressWarnings("unused")
     static class Targets {
         @Idempotent(strategy = Strategy.REDIS, key = "#orderId", ttlSeconds = 77)
@@ -123,7 +135,7 @@ class IdempotentAspectTest {
                 return "result";
             });
         } catch (Throwable impossible) {
-            // stubbing a mock: proceed() never actually throws
+            // 打桩 mock：proceed() 实际不会抛异常
         }
         return pjp;
     }
@@ -160,7 +172,7 @@ class IdempotentAspectTest {
         assertThatThrownBy(() -> aspect.guard(failing, annotated(Strategy.REDIS, "#orderId", 77)))
                 .isInstanceOf(IllegalStateException.class);
 
-        // the same request id must pass on retry after the failure
+        // 失败后重试时，同一个请求 id 必须能够通过
         ProceedingJoinPoint retry = joinPoint("placeOrder", "order-1");
         assertThat(aspect.guard(retry, annotated(Strategy.REDIS, "#orderId", 77))).isEqualTo("result");
     }
@@ -210,7 +222,7 @@ class IdempotentAspectTest {
                 .hasMessageContaining("RedisIdempotentStore");
     }
 
-    // mock(Idempotent.class) stubbing helper with explicit values
+    // 用显式取值为 mock(Idempotent.class) 打桩的助手
     private Idempotent annotated(Strategy strategy, String key, long ttl) {
         return annotated(strategy, "", key, ttl);
     }
