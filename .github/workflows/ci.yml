@@ -29,7 +29,7 @@ jobs:
 
       # 复用测试 job 的构建产物：docker-build 不再重复一次全量 package
       - name: Upload service jars
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: service-jars
           path: aurora-*/target/*.jar
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Download service jars
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: service-jars
           path: jars
