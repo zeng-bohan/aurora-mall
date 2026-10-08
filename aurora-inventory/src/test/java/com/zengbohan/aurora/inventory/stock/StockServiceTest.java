@@ -73,7 +73,8 @@ class StockServiceTest {
     }
 
     private void luaReserveReturns(long value) {
-        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString())).thenReturn(value);
+        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString(), anyString()))
+                .thenReturn(value);
     }
 
     private ProductStock row(long skuId, int available, int reserved) {
@@ -88,17 +89,30 @@ class StockServiceTest {
     void reserveSuccessPassesSilently() {
         luaReserveReturns(98L);
 
-        service.reserve(1L, 2);
+        service.reserve(1001L, 1L, 2);
 
         verify(redis).execute(Mockito.same(lua.reserve),
-                Mockito.eq(List.of(StockLuaScripts.key(1L))), Mockito.eq("2"));
+                Mockito.eq(List.of(StockLuaScripts.key(1L), StockLuaScripts.reserveGuardKey(1001L))),
+                Mockito.eq("2"), Mockito.eq(StockLuaScripts.RESERVE_GUARD_TTL_SECONDS));
+    }
+
+    @Test
+    void replayedReserveForSameOrderIsIdempotentNoOp() {
+        // 同一订单的重放：脚本返回 -3（守卫已存在），既不重复扣减也不报错
+        luaReserveReturns(-3L);
+
+        service.reserve(1001L, 1L, 2);
+
+        // 只调用一次脚本，且没有走 rebuild 重试
+        verify(redis, Mockito.times(1)).execute(Mockito.same(lua.reserve),
+                anyList(), anyString(), anyString());
     }
 
     @Test
     void reserveInsufficientMapsToInventoryInsufficient() {
         luaReserveReturns(-2L);
 
-        assertThatThrownBy(() -> service.reserve(1L, 2))
+        assertThatThrownBy(() -> service.reserve(1001L, 1L, 2))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.INVENTORY_INSUFFICIENT.getCode());
     }
@@ -107,11 +121,11 @@ class StockServiceTest {
     void reserveMissingKeyRebuildsFromDbViewAndRetries() {
         when(mapper.selectById(1L)).thenReturn(row(1L, 100, 20));
         // 第一次尝试：key 缺失（-1）；重建后重试成功（98）
-        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString()))
+        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString(), anyString()))
                 .thenReturn(-1L)
                 .thenReturn(98L);
 
-        service.reserve(1L, 2);
+        service.reserve(1001L, 1L, 2);
 
         verify(valueOps).setIfAbsent(StockLuaScripts.key(1L), "80");
     }
@@ -119,18 +133,18 @@ class StockServiceTest {
     @Test
     void reserveUnknownSkuAfterRebuildMapsToNotFound() {
         when(mapper.selectById(999L)).thenReturn(null);
-        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString())).thenReturn(-1L);
+        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString(), anyString())).thenReturn(-1L);
 
-        assertThatThrownBy(() -> service.reserve(999L, 2))
+        assertThatThrownBy(() -> service.reserve(1002L, 999L, 2))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
     }
 
     @Test
     void nullLuaResultMapsToSystemError() {
-        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString())).thenReturn(null);
+        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString(), anyString())).thenReturn(null);
 
-        assertThatThrownBy(() -> service.reserve(1L, 2))
+        assertThatThrownBy(() -> service.reserve(1003L, 1L, 2))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.SYSTEM_ERROR.getCode());
     }
@@ -138,12 +152,12 @@ class StockServiceTest {
     @Test
     void secondReserveMissAfterRebuildMapsToSystemErrorNotSilentSuccess() {
         // rebuild 后二次 MISS：绝不能静默当作预扣成功
-        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString()))
+        when(redis.execute(Mockito.same(lua.reserve), anyList(), anyString(), anyString()))
                 .thenReturn(-1L)
                 .thenReturn(-1L);
         when(mapper.selectById(1L)).thenReturn(row(1L, 100, 0));
 
-        assertThatThrownBy(() -> service.reserve(1L, 2))
+        assertThatThrownBy(() -> service.reserve(1004L, 1L, 2))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.SYSTEM_ERROR.getCode());
     }

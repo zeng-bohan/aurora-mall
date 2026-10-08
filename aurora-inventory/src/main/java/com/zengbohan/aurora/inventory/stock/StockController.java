@@ -24,6 +24,10 @@ public class StockController {
     public record ReleaseRequest(@Min(1) long orderId, @Min(0) int quantity) {
     }
 
+    // 预扣请求：orderId 驱动库存侧幂等（重试/重投递不重复扣减）。
+    public record ReserveRequest(@Min(1) long orderId, @Min(0) int quantity) {
+    }
+
     private final StockService stockService;
 
     public StockController(StockService stockService) {
@@ -38,8 +42,8 @@ public class StockController {
     }
 
     @PostMapping("/{skuId}/reserve")
-    public Result<Void> reserve(@PathVariable long skuId, @Valid @RequestBody StockRequest request) {
-        stockService.reserve(skuId, request.quantity());
+    public Result<Void> reserve(@PathVariable long skuId, @Valid @RequestBody ReserveRequest request) {
+        stockService.reserve(request.orderId(), skuId, request.quantity());
         return Result.ok();
     }
 

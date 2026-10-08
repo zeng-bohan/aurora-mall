@@ -11,6 +11,9 @@ public class StockLuaScripts {
     // 释放标记 TTL：7 天，覆盖关单补偿的所有重试窗口。
     public static final String RELEASE_MARKER_TTL_SECONDS = "604800";
 
+    // 预扣守卫 TTL：同样 7 天，覆盖同一订单的重试/重投递/响应丢失后的重放窗口。
+    public static final String RESERVE_GUARD_TTL_SECONDS = "604800";
+
     public final DefaultRedisScript<Long> reserve;
     public final DefaultRedisScript<Long> rollback;
 
@@ -30,5 +33,10 @@ public class StockLuaScripts {
     // 回滚恰好一次的标记 key（KEYS[1] of rollback script）。
     public static String releasedMarkerKey(long orderId) {
         return "aurora:stock:released:" + orderId;
+    }
+
+    // 预扣恰好一次的守卫 key（KEYS[2] of reserve script）：同一订单的重复预扣被挡在扣减之前。
+    public static String reserveGuardKey(long orderId) {
+        return "aurora:stock:reserve-guard:" + orderId;
     }
 }

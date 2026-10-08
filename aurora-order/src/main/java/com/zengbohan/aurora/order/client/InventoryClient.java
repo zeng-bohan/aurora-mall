@@ -13,12 +13,16 @@ public interface InventoryClient {
     record StockRequest(int quantity) {
     }
 
+    // 预扣请求带 orderId：库存侧按订单幂等，重试/重投递不会重复扣减。
+    record ReserveRequest(long orderId, int quantity) {
+    }
+
     // 释放类请求带 orderId：库存侧按订单幂等（补偿可安全重入）。
     record ReleaseRequest(long orderId, int quantity) {
     }
 
     @PostMapping("/stocks/{skuId}/reserve")
-    Result<Void> reserve(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
+    Result<Void> reserve(@PathVariable("skuId") long skuId, @RequestBody ReserveRequest request);
 
     @PostMapping("/stocks/{skuId}/rollback")
     Result<Void> rollback(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);

@@ -105,10 +105,11 @@ public class OrderService {
         ProductSnapshot product = productGuard.load(request.skuId());
         BigDecimal total = product.price().multiply(BigDecimal.valueOf(request.quantity()));
 
-        // 第一步：Redis 预扣。失败即返回，无需补偿。
-        reserveStock(request.skuId(), request.quantity());
-
+        // 先生成 orderId：预扣按订单幂等，超时/重试/重放都不会重复扣减
         long orderId = idGenerator.nextId();
+        // 第一步：Redis 预扣。失败即返回，无需补偿。
+        reserveStock(orderId, request.skuId(), request.quantity());
+
         try {
             transactionTemplate.executeWithoutResult(status -> {
                 Order order = new Order();
@@ -212,9 +213,10 @@ public class OrderService {
         return newlyClosed;
     }
 
-    private void reserveStock(long skuId, int quantity) {
-        Result<Void> result = RemoteCall.invoke("库存", "sku " + skuId + " x" + quantity,
-                () -> inventoryClient.reserve(skuId, new InventoryClient.StockRequest(quantity)));
+    private void reserveStock(long orderId, long skuId, int quantity) {
+        Result<Void> result = RemoteCall.invoke("库存",
+                "order " + orderId + " sku " + skuId + " x" + quantity,
+                () -> inventoryClient.reserve(skuId, new InventoryClient.ReserveRequest(orderId, quantity)));
         if (result.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {
             throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
         }

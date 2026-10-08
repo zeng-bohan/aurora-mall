@@ -8,6 +8,7 @@ import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -21,7 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 库存 Lua 脚本对着真实的 redis 执行（本机开发环境是 localhost:16379）。
  * 无 redis 可达时自动跳过，因此没有 redis 的 CI runner 依然保持绿色——
  * 单元测试 mock 了 execute()，只能证明映射关系，证明不了本测试存在的意义
- * 所在的脚本语义：并发扣减不会超卖、回滚能精确还原。
+ * 所在的脚本语义：并发扣减不会超卖、回滚能精确还原、同一订单重复预扣只扣一次。
  *
  * 本地运行：docker compose up -d redis
  */
@@ -33,6 +34,9 @@ class StockLuaIntegrationTest {
     private StringRedisTemplate redis;
     private StockLuaScripts scripts;
     private String key;
+    /** 本测试创建过的预扣守卫 key，用于 tearDown 清理（守卫 TTL 是 7 天）。 */
+    private final List<String> guards = new ArrayList<>();
+    private final AtomicInteger guardSeq = new AtomicInteger();
 
     private static boolean redisReachable() {
         try (java.net.Socket socket = new java.net.Socket()) {
@@ -60,11 +64,16 @@ class StockLuaIntegrationTest {
     void tearDown() {
         if (redis != null) {
             redis.delete(key);
+            guards.forEach(redis::delete);
         }
     }
 
+    /** 每次调用用一个新的订单守卫（等价于「另一个订单」）。 */
     private Long reserve(String quantity) {
-        return redis.execute(scripts.reserve, List.of(key), quantity);
+        String guard = key + ":guard:" + guardSeq.incrementAndGet();
+        guards.add(guard);
+        return redis.execute(scripts.reserve, List.of(key, guard), quantity,
+                StockLuaScripts.RESERVE_GUARD_TTL_SECONDS);
     }
 
     @Test
@@ -76,6 +85,36 @@ class StockLuaIntegrationTest {
         assertThat(reserve("7")).isEqualTo(0L);      // exact fit allowed
         assertThat(reserve("1")).isEqualTo(-2L);     // no negative stock
         assertThat(redis.opsForValue().get(key)).isEqualTo("0");
+    }
+
+    @Test
+    void replayedReserveForSameOrderDeductsOnlyOnce() {
+        redis.opsForValue().set(key, "10");
+        String guard = key + ":replay";
+        guards.add(guard);
+
+        assertThat(redis.execute(scripts.reserve, List.of(key, guard), "3",
+                StockLuaScripts.RESERVE_GUARD_TTL_SECONDS)).isEqualTo(7L);
+        // 同一订单重放：守卫挡住，库存不再变化，也不报失败
+        assertThat(redis.execute(scripts.reserve, List.of(key, guard), "3",
+                StockLuaScripts.RESERVE_GUARD_TTL_SECONDS)).isEqualTo(-3L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("7");
+    }
+
+    @Test
+    void failedReserveReleasesGuardSoLegitimateRetryProceeds() {
+        redis.opsForValue().set(key, "1");
+        String guard = key + ":retry";
+        guards.add(guard);
+
+        // 库存不足：本次没有扣减，守卫必须被回滚
+        assertThat(redis.execute(scripts.reserve, List.of(key, guard), "5",
+                StockLuaScripts.RESERVE_GUARD_TTL_SECONDS)).isEqualTo(-2L);
+        // 补货后同一订单重试：守卫已释放，扣减正常发生
+        redis.opsForValue().set(key, "9");
+        assertThat(redis.execute(scripts.reserve, List.of(key, guard), "5",
+                StockLuaScripts.RESERVE_GUARD_TTL_SECONDS)).isEqualTo(4L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("4");
     }
 
     @Test

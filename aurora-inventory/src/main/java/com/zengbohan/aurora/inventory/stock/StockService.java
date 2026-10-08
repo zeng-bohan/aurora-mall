@@ -24,6 +24,7 @@ public class StockService {
     private static final Logger log = LoggerFactory.getLogger(StockService.class);
     private static final long MISSING_KEY = -1L;
     private static final long INSUFFICIENT = -2L;
+    private static final long ALREADY_RESERVED = -3L;
 
     private final StringRedisTemplate redis;
     private final StockLuaScripts scripts;
@@ -63,14 +64,23 @@ public class StockService {
         redis.opsForValue().set(StockLuaScripts.key(skuId), String.valueOf(quantity));
     }
 
-    public void reserve(long skuId, int quantity) {
+    /**
+     * 按订单幂等的预扣：同一 orderId 的重试/重投递/响应丢失后的重放都不会重复扣减
+     * （守卫由脚本原子创建，失败路径回滚守卫，后续合法重试照常进行）。
+     */
+    public void reserve(long orderId, long skuId, int quantity) {
         if (quantity < 1) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "预扣数量必须大于 0");
         }
-        Long result = redis.execute(scripts.reserve, List.of(StockLuaScripts.key(skuId)), String.valueOf(quantity));
+        Long result = reserveOnce(orderId, skuId, quantity);
         if (result != null && result == MISSING_KEY) {
             rebuildKeyFromDb(skuId);
-            result = redis.execute(scripts.reserve, List.of(StockLuaScripts.key(skuId)), String.valueOf(quantity));
+            result = reserveOnce(orderId, skuId, quantity);
+        }
+        if (result != null && result == ALREADY_RESERVED) {
+            // 幂等重放：本次没有扣减，也不算失败
+            log.info("reserve for order {} skipped (already reserved)", orderId);
+            return;
         }
         // 二次仍 MISS（SETNX 竞态等极端情况）绝不能静默当作预扣成功——
         // redis 实际没扣而订单继续走，超卖从这里开始
@@ -80,6 +90,12 @@ public class StockService {
         if (result == INSUFFICIENT) {
             throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
         }
+    }
+
+    private Long reserveOnce(long orderId, long skuId, int quantity) {
+        return redis.execute(scripts.reserve,
+                List.of(StockLuaScripts.key(skuId), StockLuaScripts.reserveGuardKey(orderId)),
+                String.valueOf(quantity), StockLuaScripts.RESERVE_GUARD_TTL_SECONDS);
     }
 
     /**
