@@ -7,9 +7,9 @@
 [![CI](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml/badge.svg)](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
-![Tests](https://img.shields.io/badge/tests-514%20green-brightgreen)
+![Tests](https://img.shields.io/badge/tests-276%20green-brightgreen)
 
-**当前状态**：M0-M3 已交付（骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC），M4（可观测性 + 压测）进行中。
+**当前状态**：M0-M4 已交付（骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测），M5（秒杀、优惠券、分库试点）未开始。
 
 </div>
 
@@ -76,7 +76,7 @@ flowchart LR
 - **缓存三防**：Cache Aside + 空值缓存 + 手写布隆过滤器（线程安全 + 定期重播种）+ 逻辑过期/互斥重建。
 - **过载保护**：网关 Redis 分布式滑动窗口限流（Nacos 动态阈值）+ 逐接口熔断器（失败率/慢调用双触发）。
 - **安全模型**：手写 JWT（黑名单注销、refresh 一次一换、登出会话级失效）、内部密钥 + 内部路径守卫 + 用户身份守卫、回调渠道 HMAC 签名、常量时间比较。
-- **验收文化**：514 例测试 + 三级 smoke 接缝 + 真 Netty/真 Redis 集成测试（无环境自动跳过）。
+- **验收文化**：276 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis 集成测试（无环境自动跳过）。
 
 ## 🚀 快速开始
 
@@ -168,10 +168,27 @@ curl -s -X POST http://localhost:8000/api/order/orders \
 
 > ⚠️ **已知陷阱**：① 8080/3306/6379 在本机被其他项目占用，宿主端口做了偏移（服务间通信走标准端口）；② MySQL `aurora123` 为 **dev-only** 默认值，生产凭据走 nacos + 部署注入；③ 修改 `import.sh` 后需**重跑**才能生效（nacos 不感知文件变化）；④ SkyWalking agent 二进制不入 git，获取见 [tools/README.md](tools/README.md)。
 
+## 🔭 可观测性与压测
+
+可观测栈走 provisioning（不手点控制台），一条命令活体验证：
+
+```bash
+bash docker/smoke-observability.sh   # 3 断言：Prometheus targets 全 UP / Loki 按 traceId 命中 / OAP 有 trace
+```
+
+| 组件 | 已交付内容 |
+| --- | --- |
+| Grafana | provisioning 自动装配：Prometheus + Loki 数据源、大盘「aurora-mall 全链路总览」、告警规则「order 服务 5xx 比例过高」（2 分钟 5xx 比例 >5%，持续 1 分钟）→ webhook 接点（本地 `docker/webhook-receiver.py` 可收验） |
+| Prometheus | 7 个服务的 `/actuator/prometheus` 抓取目标全部 UP |
+| Loki | loki4j 直推日志，可按 traceId 跨服务检索一次请求的全部日志 |
+| SkyWalking | agent 挂进 7 个服务，OAP 可查到真实链路 |
+
+压测（M4 T6）：同一购物车金路径、同参数下 Feign 与手写 RPC 的阶梯对照（10/50/100 线程），报告见 [docs/m4-load-test.md](docs/m4-load-test.md)，计划文件 `docker/jmeter/aurora-load.jmx` 可原样重放。结论摘要：默认 Feign 在 50 线程起出现失败、100 线程 28.5% 请求失败（客户端临时端口耗尽），手写 RPC 100 线程零错误、吞吐约 2.5×。
+
 ## 🧪 测试
 
 ```bash
-mvn test                          # 全模块 514 例；外部依赖类集成测试无环境自动跳过
+mvn test                          # 全模块测试；外部依赖类集成测试无环境自动跳过
 mvn -pl aurora-rpc test           # 手写 RPC：协议/传输/注册发现（真 Netty，零外部依赖）
 mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对照基准
 ```
@@ -186,7 +203,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 | M1 | 用户 / 商品 / 购物车（JWT、缓存三防） | ✅ |
 | M2 | 订单 / 库存 / 支付（事务消息、Seata 对照、幂等、ID 生成器） | ✅ |
 | M3 | 手写组件：限流熔断 + RPC + 端口切换 | ✅ |
-| M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | 🚧 进行中 |
+| M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | ✅ |
 | M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 未开始 |
 | M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
 | M7 | 部署上线（服务器 + ICP 备案） | 未开始 |
@@ -195,6 +212,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 
 - [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) — MQ 最终一致 vs Seata AT 对照实验
 - [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) — OpenFeign vs 手写 RPC 对照（等价性 + 微基准 + 边界）
+- [docs/m4-load-test.md](docs/m4-load-test.md) — 同链路压测对照（Feign vs 手写 RPC，阶梯 10/50/100 线程）
 - [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件设计取舍与实测数据
 
 ## 🤝 协作
