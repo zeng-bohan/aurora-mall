@@ -7,7 +7,7 @@ import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.cloud.gateway.support.ServerWebExchangeUtils;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
-import org.springframework.core.io.buffer.DefaultDataBufferFactory;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -65,7 +65,7 @@ public class GatewayRateLimitFilter implements GlobalFilter, Ordered {
         return limiter.tryAcquire(key, rule.getLimit(), Duration.ofSeconds(rule.getWindowSeconds()))
                 .flatMap(allowed -> allowed
                         ? chain.filter(exchange)
-                        : reject(exchange))
+                        : reject(exchange, rule))
                 // fail-open：Redis 故障放行，不把限流器故障放大成全站不可用
                 .onErrorResume(e -> {
                     log.warn("rate limiter degraded (redis unavailable), allowing request for route {}: {}",
@@ -74,10 +74,12 @@ public class GatewayRateLimitFilter implements GlobalFilter, Ordered {
                 });
     }
 
-    private Mono<Void> reject(ServerWebExchange exchange) {
+    private Mono<Void> reject(ServerWebExchange exchange, RateLimitProperties.Rule rule) {
         var response = exchange.getResponse();
         response.setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        // 标准语义：告知客户端多久后可重试（等于本路由的窗口时长，窗口滑过后配额自然恢复）
+        response.getHeaders().set(HttpHeaders.RETRY_AFTER, String.valueOf(rule.getWindowSeconds()));
         byte[] body = TOO_MANY_REQUESTS_BODY.getBytes(StandardCharsets.UTF_8);
         DataBuffer buffer = response.bufferFactory().wrap(body);
         return response.writeWith(Mono.just(buffer));

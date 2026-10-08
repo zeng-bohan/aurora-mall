@@ -103,6 +103,9 @@ class GatewayRateLimitFilterTest {
         assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
         String body = exchange.getResponse().getBodyAsString().block();
         assertThat(body).contains("42900");
+        assertThat(exchange.getResponse().getHeaders().getFirst("Retry-After"))
+                .as("429 必须告知重试时机")
+                .isEqualTo("1");
     }
 
     @Test
