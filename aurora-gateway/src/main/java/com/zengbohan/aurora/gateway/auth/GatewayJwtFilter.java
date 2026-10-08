@@ -1,6 +1,8 @@
 package com.zengbohan.aurora.gateway.auth;
 
 import com.zengbohan.aurora.common.auth.JwtCodec;
+import com.zengbohan.aurora.common.exception.ErrorCode;
+import com.zengbohan.aurora.common.result.Result;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -21,17 +23,16 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 /**
- * Gateway-side JWT gate (ADR-0006): whitelisted paths pass through, everything
- * else must carry a valid, non-revoked access token; downstream services get
- * the parsed identity plus the internal-secret header instead of the token.
+ * 网关侧 JWT 门禁：白名单路径直接放行，其余请求必须携带有效且未被撤销的
+ * access token；下游服务拿到的是解析后的身份信息加内部密钥头，而不是 token。
  */
 @Component
 public class GatewayJwtFilter implements GlobalFilter, Ordered {
 
     private static final List<String> PUBLIC_POST = List.of(
             "/api/user/register", "/api/user/login", "/api/user/refresh",
-            // "third-party" payment callback: authenticated by channel signature in
-            // production, not by a user token (mock channel: reachable for replay)
+            // "第三方"支付回调：生产环境由渠道签名认证，而非用户 token
+            //（mock 渠道：保持可达以便重放）
             "/api/payment/payments/mock-callback");
     private static final String BEARER = "Bearer ";
     private static final String USER_ID_HEADER = "X-User-Id";
@@ -57,8 +58,8 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         ServerHttpRequest request = exchange.getRequest();
         if (isPublic(request)) {
-            // public paths skip auth but still get the internal secret: services
-            // reject any request that did not come through the gateway.
+            // 公开路径跳过鉴权，但仍注入内部密钥：
+            // 服务端会拒绝任何未经网关的请求。
             // 同时清洗客户端自带的身份头——公开端点现在不读它们，但一旦读就是
             // 即插即用的身份伪造（X-Internal-Secret 用 set 覆盖，无此问题）
             return chain.filter(exchange.mutate()
@@ -88,9 +89,8 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
                     if (Boolean.TRUE.equals(revoked)) {
                         return unauthorized(exchange);
                     }
-                    // Authorization is forwarded untouched: logout needs the raw
-                    // token's jti, and downstream trust is established by the
-                    // internal-secret header instead
+                    // 原样转发 Authorization：登出需要原始 token 的 jti，
+                    // 下游的信任改由内部密钥头建立
                     return chain.filter(exchange.mutate()
                             .request(r -> r.headers(h -> {
                                 h.set(USER_ID_HEADER, claims.subject());
@@ -103,14 +103,14 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
 
     private boolean isPublic(ServerHttpRequest request) {
         String path = request.getURI().getPath();
-        // health stays open so the smoke seam can probe through the gateway
+        // health 保持开放，让冒烟缝可以经网关探活
         if (path.endsWith("/actuator/health")) {
             return true;
         }
         if (PUBLIC_POST.contains(path)) {
             return HttpMethod.POST.equals(request.getMethod());
         }
-        // guest-read products, but admin views still need a token + ADMIN role
+        // 商品读接口对游客开放，但管理端视图仍需 token + ADMIN 角色
         return HttpMethod.GET.equals(request.getMethod())
                 && path.startsWith("/api/product/")
                 && !path.contains("/admin");
@@ -122,11 +122,11 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         byte[] body;
         try {
-            body = mapper.writeValueAsBytes(
-                    com.zengbohan.aurora.common.result.Result.fail(
-                            com.zengbohan.aurora.common.exception.ErrorCode.UNAUTHORIZED));
+            body = mapper.writeValueAsBytes(Result.fail(ErrorCode.UNAUTHORIZED));
         } catch (Exception e) {
-            body = "{\"code\":40100}".getBytes(StandardCharsets.UTF_8);
+            // 序列化失败的兜底：硬编码码值必须与 ErrorCode.UNAUTHORIZED 保持一致
+            body = ("{\"code\":" + ErrorCode.UNAUTHORIZED.getCode() + "}")
+                    .getBytes(StandardCharsets.UTF_8);
         }
         return response.writeWith(Mono.just(response.bufferFactory().wrap(body)));
     }

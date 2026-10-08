@@ -3,6 +3,7 @@ package com.zengbohan.aurora.order.service;
 import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
+import com.zengbohan.aurora.common.result.RemoteCall;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
 import com.zengbohan.aurora.order.client.InventoryClient;
@@ -11,23 +12,18 @@ import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
 import com.zengbohan.aurora.order.mapper.OrderMapper;
 import org.apache.seata.spring.annotation.GlobalTransactional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 
 /**
- * Seata AT comparison scenario (aurora.tx.mode=at): one global transaction
- * spans the inventory DB reservation and the order row. No redis, no MQ -
- * the contrast against the main path is exactly the point: both side effects
- * commit locally and undo_log drives the rollback when anything fails.
- * Close-timeout for AT orders is handled by the scan job (releaseDb branch).
+ * Seata AT 对比场景（aurora.tx.mode=at）：一个全局事务跨越库存 DB 预占与
+ * 订单行。不用 redis、不用 MQ——与主链路的对照正是重点：两侧效果各自本地提交，
+ * 任一失败时由 undo_log 驱动回滚。AT 订单的关单超时由扫描 job 处理
+ *（releaseDb 分支）。
  */
 @Service
 public class AtOrderPlacer {
-
-    private static final Logger log = LoggerFactory.getLogger(AtOrderPlacer.class);
 
     private final SegmentIdGenerator idGenerator;
     private final ProductGuard productGuard;
@@ -48,7 +44,7 @@ public class AtOrderPlacer {
                 productGuard.load(request.skuId());
         BigDecimal total = product.price().multiply(BigDecimal.valueOf(request.quantity()));
 
-        // branch 1: order row - committed locally, undone by seata on failure
+        // 分支 1：订单行——本地提交，失败时由 seata 撤销
         long orderId = idGenerator.nextId();
         Order order = new Order();
         order.setId(orderId);
@@ -57,26 +53,19 @@ public class AtOrderPlacer {
         order.setQuantity(request.quantity());
         order.setTotalAmount(total);
         order.setStatus(Order.STATUS_CREATED);
-        order.setTxMode("at");
+        order.setTxMode(Order.TX_MODE_AT);
         orderMapper.insert(order);
 
-        // branch 2: inventory db reservation (undo_log protected). A failure
-        // here rolls the committed order row back through branch 1's undo_log
-        // - the exact behaviour this comparison scenario exists to show.
-        Result<Void> reserve;
-        try {
-            reserve = inventoryClient.reserveDb(request.skuId(), new InventoryClient.StockRequest(request.quantity()));
-        } catch (RuntimeException e) {
-            log.warn("inventory reserve-db call failed for sku {} x{}",
-                    request.skuId(), request.quantity(), e);
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务不可用");
-        }
-        if (reserve != null && reserve.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {
+        // 分支 2：库存 DB 预占（受 undo_log 保护）。此处失败会通过分支 1 的
+        // undo_log 把已提交的订单行回滚——这正是该对比场景要展示的行为。
+        Result<Void> reserve = RemoteCall.invoke("库存",
+                "sku " + request.skuId() + " x" + request.quantity() + " (at)",
+                () -> inventoryClient.reserveDb(request.skuId(),
+                        new InventoryClient.StockRequest(request.quantity())));
+        if (reserve.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {
             throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
         }
-        if (reserve == null || reserve.code() != ErrorCode.SUCCESS.getCode()) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务不可用");
-        }
+        RemoteCall.requireSuccess(reserve, "库存");
         return orderId;
     }
 }

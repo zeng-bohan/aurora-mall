@@ -34,7 +34,7 @@ public class UserService {
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
     private final long accessTtlSeconds;
     private final long refreshTtlSeconds;
-    /** 不存在用户时做一次等价 bcrypt 比对，抹平响应时间差。 */
+    // 不存在用户时做一次等价 bcrypt 比对，抹平响应时间差。
     private static final String DUMMY_BCRYPT;
 
     static {
@@ -62,12 +62,12 @@ public class UserService {
         user.setPassword(encoder.encode(request.password()));
         user.setRole(ROLE_USER);
         user.setNickname(request.nickname());
-        user.setStatus(1);
+        user.setStatus(User.STATUS_ENABLED);
         try {
             userMapper.insert(user);
         } catch (DuplicateKeyException e) {
-            // two concurrent registrations pass the pre-check; the unique
-            // index is the race authority
+            // 两个并发注册都能通过前置检查；由唯一
+            // 索引来裁决竞态
             throw new BusinessException(ErrorCode.PARAM_ERROR, "用户名已存在");
         }
         return user.getId();
@@ -81,7 +81,7 @@ public class UserService {
             encoder.matches(request.password(), DUMMY_BCRYPT);
             throw new BusinessException(ErrorCode.PARAM_ERROR, "用户名或密码错误");
         }
-        if (user.getStatus() == 0 || !encoder.matches(request.password(), user.getPassword())) {
+        if (user.getStatus() == User.STATUS_DISABLED || !encoder.matches(request.password(), user.getPassword())) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "用户名或密码错误");
         }
         return issueTokens(user);
@@ -109,7 +109,7 @@ public class UserService {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
         User user = userMapper.selectById(Long.valueOf(claims.subject()));
-        if (user == null || user.getStatus() == 0) {
+        if (user == null || user.getStatus() == User.STATUS_DISABLED) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
         // 轮换：旧 refresh 拉黑（剩余寿命），一次一换

@@ -8,4 +8,9 @@ import java.math.BigDecimal;
  */
 public record OrderSummary(long orderId, long userId, long skuId, int quantity,
         BigDecimal totalAmount, int status) {
+
+    // 订单状态三态（status 字段的取值契约，与 aurora-order 的 Order 实体及 DB 一致）。
+    public static final int STATUS_CREATED = 0;
+    public static final int STATUS_PAID = 1;
+    public static final int STATUS_CLOSED = 2;
 }

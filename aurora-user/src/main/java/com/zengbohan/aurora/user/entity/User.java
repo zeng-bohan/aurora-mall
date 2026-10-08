@@ -9,6 +9,10 @@ import java.time.LocalDateTime;
 @TableName("users")
 public class User {
 
+    // 账号状态：1 = 启用，0 = 禁用（登录/刷新时拒绝禁用账号）。
+    public static final int STATUS_ENABLED = 1;
+    public static final int STATUS_DISABLED = 0;
+
     @TableId(type = IdType.AUTO)
     private Long id;
     private String username;

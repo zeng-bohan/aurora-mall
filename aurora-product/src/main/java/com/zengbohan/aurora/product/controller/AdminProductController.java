@@ -1,6 +1,7 @@
 package com.zengbohan.aurora.product.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.product.entity.Sku;
 import com.zengbohan.aurora.product.service.ProductAdminService;
@@ -30,7 +31,7 @@ public class AdminProductController {
     private final ProductQueryService queryService;
 
     public AdminProductController(ProductAdminService adminService,
-                                  com.zengbohan.aurora.product.service.ProductQueryService queryService) {
+                                  ProductQueryService queryService) {
         this.adminService = adminService;
         this.queryService = queryService;
     }
@@ -40,8 +41,7 @@ public class AdminProductController {
                                 int stock) {
     }
 
-    /** Admin view includes off-shelf items, unlike the public list. */
-    /** Admin view includes off-shelf items, unlike the public list. */
+    // 管理端视图包含已下架商品，与公开列表不同。
     @GetMapping
     @RequireAdmin
     public Result<Page<Sku>> page(@RequestParam(defaultValue = "1") long current,
@@ -56,7 +56,7 @@ public class AdminProductController {
         sku.setTitle(request.title());
         sku.setPrice(request.price());
         sku.setStock(request.stock());
-        sku.setStatus(1);
+        sku.setStatus(ProductSnapshot.STATUS_ON_SALE);
         return Result.ok(adminService.create(sku));
     }
 
@@ -75,7 +75,7 @@ public class AdminProductController {
     @DeleteMapping("/{id}")
     @RequireAdmin
     public Result<Void> offShelf(@PathVariable long id) {
-        adminService.changeStatus(id, 0);
+        adminService.changeStatus(id, ProductSnapshot.STATUS_OFF_SHELF);
         return Result.ok();
     }
 }
