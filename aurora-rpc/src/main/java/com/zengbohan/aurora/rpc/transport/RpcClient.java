@@ -291,7 +291,10 @@ public class RpcClient {
 
         @Override
         public void channelInactive(ChannelHandlerContext ctx) {
-            channel = null;
+            // 只清自己这条连接：重连若已换上新的 channel，迟到的旧回调不得抹掉新引用
+            if (ctx.channel() == channel) {
+                channel = null;
+            }
             failAllPending(new RpcUnavailableException("connection lost"));
         }
 
