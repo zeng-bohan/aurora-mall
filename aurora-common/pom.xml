@@ -30,7 +30,7 @@
             <artifactId>spring-cloud-starter-openfeign</artifactId>
             <optional>true</optional>
         </dependency>
-        <!-- compile-time only: idempotent stores; auto-config lives in the services -->
+        <!-- 仅编译期依赖：幂等存储；auto-config 由各服务自行装配 -->
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-jdbc</artifactId>

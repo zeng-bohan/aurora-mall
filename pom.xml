@@ -35,7 +35,7 @@
 
     <properties>
         <java.version>21</java.version>
-        <!-- Matrix pinned against SCA 2025.0.x branch POM (SCA 2025.0.0.0 <-> Spring Cloud 2025.0.0 <-> Boot 3.5.0) -->
+        <!-- 依赖矩阵钉死在 SCA 2025.0.x 分支 POM 上（SCA 2025.0.0.0 <-> Spring Cloud 2025.0.0 <-> Boot 3.5.0） -->
         <spring-cloud.version>2025.0.0</spring-cloud.version>
         <spring-cloud-alibaba.version>2025.0.0.0</spring-cloud-alibaba.version>
         <mybatis-plus.version>3.5.12</mybatis-plus.version>

@@ -9,7 +9,7 @@ PASS=0
 FAIL=0
 STEP=0
 
-req() { # method path [token] [json-body] [extra-header]
+req() { # 方法 路径 [token] [请求体] [额外请求头]
   local method="$1" path="$2" token="${3:-}" body="${4:-}" extra="${5:-}"
   local args=(-sS -X "$method" -o- -w $'\n%{http_code}' -H 'Content-Type: application/json')
   [[ -n "$token" ]] && args+=(-H "Authorization: Bearer $token")
@@ -26,11 +26,11 @@ bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1 (status=$STATUS resp=${RESP:0:160})
 
 step() { STEP=$((STEP + 1)); echo "[$STEP] $1"; }
 
-assert_status() { # expected, [label]
+assert_status() { # 期望状态码, [标签]
   local label="${2:-http $1}"
   [[ "$STATUS" == "$1" ]] && ok "$label" || bad "$label (want HTTP $1)"
 }
-assert_body() { # fixed-string to grep, label
+assert_body() { # 待匹配的固定字符串, 标签
   grep -qF "$1" <<<"$RESP" && ok "$2" || bad "$2 (missing '$1')"
 }
 
@@ -146,18 +146,18 @@ assert_body "\"title\":\"$TITLE\"" "admin list includes the product"
 
 # ---- M2：交易链路 ----------------------------------------------------
 
-seed_stock() { # skuId quantity: reset the db row and drop the redis key so the
-               # 预占路径按 DB 视图重建
+seed_stock() { # skuId quantity：重置 db 行并删掉 redis key，
+               # 让预占路径按 DB 视图重建
   docker exec aurora-mysql mysql -uroot -p"${MYSQL_PASSWORD:-aurora123}" -e \
     "INSERT INTO aurora_inventory.product_stock (sku_id, available, reserved) VALUES ($1, $2, 0) ON DUPLICATE KEY UPDATE available=$2, reserved=0;" 2>/dev/null
   docker exec aurora-redis redis-cli DEL "aurora:stock:$1" > /dev/null
 }
 
-assert_eq() { # expected actual label
+assert_eq() { # 期望值 实际值 标签
   [[ "$1" == "$2" ]] && ok "$3" || bad "$3 (want '$1', got '$2')"
 }
 
-db_scalar() { # sql -> first cell
+db_scalar() { # sql -> 首个单元格
   docker exec aurora-mysql mysql -uroot -p"${MYSQL_PASSWORD:-aurora123}" -N -e "$1" 2>/dev/null | tr -d '\r'
 }
 
@@ -168,11 +168,11 @@ channel_secret() {
   curl -s "http://${NACOS_ADDR:-localhost:8848}/nacos/v1/cs/configs?dataId=aurora-payment.yml&group=DEFAULT_GROUP&tenant=dev"     | grep -oE 'channel-secret: [A-Za-z0-9-]+' | cut -d' ' -f2
 }
 
-channel_sign() { # orderId amount -> hex hmac
+channel_sign() { # orderId amount -> 十六进制 hmac
   printf '%s:%s' "$1" "$2" | openssl dgst -sha256 -hmac "$(channel_secret)" | awk '{print $NF}'
 }
 
-nacos_publish_gateway() { # limit windowSeconds ("0 0" = restore: no per-route limits)
+nacos_publish_gateway() { # limit windowSeconds（"0 0" = 还原：不设按路由限流）
   if [[ "$1" == "0" ]]; then
     local content="aurora:
   rate-limit:
@@ -190,7 +190,7 @@ nacos_publish_gateway() { # limit windowSeconds ("0 0" = restore: no per-route l
   curl -fs -X POST "http://${NACOS_ADDR:-localhost:8848}/nacos/v1/cs/configs"     --data-urlencode "dataId=aurora-gateway.yml"     --data-urlencode "group=DEFAULT_GROUP"     --data-urlencode "tenant=dev"     --data-urlencode "type=yml"     --data-urlencode "content=$content" > /dev/null
 }
 
-nacos_publish_order() { # delayLevel timeoutSeconds
+nacos_publish_order() { # 延迟级别 超时秒数
   local content="aurora:
   order:
     close-delay-level: $1
@@ -259,7 +259,7 @@ step "chain C: gateway rate limit via nacos, over-limit 429 then recovery"
 # 清空窗口内的残留成员，让计数从干净状态开始
 docker exec aurora-redis redis-cli DEL "aurora:rl:product" > /dev/null
 nacos_publish_gateway 2 10 && ok "nacos: product route limited to 2 req / 10s"
-sleep 3 # nacos config listener fires RefreshEvent; @ConfigurationProperties rebinds
+sleep 3 # nacos 配置监听触发 RefreshEvent；@ConfigurationProperties 重新绑定
 
 req GET "/api/product/products/1" "$TOKEN"; assert_status 200 "limited: first request passes"
 req GET "/api/product/products/1" "$TOKEN"; assert_status 200 "limited: second request passes"
@@ -267,7 +267,7 @@ req GET "/api/product/products/1" "$TOKEN"; assert_status 429 "third request is 
 assert_body '"code":42900' "rate limit carries business code 42900"
 
 nacos_publish_gateway 0 0 && ok "nacos: rate limit rule restored (no per-route limits)"
-sleep 6 # rebind latency: the previous rule must be gone before the recovery probe
+sleep 6 # 重绑定耗时：恢复探测前上一条规则必须已失效
 req GET "/api/product/products/1" "$TOKEN"; assert_status 200 "recovery: request passes after restore"
 
 if [[ $FAIL -eq 0 ]]; then

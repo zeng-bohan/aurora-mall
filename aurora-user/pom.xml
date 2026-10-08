@@ -67,7 +67,7 @@
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
         </dependency>
-        <!-- password hashing only; Spring Security's filter chain stays out -->
+        <!-- 只用来做密码哈希；有意不引入 Spring Security 的过滤器链 -->
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-crypto</artifactId>

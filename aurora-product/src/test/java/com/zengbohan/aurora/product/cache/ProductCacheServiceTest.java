@@ -168,7 +168,7 @@ class ProductCacheServiceTest {
         String key = "aurora:product:sku:1";
         assertThat(store.has(key)).isFalse();
 
-        Thread.sleep(700); // scheduler delay is 500ms
+        Thread.sleep(700); // 调度延迟是 500ms
         // 延迟的第二次删除也执行了（没有 key 复活）
         assertThat(store.has(key)).isFalse();
         scheduler.shutdownNow();

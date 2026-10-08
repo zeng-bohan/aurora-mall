@@ -67,7 +67,7 @@
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
-        <!-- PaginationInnerInterceptor moved here in mybatis-plus 3.5.9+ -->
+        <!-- mybatis-plus 3.5.9+ 起 PaginationInnerInterceptor 挪到了本模块 -->
         <dependency>
             <groupId>com.baomidou</groupId>
             <artifactId>mybatis-plus-jsqlparser</artifactId>

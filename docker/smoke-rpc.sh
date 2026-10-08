@@ -20,7 +20,7 @@ restore_feign() {
   restart_default_mode cart
 }
 
-req() { # method path token json-body
+req() { # 方法 路径 token 请求体
   local args=(-sS -X "$1" -H 'Content-Type: application/json')
   [[ -n "${3:-}" ]] && args+=(-H "Authorization: Bearer $3")
   [[ -n "${4:-}" ]] && args+=(--data "$4")
@@ -31,13 +31,13 @@ ok()   { PASS=$((PASS + 1)); echo "  ok   $1"; }
 bad()  { FAIL=$((FAIL + 1)); echo "  FAIL $1 (resp=${RESP:0:160})"; }
 assert_body() { grep -qF "$1" <<<"$RESP" && ok "$2" || bad "$2 (missing '$1')"; }
 
-start_service() { # name
+start_service() { # 服务名
   local name="$1"
   java -Xms128m -Xmx256m -jar "$ROOT/aurora-$name/target/aurora-$name-0.1.0-SNAPSHOT.jar" \
     > /tmp/"$name".log 2>&1 &
 }
 
-restart_rpc_mode() { # name
+restart_rpc_mode() { # 服务名
   local name="$1"
   local pid
   pid=$(powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | Where-Object { \$_.CommandLine -match 'aurora-$name-' }).ProcessId" 2>/dev/null | tr -d '\r')
@@ -45,7 +45,7 @@ restart_rpc_mode() { # name
   AURORA_RPC_ENABLED=true start_service "$name"
 }
 
-restart_default_mode() { # name
+restart_default_mode() { # 服务名
   local name="$1"
   local pid
   pid=$(powershell -NoProfile -Command "(Get-CimInstance Win32_Process -Filter \"Name='java.exe'\" | Where-Object { \$_.CommandLine -match 'aurora-$name-' }).ProcessId" 2>/dev/null | tr -d '\r')
@@ -54,7 +54,7 @@ restart_default_mode() { # name
 }
 
 # 网关已封 /actuator/** 穿透（M4）：健康探测直连服务端口
-await_healthy() { # name attempts
+await_healthy() { # 服务名 重试次数
   local name="$1" attempts="${2:-40}"
   declare -A PORTS=( [gateway]=8000 [user]=8081 [product]=8082 [cart]=8083 [order]=8084 [inventory]=8085 [payment]=8086 )
   local port="${PORTS[$name]:-}"
@@ -95,7 +95,7 @@ echo "  ... 以 AURORA_RPC_ENABLED=true 重启 cart+product"
 restart_rpc_mode product
 restart_rpc_mode cart
 await_healthy product && await_healthy cart && ok "rpc-mode services healthy" || { bad "rpc-mode services healthy"; exit 1; }
-sleep 3 # nacos subscription first snapshot
+sleep 3 # 等 nacos 订阅首次快照
 
 # 2) 用同一条黄金路径走手写 rpc
 req POST /api/cart/carts/items "$TOKEN" "{\"skuId\":$SKU,\"quantity\":2}"
