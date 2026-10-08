@@ -6,6 +6,8 @@ import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.common.web.TraceIdFilter;
 import org.slf4j.MDC;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -29,5 +31,14 @@ public class ProbeController {
     @GetMapping("/probe/trace-id")
     public Result<String> traceId() {
         return Result.ok(MDC.get(TraceIdFilter.MDC_TRACE_ID_KEY));
+    }
+
+    // 仅供 web 缝测试：验证请求体不可解析时的状态码映射
+    public record EchoRequest(String name) {
+    }
+
+    @PostMapping("/probe/echo")
+    public Result<String> echo(@RequestBody EchoRequest request) {
+        return Result.ok(request.name());
     }
 }

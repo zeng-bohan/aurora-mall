@@ -6,6 +6,7 @@ import com.zengbohan.aurora.common.result.Result;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
@@ -30,6 +31,15 @@ public class GlobalExceptionHandler {
                 .findFirst()
                 .orElse(ErrorCode.PARAM_ERROR.getMessage());
         return Result.fail(ErrorCode.PARAM_ERROR.getCode(), detail);
+    }
+
+    // 请求体不可解析（JSON 语法错误、字段类型不匹配）：这是客户端问题，
+    // 不能落进下面的通用 500 处理
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    public Result<Void> handleUnreadableBody(HttpMessageNotReadableException e) {
+        log.warn("unreadable request body: {}", e.getMessage());
+        return Result.fail(ErrorCode.PARAM_ERROR.getCode(), "请求体格式错误");
     }
 
     @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
