@@ -36,6 +36,12 @@ aurora:
     # mq = 主链路：预扣成功后投递 MQ、消费者异步落单，请求路径完全不碰 DB；
     # sync = 同步落单，作为对照基线（M5 报告用它对比削峰效果）。
     order-mode: ${AURORA_SECKILL_ORDER_MODE:mq}
+    # 活动维度限流（网关路由级限流之外的第二道闸）。这里是默认值，
+    # 运行时以配置中心 aurora-seckill.yml 为准，可即时调整。
+    rate-limit:
+      enabled: true
+      per-activity-limit: 200
+      window-seconds: 1
 
 management:
   metrics:

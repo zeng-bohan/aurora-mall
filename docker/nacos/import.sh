@@ -133,6 +133,19 @@ aurora:
 YAML
 )
 
+SECKILL_CFG=$(cat <<'YAML'
+# 秒杀活动维度限流（网关路由级限流之外的第二道闸）：
+# 每个活动在 window-seconds 内最多 per-activity-limit 次抢购请求。
+# 大促前调大或临时关闭；发布后立即生效（服务侧 @RefreshScope）。
+aurora:
+  seckill:
+    rate-limit:
+      enabled: true
+      per-activity-limit: 200
+      window-seconds: 1
+YAML
+)
+
 echo "publishing configs into namespace '$NS'..."
 publish aurora-common.yml "$COMMON"
 publish aurora-user.yml "$USER_CFG"
@@ -140,5 +153,6 @@ publish aurora-product.yml "$PRODUCT_CFG"
 publish aurora-order.yml "$ORDER_CFG"
 publish aurora-gateway.yml "$GATEWAY_CFG"
 publish aurora-payment.yml "$PAYMENT_CFG"
+publish aurora-seckill.yml "$SECKILL_CFG"
 
 echo "done. secrets stay in $SECRETS_FILE and nacos, never in git."

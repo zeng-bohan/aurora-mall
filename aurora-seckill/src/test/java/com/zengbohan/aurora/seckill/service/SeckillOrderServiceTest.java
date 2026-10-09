@@ -9,6 +9,8 @@ import com.zengbohan.aurora.seckill.entity.SeckillActivity;
 import com.zengbohan.aurora.seckill.entity.SeckillOrder;
 import com.zengbohan.aurora.seckill.mapper.SeckillOrderMapper;
 import com.zengbohan.aurora.seckill.mq.SeckillEventPublisher;
+import com.zengbohan.aurora.seckill.ratelimit.SeckillRateLimitProperties;
+import com.zengbohan.aurora.seckill.ratelimit.SeckillRateLimiter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
@@ -25,7 +27,9 @@ import java.time.LocalDateTime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -51,6 +55,8 @@ class SeckillOrderServiceTest {
     private StringRedisTemplate redis;
     private HashOperations<String, Object, Object> hash;
     private SeckillLuaScripts scripts;
+    private SeckillRateLimiter rateLimiter;
+    private SeckillRateLimitProperties rateLimitProperties;
 
     @BeforeEach
     void setUp() {
@@ -62,6 +68,10 @@ class SeckillOrderServiceTest {
         hash = mock(HashOperations.class);
         doReturn(hash).when(redis).opsForHash();
         scripts = new SeckillLuaScripts();
+        rateLimiter = mock(SeckillRateLimiter.class);
+        // 默认配额充足：限流不是本类其余用例的变量，只有专门的用例才改成拒绝
+        doReturn(true).when(rateLimiter).tryAcquire(anyString(), anyInt(), any(Duration.class));
+        rateLimitProperties = new SeckillRateLimitProperties();
     }
 
     // ---------- 闸门 ----------
@@ -285,11 +295,60 @@ class SeckillOrderServiceTest {
                 .isEqualTo(ErrorCode.NOT_FOUND);
     }
 
+    // ---------- 活动维度限流 ----------
+
+    @Test
+    void rateLimitedBuyIsRejectedBeforeTheGate() {
+        // 限流命中时连 Redis 预扣都不做——这是"最先卸载流量"的检验点
+        doReturn(false).when(rateLimiter).tryAcquire(anyString(), anyInt(), any(Duration.class));
+
+        assertThatThrownBy(() -> service("mq").buy(ACTIVITY_ID, USER_ID))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.RATE_LIMITED);
+        verifyNoInteractions(redis, activityService, orderWriter, publisher, orderMapper);
+    }
+
+    @Test
+    void rateLimitIsKeyedPerActivityWithConfiguredQuota() {
+        stubReserve(SeckillOrderService.RESERVE_OK);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(true);
+
+        service("mq").buy(ACTIVITY_ID, USER_ID);
+
+        verify(rateLimiter).tryAcquire("seckill:rl:" + ACTIVITY_ID,
+                rateLimitProperties.getPerActivityLimit(),
+                Duration.ofSeconds(rateLimitProperties.getWindowSeconds()));
+    }
+
+    @Test
+    void disabledRateLimitSkipsTheLimiter() {
+        rateLimitProperties.setEnabled(false);
+        stubReserve(SeckillOrderService.RESERVE_OK);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(true);
+
+        service("mq").buy(ACTIVITY_ID, USER_ID);
+
+        verify(rateLimiter, never()).tryAcquire(anyString(), anyInt(), any(Duration.class));
+    }
+
+    @Test
+    void invalidRateLimitRuleFailsOpen() {
+        // 配额/窗口非正数属运维配置失误：放行并告警，不能变成业务的永久 429
+        rateLimitProperties.setPerActivityLimit(0);
+        stubReserve(SeckillOrderService.RESERVE_OK);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(true);
+
+        assertThat(service("mq").buy(ACTIVITY_ID, USER_ID))
+                .isEqualTo(new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null));
+        verify(rateLimiter, never()).tryAcquire(anyString(), anyInt(), any(Duration.class));
+    }
+
     // ---------- helpers ----------
 
     private SeckillOrderService service(String mode) {
         return new SeckillOrderService(activityService, orderWriter, publisher, orderMapper,
-                scripts, redis, mode);
+                scripts, redis, rateLimiter, rateLimitProperties, mode);
     }
 
     private void assertReserveCodeRejected(Long reserveResult, ErrorCode expected) {

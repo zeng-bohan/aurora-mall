@@ -12,6 +12,8 @@ public enum ErrorCode {
     FORBIDDEN(40300, "无权访问"),
     NOT_FOUND(40400, "资源不存在"),
     DUPLICATE_REQUEST(40900, "请勿重复提交"),
+    // 与网关限流过滤器写回的业务码一致：客户端在网关被拦、在服务侧被拦看到同一个码
+    RATE_LIMITED(42900, "请求过于频繁，请稍后再试"),
     INVENTORY_INSUFFICIENT(20001, "库存不足"),
     SECKILL_NOT_STARTED(30001, "秒杀尚未开始"),
     SECKILL_ENDED(30002, "秒杀已结束"),

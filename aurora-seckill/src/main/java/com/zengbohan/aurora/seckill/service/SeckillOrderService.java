@@ -10,6 +10,8 @@ import com.zengbohan.aurora.seckill.entity.SeckillActivity;
 import com.zengbohan.aurora.seckill.entity.SeckillOrder;
 import com.zengbohan.aurora.seckill.mapper.SeckillOrderMapper;
 import com.zengbohan.aurora.seckill.mq.SeckillEventPublisher;
+import com.zengbohan.aurora.seckill.ratelimit.SeckillRateLimitProperties;
+import com.zengbohan.aurora.seckill.ratelimit.SeckillRateLimiter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -55,11 +57,14 @@ public class SeckillOrderService {
     private final SeckillOrderMapper orderMapper;
     private final SeckillLuaScripts scripts;
     private final StringRedisTemplate redis;
+    private final SeckillRateLimiter rateLimiter;
+    private final SeckillRateLimitProperties rateLimitProperties;
     private final OrderMode orderMode;
 
     public SeckillOrderService(SeckillActivityService activityService, SeckillOrderWriter orderWriter,
                                SeckillEventPublisher publisher, SeckillOrderMapper orderMapper,
                                SeckillLuaScripts scripts, StringRedisTemplate redis,
+                               SeckillRateLimiter rateLimiter, SeckillRateLimitProperties rateLimitProperties,
                                @Value("${aurora.seckill.order-mode:mq}") String orderMode) {
         this.activityService = activityService;
         this.orderWriter = orderWriter;
@@ -67,6 +72,8 @@ public class SeckillOrderService {
         this.orderMapper = orderMapper;
         this.scripts = scripts;
         this.redis = redis;
+        this.rateLimiter = rateLimiter;
+        this.rateLimitProperties = rateLimitProperties;
         this.orderMode = OrderMode.parse(orderMode);
     }
 
@@ -90,6 +97,10 @@ public class SeckillOrderService {
      * 各拒绝场景抛带业务码的 {@link BusinessException}；MQ 模式下成功返回 QUEUED。
      */
     public SeckillBuyView buy(long activityId, long userId) {
+        // 限流在闸门之前：超载的请求连预扣都不做（与网关过滤器的次序一致——最先卸载流量）
+        if (!passActivityRateLimit(activityId)) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED);
+        }
         long reserved = reserve(activityId, userId);
         if (reserved != RESERVE_OK) {
             throw new BusinessException(errorCodeOf(reserved));
@@ -192,6 +203,28 @@ public class SeckillOrderService {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "下单请求未能受理，请稍后重试");
         }
         return new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null);
+    }
+
+    /**
+     * 活动维度限流（阈值由配置中心下发，可即时调整）。
+     * <p>
+     * 规则非法（非正配额/窗口）时**放行**并告警，而不是拒绝：这里与网关过滤器
+     * 同一口径——运维配置失误或限流器自身故障（Redis 不可用）都不能放大成业务的
+     * 永久 429；真出问题时日志里有明确的 WARN 可查。
+     */
+    private boolean passActivityRateLimit(long activityId) {
+        if (!rateLimitProperties.isEnabled()) {
+            return true;
+        }
+        int limit = rateLimitProperties.getPerActivityLimit();
+        int windowSeconds = rateLimitProperties.getWindowSeconds();
+        if (limit <= 0 || windowSeconds <= 0) {
+            log.warn("invalid seckill rate-limit rule (per-activity-limit={}, window-seconds={}); allowing request",
+                    limit, windowSeconds);
+            return true;
+        }
+        return rateLimiter.tryAcquire(SeckillRateLimiter.activityKey(activityId),
+                limit, Duration.ofSeconds(windowSeconds));
     }
 
     private long reserve(long activityId, long userId) {

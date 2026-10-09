@@ -12,6 +12,7 @@ spring:
   config:
     import:
       - nacos:aurora-common.yml
+      - nacos:aurora-seckill.yml
 
 # MQ 与订单/库存共用同一个 name-server；S2-2 起秒杀也参与它。
 rocketmq:

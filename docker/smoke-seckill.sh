@@ -17,6 +17,10 @@
 # 落单模式对照（人工两步，脚本会打印各自的时延分位与返回分布，可直接比）：
 #   AURORA_SECKILL_ORDER_MODE=mq   <启动 seckill> && bash docker/smoke-seckill.sh
 #   AURORA_SECKILL_ORDER_MODE=sync <重启 seckill> && bash docker/smoke-seckill.sh
+#
+# 限流提示：活动维度限流默认 200 req/s（配置中心 aurora-seckill.yml 可调）。BUYERS 超过
+# 它时多出来的请求会以 42900 被拒，下面的"其余全部以售罄被拒"断言会失败——请保持
+# BUYERS 不超过该阈值，或先在配置中心把 per-activity-limit 调大/关闭。
 set -uo pipefail
 
 cd "$(dirname "$0")"

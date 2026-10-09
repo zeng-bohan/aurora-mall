@@ -1,6 +1,7 @@
 package com.zengbohan.aurora.seckill.service;
 
 import com.zengbohan.aurora.common.exception.ErrorCode;
+import com.zengbohan.aurora.seckill.ratelimit.SeckillRateLimiter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -9,6 +10,7 @@ import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -67,6 +69,7 @@ class SeckillLuaIntegrationTest {
     void tearDown() {
         if (redis != null) {
             redis.delete(SeckillLuaScripts.keys(activityId));
+            redis.delete(SeckillRateLimiter.activityKey(activityId));
         }
         if (connectionFactory != null) {
             connectionFactory.destroy();
@@ -167,6 +170,32 @@ class SeckillLuaIntegrationTest {
 
         assertThat(succeeded.get()).as("成功数正好等于库存量").isEqualTo(totalStock);
         assertThat(stock()).as("余量落到 0 且不为负").isEqualTo("0");
+    }
+
+    @Test
+    void rateLimiterAllowsExactlyTheQuotaWithinTheWindow() {
+        SeckillRateLimiter limiter = new SeckillRateLimiter(redis);
+        String key = SeckillRateLimiter.activityKey(activityId);
+        int limit = 5;
+        Duration window = Duration.ofSeconds(5);
+
+        for (int i = 1; i <= limit; i++) {
+            assertThat(limiter.tryAcquire(key, limit, window)).as("第 " + i + " 个请求放行").isTrue();
+        }
+        assertThat(limiter.tryAcquire(key, limit, window)).as("超出配额被拒").isFalse();
+    }
+
+    @Test
+    void rateLimiterRecoversAfterTheWindowSlides() throws Exception {
+        SeckillRateLimiter limiter = new SeckillRateLimiter(redis);
+        String key = SeckillRateLimiter.activityKey(activityId);
+        Duration window = Duration.ofSeconds(1);
+
+        assertThat(limiter.tryAcquire(key, 1, window)).isTrue();
+        assertThat(limiter.tryAcquire(key, 1, window)).as("窗口内配额已用尽").isFalse();
+
+        Thread.sleep(1100);
+        assertThat(limiter.tryAcquire(key, 1, window)).as("窗口滑过后配额恢复").isTrue();
     }
 
     private void preheat(long startAt, long endAt, int stock) {
