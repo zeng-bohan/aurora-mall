@@ -3,9 +3,13 @@ package com.zengbohan.aurora.rpc.registry;
 import com.zengbohan.aurora.rpc.lb.LoadBalancer;
 import com.zengbohan.aurora.rpc.transport.RpcUnavailableException;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -16,11 +20,15 @@ import java.util.function.Consumer;
  */
 public class ServiceDiscovery {
 
+    private static final System.Logger log = System.getLogger(ServiceDiscovery.class.getName());
+
     private final RegistryService registry;
     // service -> 最近一次推送的不可变全量快照。
     private final Map<String, List<ServiceInstance>> cache = new ConcurrentHashMap<>();
     // service -> 挂到注册中心的 listener（注销时按同一身份摘除）。
     private final Map<String, Consumer<List<ServiceInstance>>> wired = new ConcurrentHashMap<>();
+    // 推送到达时的钩子（在本地缓存刷新之后触发）：供上层剪掉下线实例的连接等。
+    private final List<BiConsumer<String, List<ServiceInstance>>> changeHooks = new CopyOnWriteArrayList<>();
 
     public ServiceDiscovery(RegistryService registry) {
         this.registry = registry;
@@ -32,6 +40,7 @@ public class ServiceDiscovery {
             @Override
             public void accept(List<ServiceInstance> instances) {
                 cache.put(service, instances);
+                fireChangeHooks(service, instances);
             }
         };
         if (wired.putIfAbsent(service, listener) != null) {
@@ -53,6 +62,27 @@ public class ServiceDiscovery {
             registry.unsubscribe(service, listener);
         }
         cache.remove(service);
+    }
+
+    /**
+     * 注册中心推送到达时回调（在本地缓存刷新之后）。
+     * 钩子内部异常只记日志：推送线程同时喂着同服务的其他订阅者，一个钩子不该把它们全带崩。
+     */
+    public void addChangeHook(BiConsumer<String, List<ServiceInstance>> hook) {
+        changeHooks.add(hook);
+    }
+
+    /**
+     * 所有已订阅服务的实例并集——驱逐下线实例时的「存活集合」。
+     * 必须用并集而非单个服务的快照：{@code RpcClientPool} 按地址共用连接，
+     * 只按一个服务的快照剪会误杀别的服务正在用的连接。
+     */
+    public Set<ServiceInstance> knownInstances() {
+        Set<ServiceInstance> all = new HashSet<>();
+        for (List<ServiceInstance> snapshot : cache.values()) {
+            all.addAll(snapshot);
+        }
+        return all;
     }
 
     // 当前快照（可能是空列表——注册中心还没推过或全部下线）。
@@ -78,5 +108,15 @@ public class ServiceDiscovery {
             throw new RpcUnavailableException("no instances available for " + service);
         }
         return loadBalancer.pick(snapshot);
+    }
+
+    private void fireChangeHooks(String service, List<ServiceInstance> instances) {
+        for (BiConsumer<String, List<ServiceInstance>> hook : changeHooks) {
+            try {
+                hook.accept(service, instances);
+            } catch (RuntimeException e) {
+                log.log(System.Logger.Level.WARNING, "change hook failed for " + service, e);
+            }
+        }
     }
 }

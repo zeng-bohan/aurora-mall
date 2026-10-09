@@ -54,6 +54,9 @@ public class RpcProxyFactory {
         this.codec = codec;
         this.internalSecret = internalSecret;
         this.breakerConfig = breakerConfig;
+        // 注册中心每次推送后剪掉已下线实例的连接：存活集合取所有已订阅服务的并集
+        // （池按地址共用，只按一个接口的快照剪会误杀别的服务在用的连接）
+        discovery.addChangeHook((service, instances) -> clientPool.retainInstances(discovery.knownInstances()));
     }
 
     private static CircuitBreakerConfig defaultBreakerConfig() {

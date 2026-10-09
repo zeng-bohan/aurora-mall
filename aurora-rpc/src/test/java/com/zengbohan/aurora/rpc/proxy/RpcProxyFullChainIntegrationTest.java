@@ -357,6 +357,33 @@ class RpcProxyFullChainIntegrationTest {
     }
 
     @Test
+    void poolEvictsClientsOfInstancesGoneFromRegistry() {
+        RpcServiceExporter exporterA = new RpcServiceExporter(registry, codec, "127.0.0.1", SECRET);
+        RpcServiceExporter exporterB = new RpcServiceExporter(registry, codec, "127.0.0.1", SECRET);
+        exporterA.export(EchoApi.class, named("A"));
+        exporterB.export(EchoApi.class, named("B"));
+        exporterA.start();
+        exporterB.start();
+
+        RpcProxyFactory factory = new RpcProxyFactory(discovery,
+                new RoundRobinLoadBalancer(), pool, codec, SECRET);
+        EchoApi api = factory.create(EchoApi.class);
+        // 轮询 4 次：两个实例的连接都进池
+        for (int i = 0; i < 4; i++) {
+            api.echo("x");
+        }
+        assertThat(pool.keysForTest()).hasSize(2);
+
+        // A 下线：注册中心推全量 → 钩子按"存活并集"剪掉 A 的连接，B 的保留
+        exporterA.stop();
+        assertThat(pool.keysForTest())
+                .as("下线实例的连接被剪掉，仍在线的保留")
+                .containsExactly("127.0.0.1:" + exporterB.port());
+        // 剪完之后调用照常（只剩 B 一个实例）
+        assertThat(api.echo("x")).startsWith("B:");
+    }
+
+    @Test
     void roundRobinDistributesAcrossTwoInstances() {
         RpcServiceExporter exporterA = new RpcServiceExporter(registry, codec, "127.0.0.1", SECRET);
         RpcServiceExporter exporterB = new RpcServiceExporter(registry, codec, "127.0.0.1", SECRET);
