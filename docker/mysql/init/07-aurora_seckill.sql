@@ -24,6 +24,17 @@ CREATE TABLE IF NOT EXISTS seckill_stock (
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE = InnoDB;
 
+-- 幂等去重表：S2-2 的 MQ 消费者用 @Idempotent(DB_DEDUP) 把重复投递挡在落单之前。
+-- 与库存/订单/支付库同结构（各库独立，守卫写在本服务自己的库里）。
+CREATE TABLE IF NOT EXISTS idempotent_record (
+    id         BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    biz_type   VARCHAR(32)  NOT NULL,
+    biz_key    VARCHAR(128) NOT NULL,
+    created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_idempotent (biz_type, biz_key),
+    KEY idx_idempotent_created (created_at)
+) ENGINE = InnoDB;
+
 -- 秒杀订单：一人一单由唯一键兜底（Redis 只挡流量，DB 是事实）。
 CREATE TABLE IF NOT EXISTS seckill_order (
     id          BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,

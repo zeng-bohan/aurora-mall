@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.seckill.service;
 
+import com.zengbohan.aurora.common.exception.ErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,15 +27,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 无 redis 可达时自动跳过，因此没有 redis 的 CI runner 依然保持绿色——
  * 单元测试 mock 了 execute()，只能证明返回码映射，证明不了脚本本身的语义：
  * 窗口外不动库存、一人一单、售罄拒绝、补偿恰好一次（重放不会把库存加回去第二次）、
- * 并发预扣不超卖。
+ * 并发预扣不超卖、以及受理/失败结果与库存同脚本原子写入。
  *
  * 本地运行：docker compose up -d redis
  */
 class SeckillLuaIntegrationTest {
-
-    private static final String ACTIVITY_HASH_FIELDS_START = "startAt";
-    private static final String ACTIVITY_HASH_FIELDS_END = "endAt";
-    private static final String ACTIVITY_HASH_FIELDS_STOCK = "stock";
 
     private static final String HOST = System.getenv().getOrDefault("REDIS_HOST", "localhost");
     private static final int PORT = Integer.parseInt(System.getenv().getOrDefault("REDIS_PORT", "16379"));
@@ -69,8 +66,7 @@ class SeckillLuaIntegrationTest {
     @AfterEach
     void tearDown() {
         if (redis != null) {
-            redis.delete(SeckillLuaScripts.activityKey(activityId));
-            redis.delete(SeckillLuaScripts.boughtKey(activityId));
+            redis.delete(SeckillLuaScripts.keys(activityId));
         }
         if (connectionFactory != null) {
             connectionFactory.destroy();
@@ -92,14 +88,16 @@ class SeckillLuaIntegrationTest {
         assertThat(reserve(1L)).as("已结束").isEqualTo(3L);
 
         assertThat(stock()).as("窗口外不该动库存").isEqualTo("5");
+        assertThat(result(1L)).as("窗口外不该产生受理记录").isNull();
     }
 
     @Test
-    void onePersonOneOrderIsEnforced() {
+    void onePersonOneOrderIsEnforcedAndReserveRecordsPending() {
         long now = System.currentTimeMillis();
         preheat(now - 1_000, now + 60_000, 3);
 
         assertThat(reserve(1L)).isEqualTo(1L);
+        assertThat(result(1L)).as("受理结果与扣减同脚本写入").isEqualTo(SeckillLuaScripts.RESULT_PENDING);
         assertThat(reserve(1L)).as("同一用户再次抢购被拒").isEqualTo(5L);
         assertThat(reserve(2L)).as("另一用户可以抢").isEqualTo(1L);
         assertThat(stock()).isEqualTo("1");
@@ -113,21 +111,27 @@ class SeckillLuaIntegrationTest {
         assertThat(reserve(1L)).isEqualTo(1L);
         assertThat(reserve(2L)).as("库存耗尽").isEqualTo(4L);
         assertThat(stock()).isEqualTo("0");
+        assertThat(result(2L)).as("被拒的请求不该有受理记录").isNull();
     }
 
     @Test
-    void compensateRestoresStockExactlyOnce() {
+    void compensateRestoresStockExactlyOnceAndRecordsReason() {
         long now = System.currentTimeMillis();
         preheat(now - 1_000, now + 60_000, 2);
 
         assertThat(reserve(1L)).isEqualTo(1L);
         assertThat(stock()).isEqualTo("1");
 
-        assertThat(compensate(1L)).as("第一次补偿归还名额").isEqualTo(1L);
+        String reason = ErrorCode.SECKILL_SOLD_OUT.name();
+        assertThat(compensate(1L, reason)).as("第一次补偿归还名额").isEqualTo(1L);
         assertThat(stock()).isEqualTo("2");
+        assertThat(result(1L)).as("归还后结果改为失败原因，客户端不再空等")
+                .isEqualTo(SeckillLuaScripts.RESULT_FAIL_PREFIX + reason);
 
-        assertThat(compensate(1L)).as("重复补偿是空操作").isEqualTo(0L);
+        assertThat(compensate(1L, ErrorCode.SYSTEM_ERROR.name())).as("重复补偿是空操作").isEqualTo(0L);
         assertThat(stock()).as("补偿重放不能造成超卖").isEqualTo("2");
+        assertThat(result(1L)).as("重复补偿不改写首次失败原因")
+                .isEqualTo(SeckillLuaScripts.RESULT_FAIL_PREFIX + reason);
         assertThat(reserve(1L)).as("归还后该用户可以重新抢").isEqualTo(1L);
     }
 
@@ -167,30 +171,34 @@ class SeckillLuaIntegrationTest {
 
     private void preheat(long startAt, long endAt, int stock) {
         Map<String, String> fields = new HashMap<>();
-        fields.put(ACTIVITY_HASH_FIELDS_START, String.valueOf(startAt));
-        fields.put(ACTIVITY_HASH_FIELDS_END, String.valueOf(endAt));
+        fields.put("startAt", String.valueOf(startAt));
+        fields.put("endAt", String.valueOf(endAt));
         fields.put("perUserLimit", "1");
         fields.put("totalStock", String.valueOf(stock));
-        fields.put(ACTIVITY_HASH_FIELDS_STOCK, String.valueOf(stock));
+        fields.put("stock", String.valueOf(stock));
         redis.opsForHash().putAll(SeckillLuaScripts.activityKey(activityId), fields);
     }
 
     private long reserve(long userId) {
-        return redis.execute(scripts.reserve, keys(),
+        return redis.execute(scripts.reserve, SeckillLuaScripts.keys(activityId),
                 String.valueOf(userId), String.valueOf(System.currentTimeMillis()));
     }
 
-    private long compensate(long userId) {
-        return redis.execute(scripts.compensate, keys(), String.valueOf(userId));
-    }
-
-    private List<String> keys() {
-        return List.of(SeckillLuaScripts.activityKey(activityId), SeckillLuaScripts.boughtKey(activityId));
+    private long compensate(long userId, String reason) {
+        return redis.execute(scripts.compensate, SeckillLuaScripts.keys(activityId),
+                String.valueOf(userId), reason);
     }
 
     private String stock() {
-        Object value = redis.opsForHash().get(SeckillLuaScripts.activityKey(activityId),
-                ACTIVITY_HASH_FIELDS_STOCK);
+        return field(SeckillLuaScripts.activityKey(activityId), "stock");
+    }
+
+    private String result(long userId) {
+        return field(SeckillLuaScripts.resultKey(activityId), String.valueOf(userId));
+    }
+
+    private String field(String key, String field) {
+        Object value = redis.opsForHash().get(key, field);
         return value == null ? null : value.toString();
     }
 }

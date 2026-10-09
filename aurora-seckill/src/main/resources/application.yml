@@ -28,10 +28,14 @@ spring.data.redis:
 
 # 内部密钥来自 nacos 配置中心（aurora-common.yml，见 application-default.yml）；
 # ConfigPresenceVerifier 会在启动时失败，并指出缺失的必需键。
-# 秒杀专属可调参数（活动维度限流阈值等）S2 引入时再加 aurora-seckill.yml 数据源。
+# 秒杀专属可调参数（活动维度限流阈值等）S3 引入时再加 aurora-seckill.yml 数据源。
 aurora:
   config:
     required-keys: aurora.internal.secret
+  seckill:
+    # mq = 主链路：预扣成功后投递 MQ、消费者异步落单，请求路径完全不碰 DB；
+    # sync = 同步落单，作为对照基线（M5 报告用它对比削峰效果）。
+    order-mode: ${AURORA_SECKILL_ORDER_MODE:mq}
 
 management:
   metrics:

@@ -1,7 +1,7 @@
 # 仅在 default profile 下生效（即服务启动时未显式指定 profile）。
 # test profile 从不加载本文件，因此单元测试与上下文测试无需配置中心即可运行。
 # 共享密钥（内部密钥）来自 aurora-common.yml；缺失时 import 失败即启动失败。
-# S2 引入秒杀专属可调参数（活动限流阈值等）时，在 docker/nacos/import.sh 增加
+# S3 引入秒杀专属可调参数（活动限流阈值等）时，在 docker/nacos/import.sh 增加
 # aurora-seckill.yml 数据源并在此追加一条 import。
 spring:
   cloud:
@@ -12,3 +12,10 @@ spring:
   config:
     import:
       - nacos:aurora-common.yml
+
+# MQ 与订单/库存共用同一个 name-server；S2-2 起秒杀也参与它。
+rocketmq:
+  name-server: ${ROCKETMQ_ADDR:localhost:9876}
+  producer:
+    group: aurora-seckill-producer
+    send-message-timeout: 3000
