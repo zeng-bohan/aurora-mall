@@ -2,7 +2,7 @@ package com.zengbohan.aurora.common.exception;
 
 /**
  * 业务错误码。分段规则：0 成功，1xxxx 系统，2xxxx 库存，3xxxx 秒杀，
- * 4xxxx HTTP 语义（鉴权/禁止/不存在/冲突）。
+ * 4xxxx HTTP 语义（鉴权/禁止/不存在/冲突），5xxxx 优惠券。
  */
 public enum ErrorCode {
     SUCCESS(0, "success"),
@@ -19,7 +19,11 @@ public enum ErrorCode {
     SECKILL_ENDED(30002, "秒杀已结束"),
     SECKILL_SOLD_OUT(30003, "已售罄"),
     SECKILL_ALREADY_BOUGHT(30004, "您已参与过该秒杀"),
-    SECKILL_NOT_READY(30005, "秒杀活动尚未就绪");
+    SECKILL_NOT_READY(30005, "秒杀活动尚未就绪"),
+    COUPON_NOT_STARTED(50001, "优惠券尚未开始发放"),
+    COUPON_CLAIM_ENDED(50002, "优惠券已停止发放"),
+    COUPON_SOLD_OUT(50003, "优惠券已领完"),
+    COUPON_ALREADY_CLAIMED(50004, "您已领取过该券");
 
     private final int code;
     private final String message;
