@@ -96,6 +96,9 @@ class SeckillActivityServiceTest {
                 .isInstanceOf(BusinessException.class);
         assertThatThrownBy(() -> service.create("t", 1L, new BigDecimal("9.90"), 100, 0, start(), end()))
                 .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> service.create("t", 1L, new BigDecimal("9.90"), 100, 2, start(), end()))
+                .as("限购 N 件尚未实现：显式拒绝，而不是放行一个不会生效的配置")
+                .isInstanceOf(BusinessException.class);
         assertThatThrownBy(() -> service.create("t", 1L, null, 100, 1, start(), end()))
                 .isInstanceOf(BusinessException.class);
         verify(activityMapper, never()).insert(any(SeckillActivity.class));

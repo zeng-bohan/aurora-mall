@@ -23,3 +23,16 @@ CREATE TABLE IF NOT EXISTS seckill_stock (
     available   INT      NOT NULL,
     updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE = InnoDB;
+
+-- 秒杀订单：一人一单由唯一键兜底（Redis 只挡流量，DB 是事实）。
+CREATE TABLE IF NOT EXISTS seckill_order (
+    id          BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    activity_id BIGINT        NOT NULL,
+    user_id     BIGINT        NOT NULL,
+    sku_id      BIGINT        NOT NULL,
+    price       DECIMAL(10,2) NOT NULL COMMENT '成交价（下单时刻的活动价）',
+    status      VARCHAR(16)   NOT NULL DEFAULT 'CREATED',
+    created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_seckill_order_user (activity_id, user_id),
+    KEY idx_seckill_order_user (user_id, created_at)
+) ENGINE = InnoDB;

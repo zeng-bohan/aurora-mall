@@ -16,7 +16,8 @@ public enum ErrorCode {
     SECKILL_NOT_STARTED(30001, "秒杀尚未开始"),
     SECKILL_ENDED(30002, "秒杀已结束"),
     SECKILL_SOLD_OUT(30003, "已售罄"),
-    SECKILL_ALREADY_BOUGHT(30004, "您已参与过该秒杀");
+    SECKILL_ALREADY_BOUGHT(30004, "您已参与过该秒杀"),
+    SECKILL_NOT_READY(30005, "秒杀活动尚未就绪");
 
     private final int code;
     private final String message;

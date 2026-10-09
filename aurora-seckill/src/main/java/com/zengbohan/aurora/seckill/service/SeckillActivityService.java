@@ -52,8 +52,10 @@ public class SeckillActivityService {
         if (totalStock <= 0) {
             fail("活动总量必须大于 0");
         }
-        if (perUserLimit <= 0) {
-            fail("每人限购必须大于 0");
+        if (perUserLimit != 1) {
+            // 一人一单由 Redis 已购集合 + 订单唯一键共同保证，当前不支持限购 N 件：
+            // 与其放行一个不会生效的配置（用户仍只能买 1 件），不如在这里明确拒绝
+            fail("当前实现只支持每人限购 1 件");
         }
         if (startAt == null || endAt == null) {
             fail("活动起止时间必填");
