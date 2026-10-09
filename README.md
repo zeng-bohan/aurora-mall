@@ -188,6 +188,8 @@ bash docker/smoke-observability.sh   # 3 断言：Prometheus targets 全 UP / Lo
 
 压测（M4 T6）：同一购物车金路径、同参数下 Feign 与手写 RPC 的阶梯对照（10/50/100 线程），报告见 [docs/m4-load-test.md](docs/m4-load-test.md)，计划文件 `docker/jmeter/aurora-load.jmx` 可原样重放。结论摘要：默认 Feign 在 50 线程起出现失败、100 线程 28.5% 请求失败（客户端临时端口耗尽），手写 RPC 100 线程零错误、吞吐约 2.5×。
 
+压测（M5 S3）：秒杀抢购在「活动限流关闭 / 打开（300 req/s）」两轮下的对照（10/50/100 线程、各 20s/档、每请求一个不同买家），报告见 [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md)，计划文件 `docker/jmeter/aurora-seckill.jmx` 可原样重放。结论摘要：两轮 20 万级尝试下限量 3000 **恰好**成交 3000，Redis 与 DB 同时收敛到 0、无残留 PENDING（无超卖无丢单）；限流窗口峰值精确封顶在 300（ZCARD 逐秒采样），入口挡掉约 92.6% 的尝试；**无限流那轮在这台单机上并未被打挂**（2,897/s、中位 5–7ms）——限流的价值在于把中签路径（MQ + DB）的成本按预算摊平，而不是"保护闸门"。
+
 ## 🧪 测试
 
 ```bash
@@ -207,7 +209,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 | M2 | 订单 / 库存 / 支付（事务消息、Seata 对照、幂等、ID 生成器） | ✅ |
 | M3 | 手写组件：限流熔断 + RPC + 端口切换 | ✅ |
 | M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | ✅ |
-| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 🚧 秒杀已交付（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝） |
+| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 🚧 秒杀已交付（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝 + 活动维度限流 + 压测报告） |
 | M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
 | M7 | 部署上线（服务器 + ICP 备案） | 未开始 |
 
@@ -216,6 +218,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 - [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) — MQ 最终一致 vs Seata AT 对照实验
 - [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) — OpenFeign vs 手写 RPC 对照（等价性 + 微基准 + 边界）
 - [docs/m4-load-test.md](docs/m4-load-test.md) — 同链路压测对照（Feign vs 手写 RPC，阶梯 10/50/100 线程）
+- [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md) — 秒杀压测对照（活动限流关闭 vs 打开，含量级/一致性证据）
 - [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件设计取舍与实测数据
 
 ## 🤝 协作
