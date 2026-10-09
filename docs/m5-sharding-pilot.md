@@ -124,5 +124,10 @@ bash -c 'docker exec -i aurora-mysql mysql -uroot -paurora123 < docker/mysql/ini
 mvn -B -pl aurora-sharding-pilot -am test
 ```
 
+**诚实边界**：CI 没有 MySQL，4 个用例类会整体中止（surefire 记 0 例），构建仍是绿的——也就是说
+**CI 绿不能证明分片语义**，只有本机连着 MySQL 跑才算数（与 Redis/Lua 集成测试同一条边界）。
+这一步的代价是真实的：跳过路径最初在 `@AfterAll` 里对 null 取 `List.of` 抛 NPE，把"跳过"变成了"error"，
+CI 直接红了一次——清理逻辑必须容忍"从未启动"的状态，这条也留在代码注释里。
+
 产物一览：分片算法 `UserIdModShardingAlgorithm`（取模，`floorMod` 处理负数）、配置 `sharding-pilot.yaml`、
 四组断言 `ShardRoutingTest` / `ShardQueryMergeTest` / `ShardTransactionTest` / `ShardIdentityTest`。

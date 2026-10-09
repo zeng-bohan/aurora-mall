@@ -66,7 +66,10 @@ final class PilotEnv {
     }
 
     static synchronized void close() {
-        for (DataSource raw : List.of(raw0, raw1)) {
+        // 注意：MySQL 不可达时 boot() 会被 assume 跳过，raw0/raw1 仍是 null。
+        // 这里必须容忍"从未启动"的状态——List.of(null) 会抛 NPE，那样被跳过的用例
+        // 会在 @AfterAll 里变成 error（CI 上就是这么红的）。
+        for (DataSource raw : new DataSource[]{raw0, raw1}) {
             if (raw instanceof HikariDataSource hikari) {
                 hikari.close();
             }
