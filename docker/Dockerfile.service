@@ -1,0 +1,33 @@
+# 7 个服务共用的镜像定义（原先 7 份逐字节相同的 <module>/Dockerfile 收敛而来）。
+# 构建上下文 = 服务模块目录，jar 由 `mvn -B clean verify` 产出：
+#   docker build -f docker/Dockerfile.service -t aurora-user:dev aurora-user
+FROM eclipse-temurin:21-jre AS extract
+WORKDIR /app
+COPY target/*.jar app.jar
+# 分层解包：dependencies 层几乎不随业务代码变化，改代码只重传 application 层
+RUN java -Djarmode=tools -jar app.jar extract --layers --destination extracted
+
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+
+# 非 root 运行：UID/GID 固定，挂卷/对齐属主时不用去猜镜像里的动态分配
+RUN groupadd --gid 1001 app \
+    && useradd --uid 1001 --gid app --no-create-home --home-dir /app --shell /usr/sbin/nologin app
+COPY --from=extract --chown=app:app /app/extracted/dependencies/ ./
+COPY --from=extract --chown=app:app /app/extracted/spring-boot-loader/ ./
+COPY --from=extract --chown=app:app /app/extracted/snapshot-dependencies/ ./
+COPY --from=extract --chown=app:app /app/extracted/application/ ./
+
+# 容器内统一监听 8080：SERVER_PORT 经 Spring 宽松绑定覆盖 application.yml 里的端口
+# （那些端口是为了裸 JVM 多实例共存），部署侧只负责映射端口
+ENV SERVER_PORT=8080
+EXPOSE 8080
+
+# 探针用 bash 内建 /dev/tcp，不为探针额外装 curl/wget——CI 每次要构建 7 个镜像。
+# /actuator/health 在服务侧是 InternalSecretFilter 白名单内的路径；网关自身的 actuator
+# 不走路由守卫（守卫只在路由命中时生效），两侧直连都能探到
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=3 \
+    CMD bash -c 'exec 3<>/dev/tcp/127.0.0.1/${SERVER_PORT} && printf "GET /actuator/health HTTP/1.0\r\n\r\n" >&3 && grep -q UP <&3'
+
+USER app
+ENTRYPOINT ["java", "-jar", "application.jar"]

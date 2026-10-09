@@ -41,6 +41,15 @@ jobs:
           path: aurora-*/target/*.jar
           if-no-files-found: error
 
+      # 失败时把测试报告捞上来：CI 日志要登录才能看，产物是唯一可离线排障的入口
+      - name: Upload surefire reports
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: surefire-reports
+          path: aurora-*/target/surefire-reports/
+          if-no-files-found: ignore
+
   docker-build:
     runs-on: ubuntu-24.04
     needs: build-test
@@ -53,7 +62,7 @@ jobs:
           name: service-jars
           path: jars
 
-      # Dockerfile 的 COPY 以 aurora-<svc>/target/*.jar 为上下文路径，把 jar 归位。
+      # docker/Dockerfile.service 的 COPY 以 aurora-<svc>/target/*.jar 为上下文路径，把 jar 归位。
       # download-artifact 按 upload 时的仓库相对路径还原（jars/aurora-<svc>/target/…），
       # 用 find 递归取回再按模块名放置
       - name: Place jars back into module targets
@@ -63,25 +72,18 @@ jobs:
             mkdir -p "$name/target"
             cp "$jar" "$name/target/"
           done < <(find jars -name 'aurora-*-0.1.0-SNAPSHOT.jar')
-          for dockerfile in */Dockerfile; do
-            context="$(dirname "$dockerfile")"
-            ls "$context"/target/*.jar > /dev/null || { echo "missing jar for $context"; exit 1; }
-          done
 
-      # 在本地构建每个服务镜像，验证 Dockerfile 可用。
-      # CI 从不推送镜像；发布是手动步骤。
+      # 用共用的 docker/Dockerfile.service 构建全部服务镜像：验证这一份定义对 7 个
+      # 服务都可用。顺序固定便于对照；CI 从不推送镜像，发布是手动步骤。
       - name: Build service images
         run: |
-          shopt -s nullglob
-          found=0
-          for dockerfile in */Dockerfile; do
-            context="$(dirname "$dockerfile")"
-            name="$(basename "$context")"
-            echo "::group::docker build $name"
-            docker build -t "aurora-$name:$GITHUB_SHA" "$context"
-            echo "::endgroup::"
-            found=1
+          services="gateway user product cart order inventory payment"
+          for name in $services; do
+            ls "aurora-$name"/target/*.jar > /dev/null 2>&1 \
+              || { echo "missing jar for aurora-$name"; exit 1; }
           done
-          if [ "$found" -eq 0 ]; then
-            echo "no service Dockerfiles found yet (services land in T3)"
-          fi
+          for name in $services; do
+            echo "::group::docker build aurora-$name"
+            docker build -f docker/Dockerfile.service -t "aurora-$name:$GITHUB_SHA" "aurora-$name"
+            echo "::endgroup::"
+          done
