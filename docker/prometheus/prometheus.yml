@@ -22,3 +22,4 @@ scrape_configs:
           - 'host.docker.internal:8084'   # 订单
           - 'host.docker.internal:8085'   # 库存
           - 'host.docker.internal:8086'   # 支付
+          - 'host.docker.internal:8087'   # 秒杀

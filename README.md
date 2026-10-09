@@ -7,9 +7,9 @@
 [![CI](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml/badge.svg)](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
-![Tests](https://img.shields.io/badge/tests-276%20green-brightgreen)
+![Tests](https://img.shields.io/badge/tests-343%20green-brightgreen)
 
-**当前状态**：M0-M4 已交付（骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测），M5（秒杀、优惠券、分库试点）未开始。
+**当前状态**：M0-M4 已交付（骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测）；M5 进行中——秒杀已交付活动模型与库存预热、Lua 原子预扣、MQ 异步落单与失败补偿、并发冒烟接缝（优惠券与 ShardingSphere 分库试点待做）。
 
 </div>
 
@@ -76,8 +76,9 @@ flowchart LR
 - **完整交易链路**：预扣 → 事务消息 → 支付回调推进 → 30 分钟未支付延迟关单回滚；幂等、补偿、对账全链路闭环——含支付/关单竞态的退款信号（钱收了单关了会自动退）。
 - **缓存三防**：Cache Aside + 空值缓存 + 手写布隆过滤器（线程安全 + 定期重播种）+ 逻辑过期/互斥重建。
 - **过载保护**：网关 Redis 分布式滑动窗口限流（Nacos 动态阈值）+ 逐接口熔断器（失败率/慢调用双触发）。
+- **秒杀（M5）**：Redis+Lua 原子预扣（时间窗 / 一人一单 / 库存三合一判定）、MQ 异步落单削峰（请求路径零 DB 访问）、失败补偿恰好一次、订单唯一键 + DB 条件扣减兜底不超卖。
 - **安全模型**：手写 JWT（黑名单注销、refresh 一次一换、登出会话级失效）、内部密钥 + 内部路径守卫 + 用户身份守卫、回调渠道 HMAC 签名、常量时间比较。
-- **验收文化**：276 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis 集成测试（无环境自动跳过）。
+- **验收文化**：343 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis 集成测试（无环境自动跳过）。
 
 ## 🚀 快速开始
 
@@ -111,12 +112,13 @@ done
 **3️⃣ 验收**：
 
 ```bash
-bash docker/smoke-services.sh   # 网关 + 6 服务健康端点全 200
+bash docker/smoke-services.sh   # 网关 + 7 服务健康端点全 200
 bash docker/smoke-flows.sh      # 68 断言：金路径 + 两条交易链 + 网关限流链
+bash docker/smoke-seckill.sh    # 秒杀：并发抢购不超卖 / 一人一单 / Redis 与 DB 收敛一致
 bash docker/smoke-rpc.sh        # 可选：切手写 RPC 实测后自动还原
 ```
 
-两个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 自建用户与商品，可重复执行。
+三个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 自建用户与商品，`smoke-seckill.sh` 自建活动并预热，都可重复执行。
 
 ## 🎮 使用示例
 
@@ -180,9 +182,9 @@ bash docker/smoke-observability.sh   # 3 断言：Prometheus targets 全 UP / Lo
 | 组件 | 已交付内容 |
 | --- | --- |
 | Grafana | provisioning 自动装配：Prometheus + Loki 数据源、大盘「aurora-mall 全链路总览」、告警规则「order 服务 5xx 比例过高」（2 分钟 5xx 比例 >5%，持续 1 分钟）→ webhook 接点（本地 `docker/webhook-receiver.py` 可收验） |
-| Prometheus | 7 个服务的 `/actuator/prometheus` 抓取目标全部 UP |
+| Prometheus | 8 个服务的 `/actuator/prometheus` 抓取目标全部 UP（含 M5 新增的秒杀） |
 | Loki | loki4j 直推日志，可按 traceId 跨服务检索一次请求的全部日志 |
-| SkyWalking | agent 挂进 7 个服务，OAP 可查到真实链路 |
+| SkyWalking | agent 挂进 7 个服务（秒杀同样带 toolkit 依赖，agent 由启动参数决定），OAP 可查到真实链路 |
 
 压测（M4 T6）：同一购物车金路径、同参数下 Feign 与手写 RPC 的阶梯对照（10/50/100 线程），报告见 [docs/m4-load-test.md](docs/m4-load-test.md)，计划文件 `docker/jmeter/aurora-load.jmx` 可原样重放。结论摘要：默认 Feign 在 50 线程起出现失败、100 线程 28.5% 请求失败（客户端临时端口耗尽），手写 RPC 100 线程零错误、吞吐约 2.5×。
 
@@ -194,7 +196,7 @@ mvn -pl aurora-rpc test           # 手写 RPC：协议/传输/注册发现（�
 mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对照基准
 ```
 
-验收接缝：`docker/smoke.sh`（中间件）→ `docker/smoke-services.sh`（健康）→ `docker/smoke-flows.sh`（金路径：链 A 下单→支付→库存收敛→回调重放；链 B 经配置中心改关单延迟→自动关单→库存恢复→配置还原）。
+验收接缝：`docker/smoke.sh`（中间件）→ `docker/smoke-services.sh`（健康）→ `docker/smoke-flows.sh`（金路径：链 A 下单→支付→库存收敛→回调重放；链 B 经配置中心改关单延迟→自动关单→库存恢复→配置还原）→ `docker/smoke-seckill.sh`（秒杀：并发抢购不超卖、一人一单、结果收敛、Redis 与 DB 口径一致）。
 
 ## 🗺️ 路线图
 
@@ -205,7 +207,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 | M2 | 订单 / 库存 / 支付（事务消息、Seata 对照、幂等、ID 生成器） | ✅ |
 | M3 | 手写组件：限流熔断 + RPC + 端口切换 | ✅ |
 | M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | ✅ |
-| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 未开始 |
+| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 🚧 秒杀已交付（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝） |
 | M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
 | M7 | 部署上线（服务器 + ICP 备案） | 未开始 |
 
