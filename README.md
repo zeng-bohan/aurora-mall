@@ -7,7 +7,7 @@
 [![CI](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml/badge.svg)](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
-![Tests](https://img.shields.io/badge/tests-343%20green-brightgreen)
+![Tests](https://img.shields.io/badge/tests-370%20green-brightgreen)
 
 **当前状态**：M0-M4 已交付（骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测）；M5 进行中——秒杀已交付活动模型与库存预热、Lua 原子预扣、MQ 异步落单与失败补偿、并发冒烟接缝（优惠券与 ShardingSphere 分库试点待做）。
 
@@ -77,8 +77,9 @@ flowchart LR
 - **缓存三防**：Cache Aside + 空值缓存 + 手写布隆过滤器（线程安全 + 定期重播种）+ 逻辑过期/互斥重建。
 - **过载保护**：网关 Redis 分布式滑动窗口限流（Nacos 动态阈值）+ 逐接口熔断器（失败率/慢调用双触发）。
 - **秒杀（M5）**：Redis+Lua 原子预扣（时间窗 / 一人一单 / 库存三合一判定）、MQ 异步落单削峰（请求路径零 DB 访问）、失败补偿恰好一次、订单唯一键 + DB 条件扣减兜底不超卖。
+- **优惠券（M5）**：券并入 order 域（生命周期围绕订单，避免跨服务事务）；领取靠 SQL 守卫防超发 + 唯一键保一人一张；下单用券通过 `CouponHook` 在**订单事务内**锁定并抵扣（金额与订单行同生共死，不存在"下单失败券却被扣住"的中间态）；关单自动回券。
 - **安全模型**：手写 JWT（黑名单注销、refresh 一次一换、登出会话级失效）、内部密钥 + 内部路径守卫 + 用户身份守卫、回调渠道 HMAC 签名、常量时间比较。
-- **验收文化**：343 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis 集成测试（无环境自动跳过）。
+- **验收文化**：370 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis 集成测试（无环境自动跳过）。
 
 ## 🚀 快速开始
 
@@ -115,10 +116,11 @@ done
 bash docker/smoke-services.sh   # 网关 + 7 服务健康端点全 200
 bash docker/smoke-flows.sh      # 68 断言：金路径 + 两条交易链 + 网关限流链
 bash docker/smoke-seckill.sh    # 秒杀：并发抢购不超卖 / 一人一单 / Redis 与 DB 收敛一致
+bash docker/smoke-coupon.sh     # 券：领→用券下单抵扣→关单回券，含重复领/领完/门槛不足/过期四类边界
 bash docker/smoke-rpc.sh        # 可选：切手写 RPC 实测后自动还原
 ```
 
-三个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 自建用户与商品，`smoke-seckill.sh` 自建活动并预热，都可重复执行。
+四个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 自建用户与商品，`smoke-seckill.sh` 自建活动并预热，`smoke-coupon.sh` 自建账号/券/商品，都可重复执行。
 
 ## 🎮 使用示例
 
@@ -198,7 +200,7 @@ mvn -pl aurora-rpc test           # 手写 RPC：协议/传输/注册发现（�
 mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对照基准
 ```
 
-验收接缝：`docker/smoke.sh`（中间件）→ `docker/smoke-services.sh`（健康）→ `docker/smoke-flows.sh`（金路径：链 A 下单→支付→库存收敛→回调重放；链 B 经配置中心改关单延迟→自动关单→库存恢复→配置还原）→ `docker/smoke-seckill.sh`（秒杀：并发抢购不超卖、一人一单、结果收敛、Redis 与 DB 口径一致）。
+验收接缝：`docker/smoke.sh`（中间件）→ `docker/smoke-services.sh`（健康）→ `docker/smoke-flows.sh`（金路径：链 A 下单→支付→库存收敛→回调重放；链 B 经配置中心改关单延迟→自动关单→库存恢复→配置还原）→ `docker/smoke-seckill.sh`（秒杀：并发抢购不超卖、一人一单、结果收敛、Redis 与 DB 口径一致）→ `docker/smoke-coupon.sh`（券：领取→用券下单抵扣→关单回券，含四类边界）。
 
 ## 🗺️ 路线图
 
@@ -209,7 +211,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 | M2 | 订单 / 库存 / 支付（事务消息、Seata 对照、幂等、ID 生成器） | ✅ |
 | M3 | 手写组件：限流熔断 + RPC + 端口切换 | ✅ |
 | M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | ✅ |
-| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 🚧 秒杀已交付（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝 + 活动维度限流 + 压测报告）；优惠券 S4 券模板与领取已交付（并入 order 域），S5 下单抵扣与退款回券待做 |
+| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 🚧 秒杀已交付（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝 + 活动维度限流 + 压测报告）；优惠券已交付（S4 模板与领取 / S5 下单抵扣 + 关单回券 + 冒烟接缝）；ShardingSphere 分库试点待做 |
 | M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
 | M7 | 部署上线（服务器 + ICP 备案） | 未开始 |
 
