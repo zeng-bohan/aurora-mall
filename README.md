@@ -7,7 +7,7 @@
 [![CI](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml/badge.svg)](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
-![Tests](https://img.shields.io/badge/tests-370%20green-brightgreen)
+![Tests](https://img.shields.io/badge/tests-383%20green-brightgreen)
 
 **当前状态**：M0-M4 已交付（骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测）；M5 进行中——秒杀已交付活动模型与库存预热、Lua 原子预扣、MQ 异步落单与失败补偿、并发冒烟接缝（优惠券与 ShardingSphere 分库试点待做）。
 
@@ -79,7 +79,7 @@ flowchart LR
 - **秒杀（M5）**：Redis+Lua 原子预扣（时间窗 / 一人一单 / 库存三合一判定）、MQ 异步落单削峰（请求路径零 DB 访问）、失败补偿恰好一次、订单唯一键 + DB 条件扣减兜底不超卖。
 - **优惠券（M5）**：券并入 order 域（生命周期围绕订单，避免跨服务事务）；领取靠 SQL 守卫防超发 + 唯一键保一人一张；下单用券通过 `CouponHook` 在**订单事务内**锁定并抵扣（金额与订单行同生共死，不存在"下单失败券却被扣住"的中间态）；关单自动回券。
 - **安全模型**：手写 JWT（黑名单注销、refresh 一次一换、登出会话级失效）、内部密钥 + 内部路径守卫 + 用户身份守卫、回调渠道 HMAC 签名、常量时间比较。
-- **验收文化**：370 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis 集成测试（无环境自动跳过）。
+- **验收文化**：383 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis/真 MySQL 双分片库集成测试（无环境自动跳过）。
 
 ## 🚀 快速开始
 
@@ -211,7 +211,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 | M2 | 订单 / 库存 / 支付（事务消息、Seata 对照、幂等、ID 生成器） | ✅ |
 | M3 | 手写组件：限流熔断 + RPC + 端口切换 | ✅ |
 | M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | ✅ |
-| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | 🚧 秒杀已交付（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝 + 活动维度限流 + 压测报告）；优惠券已交付（S4 模板与领取 / S5 下单抵扣 + 关单回券 + 冒烟接缝）；ShardingSphere 分库试点待做 |
+| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | ✅ 秒杀（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝 + 活动维度限流 + 压测报告）；优惠券（S4 模板与领取 / S5 下单抵扣 + 关单回券 + 冒烟接缝）；分库试点（S6 试点模块 13 条断言 + [对照报告](docs/m5-sharding-pilot.md)，产品链路未引入） |
 | M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
 | M7 | 部署上线（服务器 + ICP 备案） | 未开始 |
 
@@ -221,6 +221,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 - [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) — OpenFeign vs 手写 RPC 对照（等价性 + 微基准 + 边界）
 - [docs/m4-load-test.md](docs/m4-load-test.md) — 同链路压测对照（Feign vs 手写 RPC，阶梯 10/50/100 线程）
 - [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md) — 秒杀压测对照（活动限流关闭 vs 打开，含量级/一致性证据）
+- [docs/m5-sharding-pilot.md](docs/m5-sharding-pilot.md) — ShardingSphere 分库试点对照（路由/归并/事务边界/唯一性，含依赖矩阵踩坑记录）
 - [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件设计取舍与实测数据
 
 ## 🤝 协作

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.zengbohan.aurora</groupId>
+        <artifactId>aurora-parent</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>aurora-sharding-pilot</artifactId>
+    <name>aurora-sharding-pilot</name>
+    <description>
+        ShardingSphere 分库试点（M5 S6）：本模块不含产品代码，只有分片算法与可复跑的断言。
+        产品链路不依赖 ShardingSphere —— 试点结论先写报告，是否落地另行决定。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.apache.shardingsphere</groupId>
+            <artifactId>shardingsphere-jdbc</artifactId>
+        </dependency>
+        <!-- 5.5.2 是经典聚合：分片特性、Hikari 池适配、Standalone 运行模式都在
+             shardingsphere-jdbc 内部，不需要像 5.5.3 那样一件件补（见报告"依赖矩阵"一节） -->
+        <!-- YAML 里 dataSourceClassName 指定的是 Hikari，池实现要真的在 classpath 上 -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <!-- 依赖矩阵冲突：5.5.3 用到 org.apache.commons.lang3.Strings（3.18 才有的类），
+             而 Spring Boot 父 POM 里管的 commons-lang3 更低 → 不显式提版本就是 NoClassDefFoundError。
+             生产接入时这条要落到根 pom 的依赖矩阵里，不能靠"碰巧的传递版本"。 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.18.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

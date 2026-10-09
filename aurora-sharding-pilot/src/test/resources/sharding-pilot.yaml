@@ -1,0 +1,60 @@
+# ShardingSphere 分库试点配置（M5 S6）。
+# 形状与生产落地一致：两份物理库 + 按 user_id 取模分库；orders 表 DDL 与线上同构。
+# 试点只读/只写 aurora_order_shard0/1 两个新库，**不碰线上 aurora_order**。
+databaseName: aurora_sharding_pilot
+
+dataSources:
+  ds0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    # 用标准名 url；池适配器（shardingsphere-infra-data-source-pool-hikari）负责把它
+    # 同义映射到 Hikari 的 jdbcUrl，缺了适配器就会在这里变成 url=null 的 NPE
+    url: jdbc:mysql://localhost:13306/aurora_order_shard0?useSSL=false&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: aurora123
+    maxPoolSize: 4
+  ds1:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:13306/aurora_order_shard1?useSSL=false&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: aurora123
+    maxPoolSize: 4
+
+rules:
+  - !SHARDING
+    tables:
+      orders:
+        actualDataNodes: ds${0..1}.orders
+        databaseStrategy:
+          standard:
+            shardingColumn: user_id
+            shardingAlgorithmName: user-id-mod
+        # 对照项：本合同里订单 id 由集中式 aurora-id-generator 供号；
+        # 这里额外配上分片中间件的雪花生成，验证"不给 id 时谁供号"这条路径。
+        keyGenerateStrategy:
+          column: id
+          keyGeneratorName: snowflake
+      pilot_autoinc:
+        actualDataNodes: ds${0..1}.pilot_autoinc
+        databaseStrategy:
+          standard:
+            shardingColumn: user_id
+            shardingAlgorithmName: user-id-mod
+      pilot_unique:
+        actualDataNodes: ds${0..1}.pilot_unique
+        databaseStrategy:
+          standard:
+            shardingColumn: user_id
+            shardingAlgorithmName: user-id-mod
+    shardingAlgorithms:
+      user-id-mod:
+        type: USER_ID_MOD
+    keyGenerators:
+      snowflake:
+        type: SNOWFLAKE
+        props:
+          worker-id: 42
+
+props:
+  sql-show: true

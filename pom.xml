@@ -32,10 +32,16 @@
         <module>aurora-ratelimit</module>
         <module>aurora-rpc</module>
         <module>aurora-api</module>
+        <module>aurora-sharding-pilot</module>
     </modules>
 
     <properties>
         <java.version>21</java.version>
+        <!-- ShardingSphere 分库试点（M5 S6）：只有试点模块用它，产品链路不依赖。
+             锁 5.5.2 而不是最新的 5.5.3：5.5.3 在中央仓库的发布不完整（BOM 的 parent
+             shardingsphere-distribution 缺失、jdbc 聚合缺特性/池适配/运行模式模块），
+             逐件补齐后仍卡在 PrivilegeProvider SPI；5.5.2 装配完整。 -->
+        <shardingsphere.version>5.5.2</shardingsphere.version>
         <!-- 依赖矩阵钉死在 SCA 2025.0.x 分支 POM 上（SCA 2025.0.0.0 <-> Spring Cloud 2025.0.0 <-> Boot 3.5.0） -->
         <spring-cloud.version>2025.0.0</spring-cloud.version>
         <spring-cloud-alibaba.version>2025.0.0.0</spring-cloud-alibaba.version>
@@ -104,6 +110,13 @@
                 <groupId>org.apache.rocketmq</groupId>
                 <artifactId>rocketmq-spring-boot-starter</artifactId>
                 <version>${rocketmq-spring.version}</version>
+            </dependency>
+            <!-- ShardingSphere-JDBC：官方 BOM（shardingsphere-bom）在中央仓库不可解析
+                 （parent shardingsphere-distribution 未发布），所以在这里直接列版本，不用 BOM -->
+            <dependency>
+                <groupId>org.apache.shardingsphere</groupId>
+                <artifactId>shardingsphere-jdbc</artifactId>
+                <version>${shardingsphere.version}</version>
             </dependency>
             <dependency>
                 <groupId>com.google.guava</groupId>
