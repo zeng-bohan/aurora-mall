@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS idempotent_record (
     biz_type   VARCHAR(32) NOT NULL,
     biz_key    VARCHAR(128) NOT NULL,
     created_at DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_idempotent (biz_type, biz_key)
+    UNIQUE KEY uk_idempotent (biz_type, biz_key),
+    KEY idx_idempotent_created (created_at)
 ) ENGINE = InnoDB;
 
 INSERT IGNORE INTO product_stock (sku_id, available, reserved) VALUES
