@@ -1,8 +1,12 @@
 name: ci
 
+# 只跑主干推送与面向主干的 PR：push 不限分支时，同仓 PR 会被 push + pull_request
+# 双触发（同一个提交跑两遍）
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 # 同分支新推送取消仍在跑的旧构建，省额度也省排队
 concurrency:
@@ -14,7 +18,9 @@ permissions:
 
 jobs:
   build-test:
-    runs-on: ubuntu-latest
+    # 钉具体版本而非 ubuntu-latest：2026-10-19 起 latest 会迁到 Ubuntu 26，
+    # 那次基础镜像跳变不该顺带改变验收结果（要迁移时单独一次提交改这两处）
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
@@ -36,7 +42,7 @@ jobs:
           if-no-files-found: error
 
   docker-build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-test
     steps:
       - uses: actions/checkout@v7
