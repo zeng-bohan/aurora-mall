@@ -53,6 +53,13 @@ spring:
               filters:
                 - StripPrefix=2
 
+# 网关自身的 actuator 与业务端口同址（8000）且免认证：这是**有意的取舍**，与各服务保持一致——
+# docker/prometheus/prometheus.yml 用 host.docker.internal:8000/actuator/prometheus 抓取，容器里的
+# Prometheus 够不到宿主 loopback，因此 management.server.address 不能绑 127.0.0.1；/actuator/prometheus
+# 免认证同理（抓取方无法带内部密钥，各服务的 InternalSecretFilter 也白名单了这条路径）。
+# 实际暴露面：health（默认不回显细节）+ prometheus 指标，info 为空。
+# 若要收严：management.server.port 独立并绑 loopback，同时把抓取挪到宿主侧或给 Prometheus 开
+# network_mode: host——那会动到 M4 的验收缝 smoke-observability（Prometheus targets 全 UP），单独一次做。
 management:
   metrics:
     tags:
