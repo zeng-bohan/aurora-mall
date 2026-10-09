@@ -104,11 +104,14 @@ assert_eq "$STOCK" "$(redis_hget "seckill:activity:$AID" stock)" "Redis 快照�
 step "$BUYERS 个买家并发抢 $STOCK 个名额"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+RACE_START=$(date +%s%3N)
 for i in $(seq 1 "$BUYERS"); do
-  curl -s -o "$TMP/body.$i" -w '%{time_total}' -XPOST "$SECKILL/activities/$AID/orders" \
+  # \n 是 curl -w 的转义：不加它 40 个数值会被拼成一行，分位数统计就只剩 1 条记录
+  curl -s -o "$TMP/body.$i" -w '%{time_total}\n' -XPOST "$SECKILL/activities/$AID/orders" \
     -H "X-User-Id: $i" -H "X-Internal-Secret: $SECRET" > "$TMP/time.$i" &
 done
 wait
+RACE_MS=$(( $(date +%s%3N) - RACE_START ))
 
 QUEUED=0
 PLACED=0
@@ -140,11 +143,19 @@ assert_eq "$((BUYERS - STOCK))" "$SOLD_OUT" "其余 $((BUYERS - STOCK)) 个全�
 assert_eq "0" "$OTHER" "没有出现意外错误"
 assert_eq "$STOCK" "${#WINNERS[@]}" "赢家数与限量一致"
 
-cat "$TMP"/time.* | sort -n | awk '
+cat "$TMP"/time.* | sort -n | awk -v wall="$RACE_MS" -v buyers="$BUYERS" '
   {a[NR]=$1}
   END {p50 = int(NR*0.5) < 1 ? 1 : int(NR*0.5); p95 = int(NR*0.95) < 1 ? 1 : int(NR*0.95);
        printf "  buy POST 时延：p50=%.0fms p95=%.0fms max=%.0fms（n=%d）\n",
-              a[p50]*1000, a[p95]*1000, a[NR]*1000, NR}'
+              a[p50]*1000, a[p95]*1000, a[NR]*1000, NR;
+       printf "  整轮墙钟：%dms（%d 个并发，含 curl/进程开销，分母不是服务自身耗时）\n", wall, buyers}'
+
+# 两种落单模式的可见差异：POST 返回的这一刻，DB 里已经有多少订单、还有多少请求悬在 PENDING。
+# mq 模式：落单在消费者侧异步发生，这两个数字反映"削峰"（DB 写入不在请求线程里）；
+# sync 模式：POST 返回时订单必然已经在 DB 里，PENDING 必为 0。
+ORDERS_AT_RETURN=$(db_scalar "SELECT COUNT(*) FROM aurora_seckill.seckill_order WHERE activity_id=$AID")
+PENDING_AT_RETURN=$(docker exec aurora-redis redis-cli --raw HVALS "seckill:result:$AID" 2>/dev/null | grep -c '^PENDING$' || true)
+echo "  POST 返回瞬间：DB 订单数=$ORDERS_AT_RETURN，仍 PENDING=$PENDING_AT_RETURN"
 
 step "一人一单：赢家再次抢购被拒"
 DUP_USER="${WINNERS[0]:-1}"
