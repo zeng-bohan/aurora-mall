@@ -26,6 +26,11 @@ public class SnowflakeIdGenerator implements IdGenerator {
     private long lastTimestamp = -1L;
     private long sequence;
 
+    /** 便捷构造：workerId 经 {@link SnowflakeWorkerIdAssigner#assign()} 自动解析。 */
+    public SnowflakeIdGenerator() {
+        this(SnowflakeWorkerIdAssigner.assign());
+    }
+
     public SnowflakeIdGenerator(long workerId) {
         this(workerId, Clock.systemUTC());
     }

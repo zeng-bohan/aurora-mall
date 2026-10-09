@@ -20,6 +20,16 @@
 - **等待后重评估**：等待新毫秒期间其他线程可能已占用该毫秒的序号——主循环 `continue` 重新推导，而不是沿用环绕后的 seq（并发单测曾抓出这个撞号 bug）
 - 轻微自旋等待用 `wait()`，中断即中止
 
+### workerId 分配（接线前必须）
+
+workerId 只需在**同时存活**的实例间唯一——同 workerId 的两个活实例会在同一毫秒发出重复 id。分配顺序：
+
+1. **显式指定**（多实例/生产部署必须）：系统属性 `aurora.snowflake.worker-id`，其次环境变量
+   `AURORA_SNOWFLAKE_WORKER_ID`；越界/非数字启动即失败
+2. **缺省推导**：`hash(hostname/pid) % 1024`——同机多实例靠 pid 区分、跨机靠 hostname 区分；
+   哈希**不探测冲突**，两个并发实例可能撞出同一 id，推导模式启动时打 WARN
+3. 生产建议：显式指定，或改用中心化租约（DB/ZK）——为保持本模块"无 DB 依赖"不内置
+
 ## 用法
 
 ```java
@@ -28,13 +38,13 @@ IdGenerator orderIds = new SegmentIdGenerator("order",
         new JdbcSegmentLoader(dataSource, "aurora_id.leaf_alloc"));
 long orderId = orderIds.nextId();
 
-// 雪花（需要纯内存、无 DB 依赖时）
-IdGenerator snowflake = new SnowflakeIdGenerator(workerId); // 0..1023
+// 雪花（需要纯内存、无 DB 依赖时）：workerId 自动分配（显式配置优先，见上节）
+IdGenerator snowflake = new SnowflakeIdGenerator();
 ```
 
 Spring 装配示例见 `aurora-order/config/IdGeneratorConfig`（DataSource → JdbcSegmentLoader，bean 名 `orderIdGenerator`）。
 
-## 测试覆盖（8 例，`mvn -pl aurora-id-generator test`）
+## 测试覆盖（15 例，`mvn -pl aurora-id-generator test`）
 
 | 场景 | 说明 |
 | --- | --- |
@@ -45,6 +55,7 @@ Spring 装配示例见 `aurora-order/config/IdGeneratorConfig`（DataSource → 
 | 段内发号 / 跨段切换 | 覆盖段边界、断点无跳号 |
 | 预取计数 | 三段耗尽恰三次 loader 调用（预取恰一次/段） |
 | 并发唯一性（号段） | 20 线程 × 400 号，跨段切换无重复 |
+| workerId 分配 | 显式优先于 env；越界/非数字启动即失败；缺省推导确定且在 [0,1023] |
 
 ## 设计要点回顾（真实实现支撑）
 
