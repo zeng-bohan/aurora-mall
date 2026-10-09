@@ -34,8 +34,16 @@ public class ServiceDiscovery {
                 cache.put(service, instances);
             }
         };
-        if (wired.putIfAbsent(service, listener) == null) {
+        if (wired.putIfAbsent(service, listener) != null) {
+            return;
+        }
+        try {
             registry.subscribe(service, listener);
+        } catch (RuntimeException e) {
+            // 注册中心没接上：撤回占位。否则这次失败会被记成"已接线"，后续 subscribe
+            // 直接返回、永远走不到注册中心（NacosRegistry 失败时已清好自身状态，就等这次重试）
+            wired.remove(service, listener);
+            throw e;
         }
     }
 

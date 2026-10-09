@@ -4,6 +4,7 @@ import com.zengbohan.aurora.rpc.lb.RoundRobinLoadBalancer;
 import com.zengbohan.aurora.rpc.transport.RpcUnavailableException;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -11,6 +12,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -39,6 +41,51 @@ class ServiceDiscoveryTest {
         ServiceDiscovery discovery = new ServiceDiscovery(new InMemoryRegistry());
         discovery.subscribe("svc");
         assertThat(discovery.snapshot("svc")).isEmpty();
+    }
+
+    @Test
+    void failedSubscribeLeavesNoWiredPlaceholderSoRetryReachesRegistry() {
+        // 注册中心第一次订阅失败（模拟 nacos 瞬时不可达），其自身状态在失败路径上已清好
+        AtomicInteger attempts = new AtomicInteger();
+        InMemoryRegistry delegate = new InMemoryRegistry();
+        RegistryService flaky = new RegistryService() {
+            @Override
+            public void register(ServiceInstance instance) {
+                delegate.register(instance);
+            }
+
+            @Override
+            public void unregister(ServiceInstance instance) {
+                delegate.unregister(instance);
+            }
+
+            @Override
+            public void subscribe(String service, Consumer<List<ServiceInstance>> listener) {
+                if (attempts.incrementAndGet() == 1) {
+                    throw new IllegalStateException("nacos subscribe failed for " + service);
+                }
+                delegate.subscribe(service, listener);
+            }
+
+            @Override
+            public void unsubscribe(String service, Consumer<List<ServiceInstance>> listener) {
+                delegate.unsubscribe(service, listener);
+            }
+
+            @Override
+            public List<ServiceInstance> discover(String service) {
+                return delegate.discover(service);
+            }
+        };
+        ServiceDiscovery discovery = new ServiceDiscovery(flaky);
+
+        assertThatThrownBy(() -> discovery.subscribe("svc")).isInstanceOf(IllegalStateException.class);
+        // 失败不占位：重试必须真正到达注册中心（而不是被本地 wired 挡回）
+        discovery.subscribe("svc");
+        assertThat(attempts.get()).as("第二次订阅真的打到注册中心").isEqualTo(2);
+
+        delegate.register(instance(1));
+        assertThat(discovery.snapshot("svc")).as("重试后推送能落到缓存").containsExactly(instance(1));
     }
 
     @Test
