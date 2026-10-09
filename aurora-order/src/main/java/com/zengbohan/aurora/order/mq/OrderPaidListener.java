@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.order.mq;
 
+import com.zengbohan.aurora.order.service.CouponService;
 import com.zengbohan.aurora.order.service.OrderService;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
@@ -27,15 +28,23 @@ public class OrderPaidListener implements RocketMQListener<OrderPaidListener.Ord
 
     private final OrderService orderService;
     private final OrderEventPublisher publisher;
+    private final CouponService couponService;
 
-    public OrderPaidListener(OrderService orderService, OrderEventPublisher publisher) {
+    public OrderPaidListener(OrderService orderService, OrderEventPublisher publisher,
+                             CouponService couponService) {
         this.orderService = orderService;
         this.publisher = publisher;
+        this.couponService = couponService;
     }
 
     @Override
     public void onMessage(OrderPaidEvent event) {
         boolean applied = orderService.markPaid(event.orderId());
+        if (applied && couponService.markUsedForOrder(event.orderId())) {
+            // 券核销跟着"订单转为 PAID"这一次迁移走（M5 S5）：无券订单是空操作，
+            // 重投递时 markPaid 返回 false，这里也不会再动券
+            log.info("coupon consumed by paid order {}", event.orderId());
+        }
         if (!applied) {
             // 状态机拒绝：已支付（重放，无害）或已关单（迟到支付）。
             // 关单场景钱已收、库存已回滚——必须发退款信号闭环，不能静默丢弃

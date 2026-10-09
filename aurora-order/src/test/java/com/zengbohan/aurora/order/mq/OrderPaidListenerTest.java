@@ -1,6 +1,7 @@
 package com.zengbohan.aurora.order.mq;
 
 import com.zengbohan.aurora.order.mq.OrderPaidListener.OrderPaidEvent;
+import com.zengbohan.aurora.order.service.CouponService;
 import com.zengbohan.aurora.order.service.OrderService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,13 +18,15 @@ class OrderPaidListenerTest {
 
     private OrderService orderService;
     private OrderEventPublisher publisher;
+    private CouponService couponService;
     private OrderPaidListener listener;
 
     @BeforeEach
     void setUp() {
         orderService = mock(OrderService.class);
         publisher = mock(OrderEventPublisher.class);
-        listener = new OrderPaidListener(orderService, publisher);
+        couponService = mock(CouponService.class);
+        listener = new OrderPaidListener(orderService, publisher, couponService);
     }
 
     private OrderPaidEvent event() {

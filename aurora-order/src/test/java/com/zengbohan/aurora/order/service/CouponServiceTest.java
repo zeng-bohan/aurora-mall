@@ -190,7 +190,72 @@ class CouponServiceTest {
         assertThat(service.listTemplates()).extracting(CouponTemplateView::remaining).containsExactly(0);
     }
 
+    // ---------- 用券（S5） ----------
+
+    @Test
+    void prepareUseRejectsStolenCouponBadStateAndExpired() {
+        when(couponMapper.selectById(9L)).thenReturn(coupon(9L, CouponStatus.UNUSED.name(), LocalDateTime.now().plusDays(1)));
+        assertUseRejected(9L, 4L, ErrorCode.NOT_FOUND);      // 别人的券：按不存在处理
+
+        UserCoupon locked = coupon(9L, CouponStatus.LOCKED.name(), LocalDateTime.now().plusDays(1));
+        when(couponMapper.selectById(9L)).thenReturn(locked);
+        assertUseRejected(9L, USER_ID, ErrorCode.COUPON_NOT_USABLE);
+
+        UserCoupon expired = coupon(9L, CouponStatus.UNUSED.name(), LocalDateTime.now().minusMinutes(1));
+        when(couponMapper.selectById(9L)).thenReturn(expired);
+        assertUseRejected(9L, USER_ID, ErrorCode.COUPON_EXPIRED);
+    }
+
+    @Test
+    void hookEnforcesThresholdAndReturnsSnapshottedDiscount() {
+        when(couponMapper.selectById(9L)).thenReturn(
+                coupon(9L, CouponStatus.UNUSED.name(), LocalDateTime.now().plusDays(1)));
+        CouponService.CouponUseHook hook = service.prepareUse(9L, USER_ID);
+
+        assertThatThrownBy(() -> hook.discountFor(new BigDecimal("99.99")))
+                .as("低于门槛直接拒绝")
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.COUPON_THRESHOLD_NOT_MET);
+        assertThat(hook.discountFor(new BigDecimal("100.00"))).isEqualByComparingTo("20.00");
+    }
+
+    @Test
+    void hookBindLocksCouponThenBindsOrder() {
+        when(couponMapper.selectById(9L)).thenReturn(
+                coupon(9L, CouponStatus.UNUSED.name(), LocalDateTime.now().plusDays(1)));
+        CouponService.CouponUseHook hook = service.prepareUse(9L, USER_ID);
+
+        when(couponMapper.lock(9L, USER_ID)).thenReturn(1);
+        hook.bind(77L);
+        verify(couponMapper).bindToOrder(9L, 77L);
+
+        when(couponMapper.lock(9L, USER_ID)).thenReturn(0);   // 被并发订单用掉了
+        assertThatThrownBy(() -> hook.bind(78L))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(ErrorCode.COUPON_NOT_USABLE);
+        verify(couponMapper, never()).bindToOrder(9L, 78L);
+    }
+
+    @Test
+    void markUsedAndReleaseDelegateToGuardedUpdates() {
+        when(couponMapper.markUsedByOrder(77L)).thenReturn(1);
+        when(couponMapper.releaseByOrder(88L)).thenReturn(1);
+
+        assertThat(service.markUsedForOrder(77L)).isTrue();
+        assertThat(service.releaseForOrder(88L)).isTrue();
+    }
+
     // ---------- helpers ----------
+
+    private void assertUseRejected(long couponId, long caller, ErrorCode expected) {
+        assertThatThrownBy(() -> service.prepareUse(couponId, caller))
+                .isInstanceOf(BusinessException.class)
+                .extracting(e -> ((BusinessException) e).getErrorCode())
+                .isEqualTo(expected);
+    }
+
 
     private void assertClaimCode(ErrorCode expected) {
         assertThatThrownBy(() -> service.claim(TEMPLATE_ID, USER_ID))

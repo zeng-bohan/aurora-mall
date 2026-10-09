@@ -107,6 +107,41 @@ class CouponClaimConcurrencyRealMysqlTest {
                 .isEqualTo(1);
     }
 
+    @Test
+    void guardedTransitionsMoveAtMostOnce() throws Exception {
+        long templateId = insertTemplate(2);
+        long couponId = insertCoupon(templateId, 3000L);
+
+        assertThat(lock(couponId, 3000L)).as("UNUSED→LOCKED 成功").isEqualTo(1);
+        assertThat(lock(couponId, 3000L)).as("已经 LOCKED，再锁不动").isEqualTo(0);
+        assertThat(lock(couponId, 9999L)).as("别人的券锁不动").isEqualTo(0);
+        assertThat(bind(couponId, 4242L)).isEqualTo(1);
+        assertThat(statusOf(couponId)).isEqualTo("LOCKED");
+        assertThat(usedByOrder(4242L)).as("LOCKED→USED 核销一次").isEqualTo(1);
+        assertThat(usedByOrder(4242L)).as("已核销的订单再投递是空操作").isEqualTo(0);
+        assertThat(statusOf(couponId)).isEqualTo("USED");
+    }
+
+    @Test
+    void closedOrderReturnsOnlyLockedCoupon() throws Exception {
+        long templateId = insertTemplate(2);
+        long couponId = insertCoupon(templateId, 4000L);
+        assertThat(lock(couponId, 4000L)).isEqualTo(1);
+        assertThat(bind(couponId, 5555L)).isEqualTo(1);
+
+        assertThat(releasedByOrder(5555L)).as("关单把锁定的券退回").isEqualTo(1);
+        assertThat(releasedByOrder(5555L)).as("重复回退是空操作").isEqualTo(0);
+        assertThat(statusOf(couponId)).isEqualTo("UNUSED");
+        assertThat(orderIdOf(couponId)).as("回退同时解绑").isNull();
+
+        // 已核销（USED）的券不回退：对应已支付订单，本项目里它不会被关单
+        assertThat(lock(couponId, 4000L)).isEqualTo(1);
+        assertThat(bind(couponId, 6666L)).isEqualTo(1);
+        assertThat(usedByOrder(6666L)).isEqualTo(1);
+        assertThat(releasedByOrder(6666L)).as("USED 的券不动").isEqualTo(0);
+        assertThat(statusOf(couponId)).isEqualTo("USED");
+    }
+
     // ---------- 被测语义的裸 JDBC 复刻（与 CouponService 的两条 SQL 一一对应） ----------
 
     private boolean claim(long templateId, long userId) throws SQLException {
@@ -203,6 +238,74 @@ class CouponClaimConcurrencyRealMysqlTest {
         try (Statement st = connection.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             rs.next();
             return rs.getInt(1);
+        }
+    }
+
+    // ---------- 状态迁移的裸 JDBC（与 UserCouponMapper 的 SQL 一一对应） ----------
+
+    private long insertCoupon(long templateId, long userId) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO user_coupon (template_id, user_id, status, title, threshold_amount,"
+                        + " discount_amount, claimed_at, expire_at) VALUES (?,?,'UNUSED',?,?,?,?,?)",
+                Statement.RETURN_GENERATED_KEYS)) {
+            ps.setLong(1, templateId);
+            ps.setLong(2, userId);
+            ps.setString(3, TITLE_PREFIX + templateId);
+            ps.setBigDecimal(4, new BigDecimal("100.00"));
+            ps.setBigDecimal(5, new BigDecimal("20.00"));
+            ps.setObject(6, LocalDateTime.now());
+            ps.setObject(7, LocalDateTime.now().plusDays(30));
+            ps.executeUpdate();
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                keys.next();
+                return keys.getLong(1);
+            }
+        }
+    }
+
+    private int lock(long couponId, long userId) throws SQLException {
+        return update("UPDATE user_coupon SET status = 'LOCKED' "
+                + "WHERE id = " + couponId + " AND user_id = " + userId + " AND status = 'UNUSED'");
+    }
+
+    private int bind(long couponId, long orderId) throws SQLException {
+        return update("UPDATE user_coupon SET order_id = " + orderId
+                + " WHERE id = " + couponId + " AND status = 'LOCKED'");
+    }
+
+    private int usedByOrder(long orderId) throws SQLException {
+        return update("UPDATE user_coupon SET status = 'USED', used_at = NOW() "
+                + "WHERE order_id = " + orderId + " AND status = 'LOCKED'");
+    }
+
+    private int releasedByOrder(long orderId) throws SQLException {
+        return update("UPDATE user_coupon SET status = 'UNUSED', order_id = NULL "
+                + "WHERE order_id = " + orderId + " AND status = 'LOCKED'");
+    }
+
+    private int update(String sql) throws SQLException {
+        try (Statement st = connection.createStatement()) {
+            return st.executeUpdate(sql);
+        }
+    }
+
+    private String statusOf(long couponId) throws SQLException {
+        return stringOf("SELECT status FROM user_coupon WHERE id = " + couponId);
+    }
+
+    private Long orderIdOf(long couponId) throws SQLException {
+        try (Statement st = connection.createStatement();
+             ResultSet rs = st.executeQuery("SELECT order_id FROM user_coupon WHERE id = " + couponId)) {
+            rs.next();
+            long value = rs.getLong(1);
+            return rs.wasNull() ? null : value;
+        }
+    }
+
+    private String stringOf(String sql) throws SQLException {
+        try (Statement st = connection.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            rs.next();
+            return rs.getString(1);
         }
     }
 }

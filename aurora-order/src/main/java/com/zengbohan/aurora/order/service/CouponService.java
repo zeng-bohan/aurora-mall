@@ -174,6 +174,72 @@ public class CouponService {
                 coupon.getDiscountAmount(), status, expireAt, coupon.getOrderId());
     }
 
+    /**
+     * 为一次下单准备用券钩子。这里只做只读校验（归属/状态/有效期），状态迁移
+     * （UNUSED→LOCKED）留给 {@link CouponUseHook#bind}——它在订单自己的事务里执行，
+     * 因此下单失败时券不会被扣在半路。
+     */
+    public CouponUseHook prepareUse(long couponId, long userId) {
+        UserCoupon coupon = couponMapper.selectById(couponId);
+        if (coupon == null || coupon.getUserId() == null || coupon.getUserId() != userId) {
+            // 不暴露他人券的存在性
+            throw new BusinessException(ErrorCode.NOT_FOUND, "优惠券不存在");
+        }
+        if (!CouponStatus.UNUSED.name().equals(coupon.getStatus())) {
+            throw new BusinessException(ErrorCode.COUPON_NOT_USABLE);
+        }
+        if (coupon.getExpireAt() != null && coupon.getExpireAt().isBefore(LocalDateTime.now())) {
+            throw new BusinessException(ErrorCode.COUPON_EXPIRED);
+        }
+        return new CouponUseHook(couponId, userId, coupon.getThresholdAmount(), coupon.getDiscountAmount());
+    }
+
+    /** 支付成功：核销该订单锁定的券（无券订单是空操作，重投递天然幂等）。 */
+    public boolean markUsedForOrder(long orderId) {
+        return couponMapper.markUsedByOrder(orderId) == 1;
+    }
+
+    /** 关单/超时：把锁定的券退回 UNUSED（已核销的不动，理由见 mapper 注释）。 */
+    public boolean releaseForOrder(long orderId) {
+        return couponMapper.releaseByOrder(orderId) == 1;
+    }
+
+    /**
+     * 下单用券钩子：{@code discountFor} 是纯函数（门槛判定 + 抵扣额），
+     * {@code bind} 必须在订单事务内执行（UNUSED→LOCKED 与订单行同生共死）。
+     */
+    public class CouponUseHook implements OrderService.CouponHook {
+
+        private final long couponId;
+        private final long userId;
+        private final BigDecimal thresholdAmount;
+        private final BigDecimal discountAmount;
+
+        CouponUseHook(long couponId, long userId, BigDecimal thresholdAmount, BigDecimal discountAmount) {
+            this.couponId = couponId;
+            this.userId = userId;
+            this.thresholdAmount = thresholdAmount;
+            this.discountAmount = discountAmount;
+        }
+
+        @Override
+        public BigDecimal discountFor(BigDecimal orderAmount) {
+            if (orderAmount.compareTo(thresholdAmount) < 0) {
+                throw new BusinessException(ErrorCode.COUPON_THRESHOLD_NOT_MET);
+            }
+            return discountAmount;
+        }
+
+        @Override
+        public void bind(long orderId) {
+            if (couponMapper.lock(couponId, userId) != 1) {
+                // 并发下同一张券被两笔订单同时用：守卫在这里拦下，异常让订单事务整体回滚
+                throw new BusinessException(ErrorCode.COUPON_NOT_USABLE);
+            }
+            couponMapper.bindToOrder(couponId, orderId);
+        }
+    }
+
     private static void fail(String message) {
         throw new BusinessException(ErrorCode.PARAM_ERROR, message);
     }

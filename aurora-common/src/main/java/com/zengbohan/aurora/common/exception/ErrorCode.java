@@ -23,7 +23,10 @@ public enum ErrorCode {
     COUPON_NOT_STARTED(50001, "优惠券尚未开始发放"),
     COUPON_CLAIM_ENDED(50002, "优惠券已停止发放"),
     COUPON_SOLD_OUT(50003, "优惠券已领完"),
-    COUPON_ALREADY_CLAIMED(50004, "您已领取过该券");
+    COUPON_ALREADY_CLAIMED(50004, "您已领取过该券"),
+    COUPON_NOT_USABLE(50005, "优惠券当前不可用"),
+    COUPON_EXPIRED(50006, "优惠券已过期"),
+    COUPON_THRESHOLD_NOT_MET(50007, "订单金额未达到优惠券使用门槛");
 
     private final int code;
     private final String message;

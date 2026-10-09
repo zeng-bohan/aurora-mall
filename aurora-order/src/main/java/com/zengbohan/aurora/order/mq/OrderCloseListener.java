@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.order.mq;
 
+import com.zengbohan.aurora.order.service.CouponService;
 import com.zengbohan.aurora.order.service.OrderService;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 import org.apache.rocketmq.spring.core.RocketMQListener;
@@ -24,9 +25,11 @@ public class OrderCloseListener implements RocketMQListener<String> {
     private static final Logger log = LoggerFactory.getLogger(OrderCloseListener.class);
 
     private final OrderService orderService;
+    private final CouponService couponService;
 
-    public OrderCloseListener(OrderService orderService) {
+    public OrderCloseListener(OrderService orderService, CouponService couponService) {
         this.orderService = orderService;
+        this.couponService = couponService;
     }
 
     @Override
@@ -40,5 +43,9 @@ public class OrderCloseListener implements RocketMQListener<String> {
             return;
         }
         orderService.closeIfPending(id);
+        // 关单即回券（M5 S5）：LOCKED→UNUSED 是带守卫的更新，无券订单与重投递都是空操作
+        if (couponService.releaseForOrder(id)) {
+            log.info("coupon released by closed order {}", id);
+        }
     }
 }

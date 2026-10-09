@@ -94,16 +94,38 @@ public class OrderService {
 
     @Idempotent(strategy = Strategy.REDIS, key = "#userId + ':' + #idempotencyKey", ttlSeconds = 600)
     public long placeOrder(long userId, PlaceOrderRequest request, String idempotencyKey) {
+        return placeOrder(userId, request, idempotencyKey, null);
+    }
+
+    /**
+     * 带券下单（M5 S5）。券的判定与锁定通过 {@code couponHook} 回调进来，订单侧不认识券的
+     * 任何类型或表：抵扣额在事务前算（纯函数），锁定在订单本地事务内做
+     * （UNUSED→LOCKED 与订单行同生共死）。这样既不需要订单域持有券的数据访问，
+     * 也不会出现"下单失败、券却被扣住"的中间态。
+     * <p>
+     * 两个入口都标 {@code @Idempotent}：内部委托调用不走代理，注解必须落在真正被调用的方法上。
+     */
+    @Idempotent(strategy = Strategy.REDIS, key = "#userId + ':' + #idempotencyKey", ttlSeconds = 600)
+    public long placeOrder(long userId, PlaceOrderRequest request, String idempotencyKey,
+                           CouponHook couponHook) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "缺少 Idempotency-Key 请求头");
         }
         if (Order.TX_MODE_AT.equals(txMode)) {
             // Seata AT 对比场景；@GlobalTransactional 放在独立 Bean 的方法上，
             // 代理才能真正包裹它
+            if (couponHook != null) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "Seata AT 对照模式不支持用券");
+            }
             return atOrderPlacer.placeAt(userId, request);
         }
         ProductSnapshot product = productGuard.load(request.skuId());
-        BigDecimal total = product.price().multiply(BigDecimal.valueOf(request.quantity()));
+        BigDecimal baseAmount = product.price().multiply(BigDecimal.valueOf(request.quantity()));
+        // 单次赋值：下面的本地事务 lambda 要捕获它（抵扣后金额必然为正——建券时已校验
+        // 「抵扣额 < 门槛金额」，而门槛不满足会在 discountFor 里被拒）
+        BigDecimal total = couponHook == null
+                ? baseAmount
+                : baseAmount.subtract(couponHook.discountFor(baseAmount));
 
         // 先生成 orderId：预扣按订单幂等，超时/重试/重放都不会重复扣减
         long orderId = idGenerator.nextId();
@@ -121,6 +143,11 @@ public class OrderService {
                 order.setStatus(Order.STATUS_CREATED);
                 order.setTxMode(Order.TX_MODE_MQ);
                 orderMapper.insert(order);
+                if (couponHook != null) {
+                    // 同一事务：券锁不住（并发被别单用掉）时订单也不落，
+                    // 预扣由下面的 catch 统一归还
+                    couponHook.bind(orderId);
+                }
 
                 TxMessage message = new TxMessage();
                 message.setBizKey(String.valueOf(orderId));
@@ -150,6 +177,16 @@ public class OrderService {
             log.error("close-delay send failed for order {}; timeout scan will cover", orderId, e);
         }
         return orderId;
+    }
+
+    /** 下单用券钩子：券域实现（见 {@code CouponService.CouponUseHook}），订单域只认这两个动作。 */
+    public interface CouponHook {
+
+        /** 门槛判定 + 抵扣额（纯函数）；不满足门槛时抛业务码。 */
+        BigDecimal discountFor(BigDecimal orderAmount);
+
+        /** 在订单事务内把券锁到这张订单上；锁不住抛业务码，订单随事务回滚。 */
+        void bind(long orderId);
     }
 
     public OrderView getOrder(long userId, long orderId) {

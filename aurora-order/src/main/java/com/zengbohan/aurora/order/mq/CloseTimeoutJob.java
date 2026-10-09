@@ -2,6 +2,7 @@ package com.zengbohan.aurora.order.mq;
 
 import com.zengbohan.aurora.order.entity.Order;
 import com.zengbohan.aurora.order.mapper.OrderMapper;
+import com.zengbohan.aurora.order.service.CouponService;
 import com.zengbohan.aurora.order.service.OrderService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -18,10 +19,12 @@ public class CloseTimeoutJob {
 
     private final OrderMapper orderMapper;
     private final OrderService orderService;
+    private final CouponService couponService;
 
-    public CloseTimeoutJob(OrderMapper orderMapper, OrderService orderService) {
+    public CloseTimeoutJob(OrderMapper orderMapper, OrderService orderService, CouponService couponService) {
         this.orderMapper = orderMapper;
         this.orderService = orderService;
+        this.couponService = couponService;
     }
 
     @Scheduled(fixedDelayString = "${aurora.order.close-scan-interval-ms:60000}", initialDelay = 75_000)
@@ -30,6 +33,8 @@ public class CloseTimeoutJob {
         for (Order overdue : orderMapper.findTimedOut(deadline)) {
             try {
                 orderService.closeIfPending(overdue.getId());
+                // 关单的兜底路径也要回券（M5 S5），与延迟消息那条路径行为一致
+                couponService.releaseForOrder(overdue.getId());
             } catch (RuntimeException e) {
                 // 毒丸隔离：一条失败不能饿死本轮后续记录（下轮还会重扫到它）
                 log.error("timed-out close failed for order {}", overdue.getId(), e);
@@ -39,6 +44,8 @@ public class CloseTimeoutJob {
         for (Order stranded : orderMapper.findUnreleasedClosed()) {
             try {
                 orderService.closeIfPending(stranded.getId());
+                // 补偿扫描：库存释放曾经失败过，同一轮也把券的回退重试一次（守卫保证幂等）
+                couponService.releaseForOrder(stranded.getId());
             } catch (RuntimeException e) {
                 log.error("compensating release failed for order {}", stranded.getId(), e);
             }
