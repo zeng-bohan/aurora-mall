@@ -1,6 +1,8 @@
 package com.zengbohan.aurora.product.web;
 
 import com.zengbohan.aurora.common.result.Result;
+import com.zengbohan.aurora.common.web.AdminRoleInterceptor;
+import com.zengbohan.aurora.common.web.RequireAdmin;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;

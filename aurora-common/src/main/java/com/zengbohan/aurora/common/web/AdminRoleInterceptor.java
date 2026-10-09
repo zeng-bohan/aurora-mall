@@ -1,7 +1,5 @@
-package com.zengbohan.aurora.product.web;
+package com.zengbohan.aurora.common.web;
 
-import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.common.result.Result;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
@@ -10,7 +8,12 @@ import org.springframework.web.servlet.HandlerInterceptor;
 
 import java.nio.charset.StandardCharsets;
 
-// 读网关注入的 X-User-Role：@RequireAdmin 端点非 ADMIN 直接 403 信封。
+/**
+ * 读网关注入的 X-User-Role：{@link RequireAdmin} 端点非 ADMIN 直接 403 信封。
+ * <p>
+ * 放在 common、由各服务的 WebMvcConfigurer 注册到自己的 admin 路径上（不自动全站注册：
+ * 是否暴露 /admin/** 是各服务自己的事）。Bean 本身无副作用，未被注册时不参与请求处理。
+ */
 @Component
 public class AdminRoleInterceptor implements HandlerInterceptor {
 

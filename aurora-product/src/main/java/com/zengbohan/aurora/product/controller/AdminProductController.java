@@ -6,7 +6,7 @@ import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.product.entity.Sku;
 import com.zengbohan.aurora.product.service.ProductAdminService;
 import com.zengbohan.aurora.product.service.ProductQueryService;
-import com.zengbohan.aurora.product.web.RequireAdmin;
+import com.zengbohan.aurora.common.web.RequireAdmin;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;

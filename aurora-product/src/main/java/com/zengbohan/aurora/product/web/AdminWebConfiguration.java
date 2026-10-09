@@ -1,5 +1,6 @@
 package com.zengbohan.aurora.product.web;
 
+import com.zengbohan.aurora.common.web.AdminRoleInterceptor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
