@@ -52,6 +52,12 @@ spring:
                 - Path=/api/payment/**
               filters:
                 - StripPrefix=2
+            - id: seckill
+              uri: lb://aurora-seckill
+              predicates:
+                - Path=/api/seckill/**
+              filters:
+                - StripPrefix=2
 
 # 网关自身的 actuator 与业务端口同址（8000）且免认证：这是**有意的取舍**，与各服务保持一致——
 # docker/prometheus/prometheus.yml 用 host.docker.internal:8000/actuator/prometheus 抓取，容器里的

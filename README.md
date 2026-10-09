@@ -35,6 +35,7 @@ flowchart LR
     G --> O[aurora-order]
     G --> I[aurora-inventory]
     G --> PA[aurora-payment]
+    G --> SK[aurora-seckill :8087<br/>秒杀：活动/预热/预扣]
 
     CA -. OpenFeign / RPC 可切换 .-> P
 
@@ -94,13 +95,13 @@ cd docker && docker compose up -d && bash smoke.sh && bash nacos/import.sh
 
 看到 `smoke OK` 即中间件就绪（首次拉镜像约 10 分钟）。`nacos/import.sh` 生成密钥并导入全部运行时配置（**必须在启动服务前执行**，否则服务 fail-fast 拒绝启动）。详见 [docker/README.md](docker/README.md)。
 
-**2️⃣ 构建并启动 7 个服务**（SkyWalking agent 存在时自动挂载）：
+**2️⃣ 构建并启动 8 个服务**（SkyWalking agent 存在时自动挂载）：
 
 ```bash
 cd .. && mvn clean package
 AGENT=""; [ -d tools/skywalking-agent ] && \
   AGENT="-javaagent:$PWD/tools/skywalking-agent/skywalking-agent.jar"
-for svc in gateway user product cart order inventory payment; do
+for svc in gateway user product cart order inventory payment seckill; do
   java $AGENT -DSW_AGENT_NAME=aurora-$svc \
     -DSW_AGENT_COLLECTOR_BACKEND_SERVICES=localhost:11800 \
     -jar "aurora-$svc/target/aurora-$svc-0.1.0-SNAPSHOT.jar" > /tmp/"$svc".log 2>&1 &

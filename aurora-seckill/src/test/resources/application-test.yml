@@ -1,0 +1,15 @@
+spring:
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+      config:
+        # starter 在 classpath 上，但测试从不导入配置数据；
+        # 这里只是为了让 spring-cloud 的 "no spring.config.import" 检查安静下来
+        import-check:
+          enabled: false
+
+# 明显是假的测试占位值：测试从不访问配置中心
+aurora:
+  internal:
+    secret: test-only-internal-secret-not-real

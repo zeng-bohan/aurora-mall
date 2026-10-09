@@ -1,7 +1,7 @@
 package com.zengbohan.aurora.common.exception;
 
 /**
- * 业务错误码。分段规则：0 成功，1xxxx 系统，2xxxx 库存，
+ * 业务错误码。分段规则：0 成功，1xxxx 系统，2xxxx 库存，3xxxx 秒杀，
  * 4xxxx HTTP 语义（鉴权/禁止/不存在/冲突）。
  */
 public enum ErrorCode {
@@ -12,7 +12,11 @@ public enum ErrorCode {
     FORBIDDEN(40300, "无权访问"),
     NOT_FOUND(40400, "资源不存在"),
     DUPLICATE_REQUEST(40900, "请勿重复提交"),
-    INVENTORY_INSUFFICIENT(20001, "库存不足");
+    INVENTORY_INSUFFICIENT(20001, "库存不足"),
+    SECKILL_NOT_STARTED(30001, "秒杀尚未开始"),
+    SECKILL_ENDED(30002, "秒杀已结束"),
+    SECKILL_SOLD_OUT(30003, "已售罄"),
+    SECKILL_ALREADY_BOUGHT(30004, "您已参与过该秒杀");
 
     private final int code;
     private final String message;

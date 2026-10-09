@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SkyWalking 接线：layout 必须用 toolkit 的 TraceIdPatternLogbackLayout——
+     agent 增强 convert()，%tid 才会替换为真实 trace id（缺席时 TID: N/A）。
+     traceId 是网关下发、写入 MDC 的 X-Trace-Id（Loki 检索键）。 -->
+<configuration>
+    <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+    <springProperty scope="context" name="appName" source="spring.application.name" defaultValue="aurora"/>
+    <appender name="CONSOLE_SW" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="ch.qos.logback.core.encoder.LayoutWrappingEncoder">
+            <layout class="org.apache.skywalking.apm.toolkit.log.logback.v1.x.TraceIdPatternLogbackLayout">
+                <pattern>%date{yyyy-MM-dd HH:mm:ss.SSS} %5p [${appName},%X{traceId:-},%tid] ${PID:-} --- [%15.15t] %-40.40logger{39} : %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}</pattern>
+            </layout>
+        </encoder>
+    </appender>
+    <!-- Loki 直推（M4 T4）：异步批量；traceId 标签 = 网关下发的 X-Trace-Id，供跨服务检索。
+         按 profile 分两段（springProfile 必须是 <configuration> 的直接子元素：嵌在 <root> 内
+         Spring Boot 3.5 会告警并静默失效）。test 段不装配 Loki——单测/CI 无 Loki，appender
+         推送失败产生的 logback ERROR 状态会被 Spring Boot 判为「日志配置错误」而中断上下文
+         启动（CI 长期红灯的根因）。 -->
+    <springProfile name="!test">
+        <appender name="LOKI" class="com.github.loki4j.logback.Loki4jAppender" lazy="true">
+            <http>
+                <url>http://localhost:3100/loki/api/v1/push</url>
+            </http>
+            <format>
+                <label>
+                    <pattern>app=aurora,service=${appName},traceId=%X{traceId:-}</pattern>
+                </label>
+                <message>
+                    <pattern>%date{yyyy-MM-dd HH:mm:ss.SSS} %5p [${appName},%X{traceId:-},%tid] --- [%15.15t] %-40.40logger{39} : %m%n${LOG_EXCEPTION_CONVERSION_WORD:-%wEx}</pattern>
+                </message>
+            </format>
+            <batchMaxItems>100</batchMaxItems>
+            <batchTimeoutMs>3000</batchTimeoutMs>
+        </appender>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE_SW"/>
+            <appender-ref ref="LOKI"/>
+        </root>
+    </springProfile>
+    <springProfile name="test">
+        <root level="INFO">
+            <appender-ref ref="CONSOLE_SW"/>
+        </root>
+    </springProfile>
+</configuration>

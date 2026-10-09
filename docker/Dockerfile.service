@@ -1,4 +1,4 @@
-# 7 个服务共用的镜像定义（原先 7 份逐字节相同的 <module>/Dockerfile 收敛而来）。
+# 各服务共用的镜像定义（原先 7 份逐字节相同的 <module>/Dockerfile 收敛而来）。
 # 构建上下文 = 服务模块目录，jar 由 `mvn -B clean verify` 产出：
 #   docker build -f docker/Dockerfile.service -t aurora-user:dev aurora-user
 FROM eclipse-temurin:21-jre AS extract

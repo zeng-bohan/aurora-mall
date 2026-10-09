@@ -78,7 +78,7 @@ jobs:
       # 服务都可用。顺序固定便于对照；CI 从不推送镜像，发布是手动步骤。
       - name: Build service images
         run: |
-          services="gateway user product cart order inventory payment"
+          services="gateway user product cart order inventory payment seckill"
           for name in $services; do
             ls "aurora-$name"/target/*.jar > /dev/null 2>&1 \
               || { echo "missing jar for aurora-$name"; exit 1; }

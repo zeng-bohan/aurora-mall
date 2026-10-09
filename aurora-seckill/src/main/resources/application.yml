@@ -1,0 +1,43 @@
+server:
+  shutdown: graceful
+  port: 8087
+
+spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+  application:
+    name: aurora-seckill
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+  datasource:
+    url: jdbc:mysql://${MYSQL_ADDR:localhost:13306}/aurora_seckill?characterEncoding=UTF-8&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${MYSQL_PASSWORD:aurora123}
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    banner: false
+
+spring.data.redis:
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:16379}
+
+# 内部密钥来自 nacos 配置中心（aurora-common.yml，见 application-default.yml）；
+# ConfigPresenceVerifier 会在启动时失败，并指出缺失的必需键。
+# 秒杀专属可调参数（活动维度限流阈值等）S2 引入时再加 aurora-seckill.yml 数据源。
+aurora:
+  config:
+    required-keys: aurora.internal.secret
+
+management:
+  metrics:
+    tags:
+      application: ${spring.application.name}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
