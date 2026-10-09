@@ -8,6 +8,7 @@ import com.zengbohan.aurora.rpc.protocol.ProtocolCodec;
 import com.zengbohan.aurora.rpc.registry.ServiceDiscovery;
 import com.zengbohan.aurora.rpc.transport.RpcRemoteException;
 import com.zengbohan.aurora.rpc.transport.RpcTimeoutException;
+import com.zengbohan.aurora.rpc.transport.RpcUnauthorizedException;
 import com.zengbohan.aurora.rpc.transport.RpcUnavailableException;
 
 import java.lang.reflect.InvocationHandler;
@@ -23,9 +24,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * <pre>
  * 接口方法 → Invocation 组装 → 熔断判定 → 发现挑实例（负载均衡）
  *   → 连接池取 client → 序列化 → Netty 往返 → 反序列化
- *   → 业务失败(RpcRemoteException) / 不可用(RpcUnavailableException) / 成功还原返回值
+ *   → 业务失败(RpcRemoteException) / 不可达或过载(RpcUnavailableException) /
+ *     握手或密钥类配置错误(RpcUnauthorizedException) / 成功还原返回值
  * </pre>
  * 熔断包裹整个远程段：OPEN 时在发现之前快速失败，不浪费连接与等待。
+ * 熔断只统计"对端不健康"类失败——业务失败不经熔断抛出，配置错误单独成型并被排除在失败率外。
  */
 public class RpcProxyFactory {
 
@@ -59,6 +62,8 @@ public class RpcProxyFactory {
                 .minRequestThreshold(10)
                 .halfOpenPermittedCalls(3)
                 .openDurationMillis(10_000)
+                // 握手/密钥类配置错误不代表对端不健康（重试也不会好转）：单独成型且不计失败率
+                .ignoreFailures(t -> t instanceof RpcUnauthorizedException)
                 .build();
     }
 
@@ -113,7 +118,8 @@ public class RpcProxyFactory {
             byte[] request = codec.serialize(invocation);
             byte[] response = client.invoke(request);
             return codec.deserialize(response, InvocationResult.class);
-        } catch (RpcUnavailableException | RpcTimeoutException e) {
+        } catch (RpcUnavailableException | RpcTimeoutException | RpcUnauthorizedException e) {
+            // 三类语义分明的失败原样上抛：不可达/超时（计入熔断）与配置错误（不计入）
             throw e;
         } catch (Exception e) {
             throw new RpcUnavailableException("rpc invocation failed: " + e, e);

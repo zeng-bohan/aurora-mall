@@ -7,7 +7,10 @@ import com.zengbohan.aurora.rpc.lb.RoundRobinLoadBalancer;
 import com.zengbohan.aurora.rpc.protocol.ProtocolCodec;
 import com.zengbohan.aurora.rpc.registry.InMemoryRegistry;
 import com.zengbohan.aurora.rpc.registry.ServiceDiscovery;
+import com.zengbohan.aurora.rpc.registry.ServiceInstance;
+import com.zengbohan.aurora.rpc.transport.RpcClient;
 import com.zengbohan.aurora.rpc.transport.RpcRemoteException;
+import com.zengbohan.aurora.rpc.transport.RpcUnauthorizedException;
 import com.zengbohan.aurora.rpc.transport.RpcUnavailableException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -317,6 +320,36 @@ class RpcProxyFullChainIntegrationTest {
             assertThatThrownBy(() -> api.echo("sys")).isInstanceOf(RpcUnavailableException.class);
         }
         assertThat(breakerState(api, factory)).isEqualTo(CircuitBreakerState.OPEN);
+    }
+
+    @Test
+    void unauthorizedErrorSurfacesAsConfigFailureWithoutTrippingBreaker() {
+        // 假连接池：不发真请求，直接抛"未授权"——等价于对端回 UNAUTHORIZED 的那条路径
+        RpcClientPool unauthorizedPool = new RpcClientPool(SECRET, 3000) {
+            @Override
+            public RpcClient get(ServiceInstance instance) {
+                return new RpcClient(instance.host(), instance.port(), SECRET, 1000, 30_000, 500) {
+                    @Override
+                    public byte[] invoke(byte[] requestBody) {
+                        throw new RpcUnauthorizedException("not authorized by peer");
+                    }
+                };
+            }
+        };
+        registry.register(new ServiceInstance(EchoApi.class.getName(), "127.0.0.1", 1));
+
+        // 刻意用默认熔断配置：本用例锁的就是"它把配置类失败排除在失败率之外"
+        RpcProxyFactory factory = new RpcProxyFactory(discovery,
+                new RoundRobinLoadBalancer(), unauthorizedPool, codec, SECRET);
+        EchoApi api = factory.create(EchoApi.class);
+
+        // 12 次 > minRequestThreshold(10)：若这些失败被计入，失败率 100% 必然 OPEN
+        for (int i = 0; i < 12; i++) {
+            assertThatThrownBy(() -> api.echo("x")).isInstanceOf(RpcUnauthorizedException.class);
+        }
+        assertThat(breakerState(api, factory))
+                .as("握手/密钥类配置错误不该把链路打成熔断")
+                .isEqualTo(CircuitBreakerState.CLOSED);
     }
 
     private CircuitBreakerState breakerState(EchoApi api, RpcProxyFactory factory) {

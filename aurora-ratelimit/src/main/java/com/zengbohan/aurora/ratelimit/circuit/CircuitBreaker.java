@@ -50,6 +50,9 @@ public class CircuitBreaker {
 
     /**
      * 包裹一次调用：熔断判定 + 执行 + 统计。异常原样穿透（业务异常不该被熔断吞掉）。
+     * <p>
+     * 配置里声明为 ignored 的异常（{@link CircuitBreakerConfig.Builder#ignoreFailures}）
+     * 同样原样穿透，但不进统计窗口——既不抬高失败率也不稀释样本。
      */
     public <T> T execute(Callable<T> call) throws Exception {
         Permission permission = acquirePermission();
@@ -58,13 +61,19 @@ public class CircuitBreaker {
         }
         long startNanos = System.nanoTime();
         boolean success = false;
+        boolean ignored = false;
         try {
             T result = call.call();
             success = true;
             return result;
+        } catch (Exception e) {
+            ignored = config.ignoredFailures.test(e);
+            throw e;
         } finally {
-            long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
-            recordResult(success, elapsedMillis, permission);
+            if (!ignored) {
+                long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
+                recordResult(success, elapsedMillis, permission);
+            }
         }
     }
 

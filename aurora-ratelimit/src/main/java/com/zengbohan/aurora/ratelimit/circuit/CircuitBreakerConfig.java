@@ -2,6 +2,7 @@ package com.zengbohan.aurora.ratelimit.circuit;
 
 import java.time.Duration;
 import java.util.function.LongSupplier;
+import java.util.function.Predicate;
 
 /**
  * 熔断器配置。用 Builder 构造，阈值/窗口/试探数全部可配。
@@ -26,6 +27,9 @@ public final class CircuitBreakerConfig {
     final int windowBuckets;
     final LongSupplier clock;
     final CircuitBreaker.Listener listener;
+    // 不计入失败率的异常（如两端配置不一致这类"重试无意义"的错误）：
+    // 异常照样抛给调用方，只是不推进熔断统计。
+    final Predicate<Throwable> ignoredFailures;
 
     private CircuitBreakerConfig(Builder builder) {
         this.failureRateThreshold = builder.failureRateThreshold;
@@ -38,6 +42,7 @@ public final class CircuitBreakerConfig {
         this.windowBuckets = builder.windowBuckets;
         this.clock = builder.clock;
         this.listener = builder.listener;
+        this.ignoredFailures = builder.ignoredFailures;
     }
 
     public static Builder builder() {
@@ -57,6 +62,7 @@ public final class CircuitBreakerConfig {
         private LongSupplier clock = System::currentTimeMillis;
         private CircuitBreaker.Listener listener = (from, to) -> {
         };
+        private Predicate<Throwable> ignoredFailures = ignored -> false;
 
         public Builder failureRateThreshold(int percent) {
             this.failureRateThreshold = requireRange(percent, "failureRateThreshold");
@@ -135,6 +141,16 @@ public final class CircuitBreakerConfig {
 
         public Builder eventListener(CircuitBreaker.Listener listener) {
             this.listener = listener;
+            return this;
+        }
+
+        /**
+         * 指定"不计入失败率"的异常（判定为 true 的异常既不进失败数也不进总样本数）：
+         * 异常仍原样抛给调用方，只是不参与熔断判定——用于"重试无意义、也不代表
+         * 对端不健康"的错误（如两端配置不一致）。默认全部计入。
+         */
+        public Builder ignoreFailures(Predicate<Throwable> ignored) {
+            this.ignoredFailures = ignored == null ? ignoredFailure -> false : ignored;
             return this;
         }
 

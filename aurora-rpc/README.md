@@ -30,7 +30,7 @@
 
 - **调用链**：接口方法 → `Invocation` 组装 → **熔断判定** → 发现挑实例（负载均衡）→ 连接池取 client → 序列化 → Netty 往返 → 反序列化 → 按声明返回类型还原 → 返回/抛异常。熔断包裹整个远程段，OPEN 时在发现之前快速失败
 - **`@AuroraRpcService`**：实现类标注对外接口，接口全名即服务名；`RpcServiceExporter` 启动 Netty（随机端口可指定）+ 注册中心上报，业务异常在本层捕获编进载荷（`status=OK + exceptionType`），与传输层系统失败区分
-- **异常四层**（调用方可捕获性明确）：`RpcRemoteException`（对端业务失败，携带远端异常类型名）≠ `RpcUnavailableException`（不可达/无实例/连接池暖机超时）≠ `RpcTimeoutException`（等待超时）≠ `CircuitOpenException`（熔断快速失败）
+- **异常五层**（调用方可捕获性明确）：`RpcRemoteException`（对端业务失败，携带远端异常类型名）≠ `RpcUnauthorizedException`（握手/密钥类配置错误，不计入熔断）≠ `RpcUnavailableException`（不可达/无实例/过载/连接池暖机超时）≠ `RpcTimeoutException`（等待超时）≠ `CircuitOpenException`（熔断快速失败）
 - **泛型擦除防护**：参数与返回值都按声明的具体类型二次还原（`convertValue`）——JSON 泛化的 Map/List 节点不会泄漏成 ClassCastException（集成测试锁定）
 - **连接池**：按实例地址缓存 client，新实例**同步暖机**首连（冷实例的第一跳不会白 fail），不可达实例回收条目并抛不可用
 - 每接口一个熔断器实例（故障按服务隔离），阈值经 `CircuitBreakerConfig` 可配（默认失败率 50% / 最小样本 10 / 半开试探 3 / OPEN 10s）

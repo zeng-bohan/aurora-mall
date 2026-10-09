@@ -62,6 +62,32 @@ class CircuitBreakerTest {
         };
     }
 
+    // 未被忽略的真实失败（抛 IllegalArgumentException）。
+    private static Callable<Void> counted() {
+        return () -> {
+            throw new IllegalArgumentException("real outage");
+        };
+    }
+
+    @Test
+    void ignoredFailuresDoNotCountTowardFailureRate() throws Exception {
+        CircuitBreaker breaker = breaker(config()
+                .ignoreFailures(e -> e instanceof IllegalStateException)
+                .build());
+        // 6 次被忽略的失败：既不进失败数也不进总样本数，状态保持 CLOSED
+        for (int i = 0; i < 6; i++) {
+            assertThatThrownBy(() -> breaker.execute(boom())).isInstanceOf(IllegalStateException.class);
+        }
+        assertThat(breaker.state()).as("被忽略的异常不进统计窗口").isEqualTo(CircuitBreakerState.CLOSED);
+
+        // 再混入 4 次真实失败：minRequestThreshold=4、失败率 100% ≥ 50% → 熔断。
+        // 若上面 6 次被计入总样本，则此处是 4/10 = 40% < 50%，不会 OPEN
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> breaker.execute(counted())).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(breaker.state()).as("真实失败照常参与判定").isEqualTo(CircuitBreakerState.OPEN);
+    }
+
     @Test
     void staysClosedBelowFailureThreshold() throws Exception {
         CircuitBreaker breaker = breaker(config().build());

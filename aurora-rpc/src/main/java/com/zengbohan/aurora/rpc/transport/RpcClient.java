@@ -202,9 +202,11 @@ public class RpcClient {
     }
 
     /**
-     * 发起一次调用：发送请求体，等待响应。超时/断线快速失败。
+     * 发起一次调用：发送请求体，等待响应。超时/断线快速失败；
+     * 对端回 UNAUTHORIZED 时以 {@link RpcUnauthorizedException} 失败（配置错误，重试无意义）。
      */
-    public byte[] invoke(byte[] requestBody) throws RpcUnavailableException, RpcTimeoutException {
+    public byte[] invoke(byte[] requestBody)
+            throws RpcUnavailableException, RpcTimeoutException, RpcUnauthorizedException {
         Channel ch = channel;
         if (ch == null || !ch.isActive()) {
             throw new RpcUnavailableException("not connected to " + host + ":" + port);
@@ -281,8 +283,12 @@ public class RpcClient {
                 }
                 if (frame.status() == StatusCodes.OK) {
                     promise.trySuccess(frame.body());
+                } else if (frame.status() == StatusCodes.UNAUTHORIZED) {
+                    // 未通过对端握手 = 配置错误（密钥不一致）：单独成型，调用方不计入熔断
+                    promise.tryFailure(new RpcUnauthorizedException("not authorized by "
+                            + host + ":" + port + ": " + new String(frame.body(), StandardCharsets.UTF_8)));
                 } else {
-                    // ERROR status = 对端系统失败（服务坏了）→ 可用性异常，计入熔断
+                    // ERROR/OVERLOADED = 对端系统失败或过载 → 可用性异常，计入熔断
                     promise.tryFailure(new RpcUnavailableException("server error status="
                             + frame.status() + ": " + new String(frame.body(), StandardCharsets.UTF_8)));
                 }
