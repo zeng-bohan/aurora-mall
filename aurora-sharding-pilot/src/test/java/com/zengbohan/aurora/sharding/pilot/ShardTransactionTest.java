@@ -4,7 +4,6 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -22,19 +21,17 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class ShardTransactionTest {
 
-    @BeforeAll
-    static void boot() throws Exception {
-        Assumptions.assumeTrue(PilotEnv.mysqlReachable(), "MySQL(13306) 不可达：跳过分片试点");
-        PilotEnv.boot();
-    }
-
     @AfterAll
     static void shutdown() {
         PilotEnv.close();
     }
 
+    // 就绪判定必须在 @BeforeEach：在 @BeforeAll 里 assume 失败会让整类静默消失
+    // （surefire 记 0 tests / 0 skipped），测试总数因此不可信。
     @BeforeEach
-    void clean() throws Exception {
+    void prepare() throws Exception {
+        Assumptions.assumeTrue(PilotEnv.mysqlReachable(), "MySQL(13306) 不可达：跳过分片试点");
+        PilotEnv.boot();
         PilotEnv.reset();
     }
 
