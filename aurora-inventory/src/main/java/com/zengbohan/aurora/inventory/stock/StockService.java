@@ -99,6 +99,18 @@ public class StockService {
     }
 
     /**
+     * 当前可售数量：{@code available - reserved}（DB 是账本，Redis 只是加速层，
+     * 所以读账本而不是读缓存）。管理端用它显示真实可售量——商品表里的
+     * {@code stock} 是另一个字段，两者不是一个东西。
+     *
+     * @return 该 SKU 还没有库存记录时返回 null，表示"未开通"而不是"卖完了"
+     */
+    public Integer sellableStock(long skuId) {
+        ProductStock row = stockMapper.selectById(skuId);
+        return row == null ? null : row.getAvailable() - row.getReserved();
+    }
+
+    /**
      * 预扣补偿：order 侧发起预扣但结果未知（超时/断连/空响应）时的安全回补。
      * <p>
      * 与 {@link #rollback(long, long, int)} 的安全前提不同：本方法只在「该订单确实预扣过」

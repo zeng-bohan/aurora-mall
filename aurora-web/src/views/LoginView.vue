@@ -5,14 +5,12 @@ import { useRoute, useRouter } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
-import { useMyOrdersStore } from '@/stores/myOrders'
 import { describeError } from '@/utils/errors'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const cart = useCartStore()
-const myOrders = useMyOrdersStore()
 
 const form = reactive({ username: '', password: '' })
 const submitting = ref(false)
@@ -25,8 +23,7 @@ async function onSubmit(): Promise<void> {
   submitting.value = true
   try {
     await auth.login(form.username, form.password)
-    // 登录后立刻按新身份装载：本地订单索引按 userId 分桶，必须先拿到 userId
-    myOrders.load()
+    // 登录后立刻按新身份装载购物车
     await cart.load().catch(() => undefined)
     ElMessage.success('登录成功')
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/products'

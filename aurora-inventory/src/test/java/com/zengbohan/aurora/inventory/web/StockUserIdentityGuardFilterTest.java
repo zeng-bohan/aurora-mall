@@ -48,4 +48,13 @@ class StockUserIdentityGuardFilterTest {
         assertThat(filter.shouldNotFilter(request)).isTrue();
         assertThat(filter.shouldNotFilter(new MockHttpServletRequest("GET", "/stocks/1"))).isFalse();
     }
+
+    // 管理端入口（/admin/stocks/{skuId}）刻意落在这条守卫之外：它服务的是"运营开库存"
+    // 这个浏览器场景，而本守卫的判据恰恰是"请求带用户身份就拒绝"。
+    // 代价是那条路径没有第二把锁，所以它的授权完全依赖 @RequireAdmin——
+    // 见 AdminStockControllerTest。这条断言把边界钉住，免得日后有人以为这里也守得住。
+    @Test
+    void adminStockPathIsDeliberatelyOutsideThisGuard() {
+        assertThat(filter.shouldNotFilter(new MockHttpServletRequest("PUT", "/admin/stocks/1"))).isTrue();
+    }
 }

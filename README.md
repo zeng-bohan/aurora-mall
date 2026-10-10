@@ -7,7 +7,7 @@
 [![CI](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml/badge.svg)](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml)
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
-![Tests](https://img.shields.io/badge/tests-383%20green-brightgreen)
+![Tests](https://img.shields.io/badge/tests-390%20green-brightgreen)
 
 **当前状态**：M0-M6 已交付（工程骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测 / 秒杀·优惠券·分库试点 / Vue3 用户端与管理台）；M7 部署上线待做。前端构建与类型检查通过，端到端联调需要先起中间件栈与 8 个服务（见下方快速开始）。
 
@@ -80,7 +80,7 @@ flowchart LR
 - **秒杀（M5）**：Redis+Lua 原子预扣（时间窗 / 一人一单 / 库存三合一判定）、MQ 异步落单削峰（请求路径零 DB 访问）、失败补偿恰好一次、订单唯一键 + DB 条件扣减兜底不超卖。
 - **优惠券（M5）**：券并入 order 域（生命周期围绕订单，避免跨服务事务）；领取靠 SQL 守卫防超发 + 唯一键保一人一张；下单用券通过 `CouponHook` 在**订单事务内**锁定并抵扣（金额与订单行同生共死，不存在"下单失败券却被扣住"的中间态）；关单自动回券。
 - **安全模型**：手写 JWT（黑名单注销、refresh 一次一换、登出会话级失效）、内部密钥 + 内部路径守卫 + 用户身份守卫、回调渠道 HMAC 签名、常量时间比较。
-- **验收文化**：383 例测试、0 失败 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis/真 MySQL 双分片库集成测试。依赖外部中间件的 38 例在无环境时如实记为跳过（`mvn test` 仍全绿），不是不计入总数。
+- **验收文化**：390 例测试、0 失败 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis/真 MySQL 双分片库集成测试。依赖外部中间件的 38 例在无环境时如实记为跳过（`mvn test` 仍全绿），不是不计入总数。
 
 ## 🚀 快速开始
 
@@ -169,8 +169,11 @@ curl -s -X POST http://localhost:8000/api/order/orders \
 | 商品（公开读） | `GET /api/product/products` · `GET .../products/{id}` · `GET .../batch` | 游客可读，缓存三防 |
 | 商品（admin） | `POST/PUT/DELETE /api/product/admin/products...` | 需 `role=ADMIN`，写路径延迟双删 |
 | 购物车（需 token） | `GET/POST/PUT/DELETE /api/cart/carts...` | Redis Hash，行项目含商品快照 |
-| 订单（需 token） | `POST /api/order/orders`（带 `Idempotency-Key`）· `GET .../{id}` | 30min 未支付自动关单 |
+| 订单（需 token） | `POST /api/order/orders`（带 `Idempotency-Key`，用券加 `Coupon-Id` 头）· `GET .../orders`（我的订单，分页）· `GET .../{id}` | 30min 未支付自动关单 |
 | 支付（需 token） | `POST /api/payment/payments` · `GET .../{orderId}` | mock 通道；回调带渠道 HMAC 签名 |
+| 券（需 token） | `GET /api/order/coupons/templates` · `POST .../{templateId}/claim` · `GET .../mine` | 领取靠 SQL 守卫防超发 + 唯一键一人一张 |
+| 秒杀（需 token） | `GET /api/seckill/activities` · `POST .../{id}/orders` · `GET .../{id}/orders/mine` | 异步落单，抢购后轮询取结果 |
+| 管理台（需 token + ADMIN） | `/api/product/admin/products` · `/api/order/admin/coupons` · `/api/seckill/admin/activities` · `/api/inventory/admin/stocks/{skuId}` | 库存入口是开可售库存的唯一 HTTP 路径 |
 
 </details>
 

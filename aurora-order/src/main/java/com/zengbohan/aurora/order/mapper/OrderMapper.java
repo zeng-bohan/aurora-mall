@@ -28,4 +28,18 @@ public interface OrderMapper extends BaseMapper<Order> {
 
     @Select("SELECT * FROM orders WHERE status = 2 AND stock_released = 0 LIMIT 200")
     List<Order> findUnreleasedClosed();
+
+    /**
+     * 我的订单：走 idx_orders_user(user_id, id)，按 id 倒序即最近下单在前。
+     * 排序用主键而不是 created_at：id 由号段生成器供号、天然递增，且这一列就在
+     * 索引里，不需要额外排序。user_id 写进 WHERE 而不是查出来再过滤——
+     * 越权看别人的订单在 SQL 这一层就不成立。
+     */
+    @Select("SELECT * FROM orders WHERE user_id = #{userId} ORDER BY id DESC LIMIT #{limit} OFFSET #{offset}")
+    List<Order> pageByUser(@Param("userId") long userId,
+                           @Param("limit") long limit,
+                           @Param("offset") long offset);
+
+    @Select("SELECT COUNT(*) FROM orders WHERE user_id = #{userId}")
+    long countByUser(@Param("userId") long userId);
 }

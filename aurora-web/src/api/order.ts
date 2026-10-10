@@ -1,5 +1,5 @@
 import { http, unwrap } from './http'
-import type { Result } from './types'
+import type { Page, Result } from './types'
 
 /** 订单状态：0=待支付 1=已支付 2=已关闭 */
 export const OrderStatus = {
@@ -50,10 +50,16 @@ export function place(request: PlaceOrderRequest, options: PlaceOrderOptions): P
 /**
  * 按 id 查单。
  *
- * 注意后端**没有「我的订单列表」接口**——只有这一个按 id 查的端点。
- * 也就是说前端要么自己记住下过的订单 id（见 stores/myOrders.ts），
- * 要么就只能展示刚下的那一单。这是 M6 暴露出来的一处后端缺口。
+ * 单查只校验归属不暴露他人订单的存在性：不是自己的单会回 40400 而不是 40300。
  */
 export function detail(id: number): Promise<OrderView> {
   return unwrap(http.get<Result<OrderView>>(`/order/orders/${id}`))
+}
+
+/**
+ * 我的订单，最近下单在前分页。
+ * 只回当前登录用户的单——userId 来自网关注入的身份头，前端传不了也改不了。
+ */
+export function list(current = 1, size = 10): Promise<Page<OrderView>> {
+  return unwrap(http.get<Result<Page<OrderView>>>('/order/orders', { params: { current, size } }))
 }

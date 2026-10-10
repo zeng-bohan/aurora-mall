@@ -8,7 +8,6 @@ import type { CouponView } from '@/api/coupon'
 import { CouponStatus } from '@/api/coupon'
 import { newIdempotencyKey } from '@/api/idempotency'
 import { useCartStore } from '@/stores/cart'
-import { useMyOrdersStore } from '@/stores/myOrders'
 import { describeError, isDuplicate } from '@/utils/errors'
 import { formatYuan, toCents } from '@/utils/money'
 
@@ -29,7 +28,6 @@ interface LineResult {
 const route = useRoute()
 const router = useRouter()
 const cart = useCartStore()
-const myOrders = useMyOrdersStore()
 
 const lines = ref<Line[]>([])
 const fromCart = ref(true)
@@ -144,7 +142,6 @@ async function submit(): Promise<void> {
           couponId: singleLine.value ? selectedCouponId.value : null
         }
       )
-      myOrders.remember(orderId)
       collected.push({ skuId: line.skuId, title: line.title, orderId, error: null })
     } catch (error) {
       collected.push({

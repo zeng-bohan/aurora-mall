@@ -3,18 +3,15 @@ import { useRouter } from 'vue-router'
 
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
-import { useMyOrdersStore } from '@/stores/myOrders'
 
 const router = useRouter()
 const auth = useAuthStore()
 const cart = useCartStore()
-const myOrders = useMyOrdersStore()
 
 async function onLogout(): Promise<void> {
   await auth.logout()
-  // 本地视图一并丢掉：下一个登录的人不该看到上个人的购物车与订单索引
+  // 本地视图一并丢掉：下一个登录的人不该看到上个人的购物车
   cart.reset()
-  myOrders.forgetAll()
   await router.push({ name: 'login' })
 }
 </script>

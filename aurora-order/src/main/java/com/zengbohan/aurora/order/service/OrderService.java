@@ -11,6 +11,7 @@ import com.zengbohan.aurora.common.result.RemoteCall;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
 import com.zengbohan.aurora.order.client.InventoryClient;
+import com.zengbohan.aurora.order.dto.OrderPage;
 import com.zengbohan.aurora.order.dto.OrderView;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
@@ -26,6 +27,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 订单生命周期（主链路）：幂等请求守卫 -> redis 预占库存 ->
@@ -39,6 +41,9 @@ import java.time.LocalDateTime;
 public class OrderService {
 
     private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+
+    /** 我的订单列表的单页上限：不设上限时一个 size 参数就能把整张表拉出来。 */
+    private static final long MAX_PAGE_SIZE = 100;
 
     private final SegmentIdGenerator idGenerator;
     private final ProductGuard productGuard;
@@ -201,6 +206,23 @@ public class OrderService {
         return toView(order);
     }
 
+    /**
+     * 我的订单，最近下单在前分页。
+     * <p>
+     * 分页参数在这里夹紧而不是靠前端自觉：size 不设上限的话，一个
+     * {@code size=1000000} 就能把整张表拉出来；current 小于 1 会算出负偏移，
+     * 在 MySQL 上直接是语法错。上限取 100，够用且不失控。
+     */
+    public OrderPage listOrders(long userId, long current, long size) {
+        long safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
+        long safeCurrent = Math.max(current, 1);
+        long total = orderMapper.countByUser(userId);
+        List<Order> rows = orderMapper.pageByUser(userId, safeSize, (safeCurrent - 1) * safeSize);
+        List<OrderView> records = rows.stream().map(this::toView).toList();
+        return new OrderPage(records, total, safeCurrent, safeSize,
+                (total + safeSize - 1) / safeSize);
+    }
+
     // 供支付链路使用（T5）：CREATED -> PAID，重放幂等。
     public boolean markPaid(long orderId) {
         return orderMapper.transition(orderId, Order.STATUS_CREATED, Order.STATUS_PAID) > 0;
@@ -302,7 +324,6 @@ public class OrderService {
         return new OrderView(order.getId(), order.getUserId(), order.getSkuId(),
                 order.getQuantity(), order.getTotalAmount(), order.getStatus());
     }
-
     // aurora-inventory 消费的 wire 格式。
     public record StockReservedEvent(String messageId, long orderId, long skuId, int quantity) {
     }

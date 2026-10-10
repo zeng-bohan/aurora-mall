@@ -8,7 +8,6 @@ import type { SeckillActivityView } from '@/api/seckill'
 import { SECKILL_PHASE_LABEL, SeckillBuyStatus, SeckillPhase } from '@/api/seckill'
 import { ApiError, ErrorCode } from '@/api/types'
 import { useNow } from '@/composables/useNow'
-import { useMyOrdersStore } from '@/stores/myOrders'
 import { formatCountdown, formatDateTime } from '@/utils/datetime'
 import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
@@ -18,7 +17,6 @@ const MAX_POLLS = 60
 
 const route = useRoute()
 const router = useRouter()
-const myOrders = useMyOrdersStore()
 const now = useNow()
 
 const activity = ref<SeckillActivityView | null>(null)
@@ -60,9 +58,6 @@ function settle(orderId: number | null): void {
   placedOrderId.value = orderId
   outcome.value = '抢到了，订单已生成'
   outcomeType.value = 'success'
-  if (orderId !== null) {
-    myOrders.remember(orderId)
-  }
   void load()
 }
 

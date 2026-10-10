@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zengbohan.aurora.order.client.InventoryClient;
 import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.order.client.ProductClient;
+import com.zengbohan.aurora.order.dto.OrderPage;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
 import com.zengbohan.aurora.order.entity.TxMessage;
@@ -257,5 +258,42 @@ class OrderServiceTest {
         assertThatThrownBy(() -> service.getOrder(7L, 1001L))
                 .isInstanceOf(BusinessException.class)
                 .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
+    }
+
+    @Test
+    void listOrdersScopesToTheCallerAndClampsPaging() {
+        Order mine = new Order();
+        mine.setId(1001L);
+        mine.setUserId(7L);
+        mine.setSkuId(1L);
+        mine.setQuantity(2);
+        mine.setTotalAmount(new BigDecimal("39.80"));
+        mine.setStatus(Order.STATUS_CREATED);
+        when(orderMapper.countByUser(7L)).thenReturn(1L);
+        when(orderMapper.pageByUser(eq(7L), anyLong(), anyLong())).thenReturn(java.util.List.of(mine));
+
+        // current=0 会算出负偏移（MySQL 直接语法错），size=100000 会把整张表拉出来：
+        // 两个都必须在服务层就夹住
+        OrderPage page = service.listOrders(7L, 0, 100_000);
+
+        assertThat(page.current()).isEqualTo(1);
+        assertThat(page.size()).isEqualTo(100);
+        assertThat(page.total()).isEqualTo(1);
+        assertThat(page.pages()).isEqualTo(1);
+        assertThat(page.records()).hasSize(1);
+        assertThat(page.records().get(0).orderId()).isEqualTo(1001L);
+        // userId 下推到 SQL 条件，而不是查出来再过滤
+        verify(orderMapper).pageByUser(7L, 100L, 0L);
+    }
+
+    @Test
+    void listOrdersTurnsThePageNumberIntoAnOffset() {
+        when(orderMapper.countByUser(7L)).thenReturn(25L);
+        when(orderMapper.pageByUser(anyLong(), anyLong(), anyLong())).thenReturn(java.util.List.of());
+
+        OrderPage page = service.listOrders(7L, 3, 10);
+
+        verify(orderMapper).pageByUser(7L, 10L, 20L);
+        assertThat(page.pages()).isEqualTo(3);
     }
 }

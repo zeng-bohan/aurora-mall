@@ -2,7 +2,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { onMounted, reactive, ref } from 'vue'
 
-import { productApi } from '@/api'
+import { inventoryApi, productApi } from '@/api'
 import type { Sku } from '@/api/product'
 import { SKU_ON_SALE } from '@/api/product'
 import { describeError } from '@/utils/errors'
@@ -18,6 +18,13 @@ const saving = ref(false)
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
 const form = reactive({ title: '', price: 0.01, stock: 0 })
+
+// ---- 可售库存（与商品表的 stock 不是一个字段）----
+const stockDialogVisible = ref(false)
+const stockTarget = ref<Sku | null>(null)
+const stockValue = ref(0)
+const stockCurrent = ref<number | null>(null)
+const stockLoading = ref(false)
 
 async function load(): Promise<void> {
   loading.value = true
@@ -61,7 +68,7 @@ async function save(): Promise<void> {
   try {
     if (editingId.value === null) {
       await productApi.adminCreate({ title: form.title, price: form.price, stock: form.stock })
-      ElMessage.success('已创建')
+      ElMessage.success('已创建，记得再去开可售库存')
     } else {
       // 后端忽略 stock：改这里不会影响真实库存，能改的只有标题与价格
       await productApi.adminUpdate(editingId.value, {
@@ -69,7 +76,7 @@ async function save(): Promise<void> {
         price: form.price,
         stock: form.stock
       })
-      ElMessage.success('已更新（库存未改动，库存归库存服务管）')
+      ElMessage.success('已更新（展示用库存未改动）')
     }
     dialogVisible.value = false
     await load()
@@ -97,6 +104,43 @@ async function offShelf(sku: Sku): Promise<void> {
   }
 }
 
+async function openStock(sku: Sku): Promise<void> {
+  stockTarget.value = sku
+  stockCurrent.value = null
+  stockValue.value = sku.stock
+  stockDialogVisible.value = true
+  stockLoading.value = true
+  try {
+    const view = await inventoryApi.getStock(sku.id)
+    stockCurrent.value = view.available
+    stockValue.value = view.available ?? 0
+  } catch (error) {
+    ElMessage.error(describeError(error))
+  } finally {
+    stockLoading.value = false
+  }
+}
+
+async function saveStock(): Promise<void> {
+  if (!stockTarget.value) {
+    return
+  }
+  if (stockValue.value < 0) {
+    ElMessage.warning('库存不能为负')
+    return
+  }
+  stockLoading.value = true
+  try {
+    await inventoryApi.setStock(stockTarget.value.id, stockValue.value)
+    ElMessage.success('可售库存已更新')
+    stockDialogVisible.value = false
+  } catch (error) {
+    ElMessage.error(describeError(error))
+  } finally {
+    stockLoading.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -108,11 +152,11 @@ onMounted(load)
     </div>
 
     <el-alert
-      type="warning"
+      type="info"
       :closable="false"
       show-icon
-      title="这里建的商品还不能真正下单"
-      description="商品表里的库存只是展示字段，实际能不能卖由库存服务（aurora-inventory）决定。而库存服务的写端点不对外开放（网关注入的用户身份会被它的身份守卫拒绝），所以前端无法初始化可售库存——需要库存侧补一个管理入口，或让建商品时一并开库存。"
+      title="「库存」列与「可售库存」是两回事"
+      description="列表里的库存是商品表的展示字段；真正决定能不能卖的是库存服务的可售库存。新建商品后要用每行的「库存」按钮把可售库存开出来，否则下单会因库存服务找不到这个 SKU 而失败。"
       class="aurora-note"
     />
 
@@ -132,8 +176,9 @@ onMounted(load)
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="160">
+      <el-table-column label="操作" width="220">
         <template #default="{ row }">
+          <el-button text type="primary" size="small" @click="openStock(row)">库存</el-button>
           <el-button text type="primary" size="small" @click="openEdit(row)">编辑</el-button>
           <el-button
             v-if="row.status === SKU_ON_SALE"
@@ -181,6 +226,31 @@ onMounted(load)
         <el-button type="primary" :loading="saving" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog v-model="stockDialogVisible" title="可售库存" width="420px">
+      <p class="aurora-stock__target">{{ stockTarget?.title }}（编号 {{ stockTarget?.id }}）</p>
+      <p v-loading="stockLoading" class="aurora-stock__current">
+        当前可售：
+        <strong v-if="stockCurrent === null">未开通</strong>
+        <strong v-else>{{ stockCurrent }}</strong>
+      </p>
+      <el-form label-position="top">
+        <el-form-item label="设为">
+          <el-input-number v-model="stockValue" :min="0" />
+        </el-form-item>
+      </el-form>
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        title="设置的是「可售」总量，不是增量"
+        description="若该 SKU 有在途未支付的预占，设置后这些预占仍然有效——这里改的是可售那一部分。"
+      />
+      <template #footer>
+        <el-button @click="stockDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="stockLoading" @click="saveStock">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -210,5 +280,20 @@ onMounted(load)
   margin-left: 12px;
   font-size: 12px;
   color: #909399;
+}
+
+.aurora-stock__target {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+
+.aurora-stock__current {
+  margin: 0 0 16px;
+  color: #606266;
+}
+
+.aurora-stock__current strong {
+  color: #f56c6c;
+  font-size: 16px;
 }
 </style>
