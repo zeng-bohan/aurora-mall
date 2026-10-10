@@ -51,6 +51,29 @@ jobs:
           path: aurora-*/target/surefire-reports/
           if-no-files-found: ignore
 
+  # 前端独立成 job：与 Java 构建并行，不依赖 JDK，也不需要中间件。
+  # 它验的是"类型检查 + 打包能不能过"——aurora-web 是独立工具链，
+  # 不接进来它就会在没人注意的时候烂掉。
+  web-build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: aurora-web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          # 锁文件不在仓库根，缓存路径得显式指到子目录
+          cache-dependency-path: aurora-web/package-lock.json
+
+      # npm ci 而不是 install：锁文件是依赖树的唯一真相，CI 不该顺手改它
+      - run: npm ci
+
+      - run: npm run build
+
   docker-build:
     runs-on: ubuntu-24.04
     needs: build-test

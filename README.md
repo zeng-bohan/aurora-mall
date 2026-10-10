@@ -9,7 +9,7 @@
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
 ![Tests](https://img.shields.io/badge/tests-383%20green-brightgreen)
 
-**当前状态**：M0-M5 已交付（工程骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测 / 秒杀·优惠券·分库试点）；M6 前端进行中。
+**当前状态**：M0-M6 已交付（工程骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测 / 秒杀·优惠券·分库试点 / Vue3 用户端与管理台）；M7 部署上线待做。前端构建与类型检查通过，端到端联调需要先起中间件栈与 8 个服务（见下方快速开始）。
 
 </div>
 
@@ -69,6 +69,7 @@ flowchart LR
 | 消息 | RocketMQ（事务消息 + 延迟消息） | 5.3.1 |
 | 分布式事务 | RocketMQ 事务消息 ⇄ Seata AT（对照） | 2.5.0 |
 | 可观测 | SkyWalking · Prometheus · Grafana · Loki | 9.7 · v2.54 · 11.3 · 3.4 |
+| 前端 | Vue · Vite · TypeScript · Element Plus · Pinia | 3.5 · 6 · 5.7 · 2.9 · 2.3 |
 | 手写组件 | ID 生成器 · 限流/熔断 · RPC（协议+Netty+注册发现） | 见各 README |
 
 ## ✨ 核心亮点
@@ -120,7 +121,21 @@ bash docker/smoke-coupon.sh     # 券：领→用券下单抵扣→关单回券�
 bash docker/smoke-rpc.sh        # 可选：切手写 RPC 实测后自动还原
 ```
 
-四个脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 自建用户与商品，`smoke-seckill.sh` 自建活动并预热，`smoke-coupon.sh` 自建账号/券/商品，都可重复执行。
+这些脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 自建用户与商品，`smoke-seckill.sh` 自建活动并预热，`smoke-coupon.sh` 自建账号/券/商品，都可重复执行。
+
+**4️⃣ 起前端**（可选，界面里走一遍完整链路）：
+
+```bash
+cd aurora-web && npm install && npm run dev   # http://localhost:5173
+```
+
+前端只请求同源的 `/api`，开发期由 Vite 反代到网关（`VITE_GATEWAY` 可覆盖），所以不需要配跨域。管理台入口要求 `role=ADMIN`，而注册出来的账号一律是普通用户（后端没有注册出管理员的路径），要试用管理台得手工改库：
+
+```bash
+docker exec aurora-mysql mysql -uroot -paurora123 -e "UPDATE aurora_user.users SET role='ADMIN' WHERE username='你的用户名';"
+```
+
+详见 [aurora-web/README.md](aurora-web/README.md)。
 
 ## 🎮 使用示例
 
@@ -212,7 +227,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 | M3 | 手写组件：限流熔断 + RPC + 端口切换 | ✅ |
 | M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | ✅ |
 | M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | ✅ 秒杀（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝 + 活动维度限流 + 压测报告）；优惠券（S4 模板与领取 / S5 下单抵扣 + 关单回券 + 冒烟接缝）；分库试点（S6 试点模块 13 条断言 + [对照报告](docs/m5-sharding-pilot.md)，产品链路未引入） |
-| M6 | 完整前端（Vue3 用户端 + 管理后台） | 未开始 |
+| M6 | 完整前端（Vue3 用户端 + 管理后台） | ✅ 用户端（商品/购物车/结算/订单/支付/券/秒杀）+ 管理台（商品/券模板/秒杀活动），构建与类型检查通过，详见 [aurora-web/README.md](aurora-web/README.md) |
 | M7 | 部署上线（服务器 + ICP 备案） | 未开始 |
 
 ## 📚 文档索引
@@ -222,6 +237,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 - [docs/m4-load-test.md](docs/m4-load-test.md) — 同链路压测对照（Feign vs 手写 RPC，阶梯 10/50/100 线程）
 - [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md) — 秒杀压测对照（活动限流关闭 vs 打开，含量级/一致性证据）
 - [docs/m5-sharding-pilot.md](docs/m5-sharding-pilot.md) — ShardingSphere 分库试点对照（路由/归并/事务边界/唯一性，含依赖矩阵踩坑记录）
+- [aurora-web/README.md](aurora-web/README.md) — 前端（用户端 + 管理台）：目录、鉴权与刷新单飞、已知缺口
 - [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件设计取舍与实测数据
 
 ## 🤝 协作
