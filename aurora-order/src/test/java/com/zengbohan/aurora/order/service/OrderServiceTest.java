@@ -133,6 +133,19 @@ class OrderServiceTest {
     }
 
     @Test
+    void unknownReserveOutcomeCompensatesBeforeFailing() {
+        when(inventoryClient.reserve(eq(1L), any())).thenThrow(new RuntimeException("read timeout"));
+
+        assertThatThrownBy(() -> service.placeOrder(7L, new PlaceOrderRequest(1L, 2), "req-5"))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.SYSTEM_ERROR.getCode());
+
+        // 结果未知必须先补偿（库存侧只在确实预扣过时才回补），且不能留下订单行
+        verify(inventoryClient).compensateReserve(eq(1L), any());
+        verify(orderMapper, never()).insert(any(Order.class));
+    }
+
+    @Test
     void offShelfProductIsRejectedBeforeReservation() {
         when(productClient.detail(1L)).thenReturn(Result.ok(
                 new ProductSnapshot(1L, "x", BigDecimal.ONE, 0, 0)));

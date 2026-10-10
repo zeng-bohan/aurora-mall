@@ -61,6 +61,13 @@ public class StockController {
         return Result.ok();
     }
 
+    // 预扣补偿：order 侧结果未知（超时/断连）时的回补，库存侧只在确实预扣过时才加回。
+    @PostMapping("/{skuId}/compensate-reserve")
+    public Result<Void> compensateReserve(@PathVariable long skuId, @Valid @RequestBody ReleaseRequest request) {
+        stockService.compensateReserve(request.orderId(), skuId, request.quantity());
+        return Result.ok();
+    }
+
     // 关单回滚：redis +1 与 DB 释放均按订单幂等，补偿可安全重入。
     @PostMapping("/{skuId}/rollback")
     public Result<Void> rollback(@PathVariable long skuId, @Valid @RequestBody ReleaseRequest request) {

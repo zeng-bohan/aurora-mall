@@ -109,6 +109,27 @@ class StockServiceTest {
     }
 
     @Test
+    void compensateReserveUsesGuardCheckedScriptAndReportsOutcome() {
+        when(redis.execute(Mockito.same(lua.compensateReserve), anyList(), anyString(), anyString()))
+                .thenReturn(1L);
+
+        assertThat(service.compensateReserve(1001L, 1L, 2)).isTrue();
+
+        verify(redis).execute(Mockito.same(lua.compensateReserve),
+                Mockito.eq(List.of(StockLuaScripts.reserveGuardKey(1001L), StockLuaScripts.key(1L),
+                        StockLuaScripts.releasedMarkerKey(1001L))),
+                Mockito.eq("2"), Mockito.eq(StockLuaScripts.RELEASE_MARKER_TTL_SECONDS));
+    }
+
+    @Test
+    void compensateReserveReturnsFalseWhenNothingToCompensate() {
+        when(redis.execute(Mockito.same(lua.compensateReserve), anyList(), anyString(), anyString()))
+                .thenReturn(0L);
+
+        assertThat(service.compensateReserve(1002L, 1L, 2)).isFalse();
+    }
+
+    @Test
     void reserveInsufficientMapsToInventoryInsufficient() {
         luaReserveReturns(-2L);
 

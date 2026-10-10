@@ -78,12 +78,12 @@ class StockLuaIntegrationTest {
 
     @Test
     void reserveDecrementsExactlyAndRejectsShortfallAndMissingKey() {
-        assertThat(reserve("1")).isEqualTo(-1L); // key missing
+        assertThat(reserve("1")).isEqualTo(-1L); // key 不存在
 
         redis.opsForValue().set(key, "10");
         assertThat(reserve("3")).isEqualTo(7L);
-        assertThat(reserve("7")).isEqualTo(0L);      // exact fit allowed
-        assertThat(reserve("1")).isEqualTo(-2L);     // no negative stock
+        assertThat(reserve("7")).isEqualTo(0L);      // 刚好装得下，允许
+        assertThat(reserve("1")).isEqualTo(-2L);     // 不允许负库存
         assertThat(redis.opsForValue().get(key)).isEqualTo("0");
     }
 
@@ -115,6 +115,40 @@ class StockLuaIntegrationTest {
         assertThat(redis.execute(scripts.reserve, List.of(key, guard), "5",
                 StockLuaScripts.RESERVE_GUARD_TTL_SECONDS)).isEqualTo(4L);
         assertThat(redis.opsForValue().get(key)).isEqualTo("4");
+    }
+
+    @Test
+    void compensateReserveIsNoOpWhenTheOrderNeverReserved() {
+        redis.opsForValue().set(key, "10");
+        String guard = key + ":never";
+        guards.add(guard);
+        String marker = key + ":released:never";
+
+        // 该订单从未预扣过（守卫不存在）：补偿必须什么都不做——凭空加库存正是超卖的源头
+        assertThat(redis.execute(scripts.compensateReserve, List.of(guard, key, marker), "3",
+                StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(0L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("10");
+        redis.delete(marker);
+    }
+
+    @Test
+    void compensateReserveRestoresExactlyOnceWhenTheOrderDidReserve() {
+        redis.opsForValue().set(key, "10");
+        String guard = key + ":unknown";
+        guards.add(guard);
+        String marker = key + ":released:unknown";
+
+        // 预扣确实落地（守卫存在），但调用方没拿到响应
+        assertThat(redis.execute(scripts.reserve, List.of(key, guard), "4",
+                StockLuaScripts.RESERVE_GUARD_TTL_SECONDS)).isEqualTo(6L);
+        assertThat(redis.execute(scripts.compensateReserve, List.of(guard, key, marker), "4",
+                StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(1L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("10");
+        // 重复补偿：标记挡住，不会再加一次
+        assertThat(redis.execute(scripts.compensateReserve, List.of(guard, key, marker), "4",
+                StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(0L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("10");
+        redis.delete(marker);
     }
 
     @Test
@@ -168,8 +202,8 @@ class StockLuaIntegrationTest {
         assertThat(done.await(30, TimeUnit.SECONDS)).isTrue();
         pool.shutdownNow();
 
-        assertThat(succeeded.get()).isEqualTo(50);          // not one more
+        assertThat(succeeded.get()).isEqualTo(50);          // 不能多成功一个
         assertThat(rejected.get()).isEqualTo(50);
-        assertThat(redis.opsForValue().get(key)).isEqualTo("0"); // never negative
+        assertThat(redis.opsForValue().get(key)).isEqualTo("0"); // 永不为负
     }
 }

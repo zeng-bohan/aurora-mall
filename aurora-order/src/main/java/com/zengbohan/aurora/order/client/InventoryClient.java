@@ -27,6 +27,10 @@ public interface InventoryClient {
     @PostMapping("/stocks/{skuId}/rollback")
     Result<Void> rollback(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);
 
+    // 预扣补偿：预扣调用结果未知（超时/断连）时的回补，库存侧只在确实预扣过时才加回。
+    @PostMapping("/stocks/{skuId}/compensate-reserve")
+    Result<Void> compensateReserve(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);
+
     // AT 对比：在全局事务内只做 DB 预占。
     @PostMapping("/stocks/{skuId}/reserve-db")
     Result<Void> reserveDb(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);

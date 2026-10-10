@@ -251,9 +251,19 @@ public class OrderService {
     }
 
     private void reserveStock(long orderId, long skuId, int quantity) {
-        Result<Void> result = RemoteCall.invoke("库存",
-                "order " + orderId + " sku " + skuId + " x" + quantity,
-                () -> inventoryClient.reserve(skuId, new InventoryClient.ReserveRequest(orderId, quantity)));
+        Result<Void> result;
+        try {
+            result = RemoteCall.invoke("库存",
+                    "order " + orderId + " sku " + skuId + " x" + quantity,
+                    () -> inventoryClient.reserve(skuId, new InventoryClient.ReserveRequest(orderId, quantity)));
+        } catch (BusinessException e) {
+            // 传输失败/空响应 = 结果未知，预扣可能已经扣减。补偿按订单幂等，且库存侧只在
+            // 「确实预扣过」时才回补，因此对从未落地的预扣也不会凭空加库存。
+            if (e.getErrorCode() == ErrorCode.SYSTEM_ERROR) {
+                compensateReserveQuietly(orderId, skuId, quantity);
+            }
+            throw e;
+        }
         if (result.code() == ErrorCode.INVENTORY_INSUFFICIENT.getCode()) {
             throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
         }
@@ -266,6 +276,16 @@ public class OrderService {
         } catch (RuntimeException e) {
             // 补偿失败留给 inventory 对账任务兜底，但必须响亮
             log.error("compensation rollback failed for sku {} x{} ({})", skuId, quantity, reason, e);
+        }
+    }
+
+    /** 预扣结果未知时的补偿：失败只记 ERROR（对外语义仍是"库存服务不可用"）。 */
+    private void compensateReserveQuietly(long orderId, long skuId, int quantity) {
+        try {
+            inventoryClient.compensateReserve(skuId, new InventoryClient.ReleaseRequest(orderId, quantity));
+        } catch (RuntimeException e) {
+            log.error("reserve compensation failed for order {} (sku {} x{})",
+                    orderId, skuId, quantity, e);
         }
     }
 

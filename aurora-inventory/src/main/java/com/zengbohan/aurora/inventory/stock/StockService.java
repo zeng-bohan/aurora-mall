@@ -99,6 +99,32 @@ public class StockService {
     }
 
     /**
+     * 预扣补偿：order 侧发起预扣但结果未知（超时/断连/空响应）时的安全回补。
+     * <p>
+     * 与 {@link #rollback(long, long, int)} 的安全前提不同：本方法只在「该订单确实预扣过」
+     * （预扣守卫存在）时才把 redis 卖量加回去——对从未落地的预扣回补会凭空放大可售库存。
+     * 释放标记与关单路径共用，两条路径之间同样不会重复回补；DB 侧不参与，因为结果未知时
+     * 订单行没有建立，也就没有 stock-reserved 事件落账。
+     *
+     * @return true 表示本次确实补回了预扣
+     */
+    public boolean compensateReserve(long orderId, long skuId, int quantity) {
+        if (quantity < 1) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "补偿数量必须大于 0");
+        }
+        Long result = redis.execute(scripts.compensateReserve,
+                List.of(StockLuaScripts.reserveGuardKey(orderId), StockLuaScripts.key(skuId),
+                        StockLuaScripts.releasedMarkerKey(orderId)),
+                String.valueOf(quantity), StockLuaScripts.RELEASE_MARKER_TTL_SECONDS);
+        boolean compensated = result != null && result == 1L;
+        if (compensated) {
+            log.warn("compensated an unknown-outcome reserve for order {} (sku {} x{})",
+                    orderId, skuId, quantity);
+        }
+        return compensated;
+    }
+
+    /**
      * 订单取消路径：Redis 可售数量回升，同时释放 DB 预占，两层无需等待
      * 对账任务即可自行收敛。
      * <p>
