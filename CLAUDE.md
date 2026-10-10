@@ -16,6 +16,7 @@
 
 ## 工程约定
 
-- 代码标识符与提交信息用英文；注释跟随文档用中文
+- 代码标识符用英文、提交信息用中文；注释跟随文档用中文
+- 提交只保留 zeng-bohan 为作者/提交者，不带任何 AI 归属
 - 架构与设计取舍见各组件 README 与 `docs/` 下的对照报告
 - 开发流程由 zengbohan-skill 驱动（显式调用 `/zengbohan-skill <task>`；单一 plan.md，工件在 `.scratch/`）

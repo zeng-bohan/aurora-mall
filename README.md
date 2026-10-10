@@ -9,7 +9,7 @@
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
 ![Tests](https://img.shields.io/badge/tests-383%20green-brightgreen)
 
-**当前状态**：M0-M4 已交付（骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测）；M5 进行中——秒杀已交付活动模型与库存预热、Lua 原子预扣、MQ 异步落单与失败补偿、并发冒烟接缝（优惠券与 ShardingSphere 分库试点待做）。
+**当前状态**：M0-M5 已交付（工程骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测 / 秒杀·优惠券·分库试点）；M6 前端进行中。
 
 </div>
 
@@ -79,7 +79,7 @@ flowchart LR
 - **秒杀（M5）**：Redis+Lua 原子预扣（时间窗 / 一人一单 / 库存三合一判定）、MQ 异步落单削峰（请求路径零 DB 访问）、失败补偿恰好一次、订单唯一键 + DB 条件扣减兜底不超卖。
 - **优惠券（M5）**：券并入 order 域（生命周期围绕订单，避免跨服务事务）；领取靠 SQL 守卫防超发 + 唯一键保一人一张；下单用券通过 `CouponHook` 在**订单事务内**锁定并抵扣（金额与订单行同生共死，不存在"下单失败券却被扣住"的中间态）；关单自动回券。
 - **安全模型**：手写 JWT（黑名单注销、refresh 一次一换、登出会话级失效）、内部密钥 + 内部路径守卫 + 用户身份守卫、回调渠道 HMAC 签名、常量时间比较。
-- **验收文化**：383 例测试 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis/真 MySQL 双分片库集成测试（无环境自动跳过）。
+- **验收文化**：383 例测试、0 失败 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis/真 MySQL 双分片库集成测试。依赖外部中间件的 38 例在无环境时如实记为跳过（`mvn test` 仍全绿），不是不计入总数。
 
 ## 🚀 快速开始
 
@@ -195,7 +195,7 @@ bash docker/smoke-observability.sh   # 3 断言：Prometheus targets 全 UP / Lo
 ## 🧪 测试
 
 ```bash
-mvn test                          # 全模块测试；外部依赖类集成测试无环境自动跳过
+mvn test                          # 全模块测试；依赖外部中间件的 38 例无环境时记为跳过
 mvn -pl aurora-rpc test           # 手写 RPC：协议/传输/注册发现（真 Netty，零外部依赖）
 mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对照基准
 ```
@@ -227,7 +227,7 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 ## 🤝 协作
 
 - 分支：trunk-based + feature 分支，merge 前经 review
-- 语言：代码标识符与提交信息用英文，注释跟随文档用中文
+- 语言：代码标识符用英文、提交信息用中文，注释跟随文档用中文
 - 核心链路（库存扣减 / 幂等 / 状态机 / 手写组件）必写单测，不追覆盖率
 - 问题与建议走 [GitHub Issues](https://github.com/zeng-bohan/aurora-mall/issues)
 
