@@ -128,13 +128,19 @@ services:
   # spec 服务清单之外的开发便利项：namesrv/broker 可视化界面
   # （镜像里没有 curl/wget/bash，因此改由 smoke.sh 从宿主机侧探测）
   rocketmq-dashboard:
-    image: apacherocketmq/rocketmq-dashboard:latest
+    # 镜像钉 digest 而不是 :latest：2026-10-12 实测，新版控制台把默认端口从
+    # 8080 改成了 8082，而 :latest 悄悄跟着变，于是下面这条映射（按 8080 写）
+    # 变成死映射、宿主 8180 拿不到任何响应，smoke.sh 直接失败。
+    # 钉住 digest 后镜像不会再无声漂移（与 CI 里 action 按 SHA 钉死同一个道理）。
+    image: apacherocketmq/rocketmq-dashboard@sha256:ce78506bd6fe01095bf1b37c954625e363ba5afae5d1539b77f395785d445e33
     container_name: aurora-rocketmq-dashboard
     depends_on:
       rocketmq-namesrv:
         condition: service_healthy
     environment:
-      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Xms128m -Xmx128m"
+      # server.port 显式指定：不依赖镜像自带的默认值，容器内端口与下面的映射
+      # 永远一致（系统属性优先于 application.yml，换镜像版本也不会错位）
+      JAVA_OPTS: "-Drocketmq.namesrv.addr=rocketmq-namesrv:9876 -Dserver.port=8080 -Xms128m -Xmx128m"
     ports:
       - "127.0.0.1:8180:8080"
 

@@ -221,7 +221,11 @@ req POST /api/payment/payments "$ACTOR_TOKEN" "{\"orderId\":$OID_A}"
 assert_body '"code":0' "payment initiated"
 req POST /api/payment/payments "$ACTOR_TOKEN" "{\"orderId\":$OID_A}"
 assert_body '"code":0' "repeat initiate returns the same payment"
-ORDER_TOTAL="59.70"
+# 金额从服务端返回的支付单里取，绝不硬编码：本脚本在这之前自己把商品价从
+# 19.90 改成了 24.90（缓存延迟双删那一段），写死的旧价与实际订单金额对不上，
+# 回调会被金额校验挡掉，后面整条链（PAID → 库存收敛 → 重放幂等）全部连坐。
+ORDER_TOTAL=$(grep -oE '"amount":[0-9]+(\.[0-9]+)?' <<<"$RESP" | head -1 | cut -d: -f2)
+[[ -n "$ORDER_TOTAL" ]] && ok "callback amount from payment: $ORDER_TOTAL" || bad "payment amount missing"
 CALLBACK_SIG=$(channel_sign "$OID_A" "$ORDER_TOTAL")
 req POST /api/payment/payments/mock-callback "" "{\"orderId\":$OID_A,\"amount\":$ORDER_TOTAL}" "X-Channel-Signature: $CALLBACK_SIG"
 assert_body '"status":1' "callback flips payment to PAID"

@@ -34,7 +34,13 @@ const fromCart = ref(true)
 const loading = ref(true)
 const submitting = ref(false)
 const coupons = ref<CouponView[]>([])
-const selectedCouponId = ref<number | null>(null)
+/**
+ * 券选择用 0 当"不使用"的哨兵值，不用 null：Element Plus 的 el-option
+ * 把 value 声明成 String | Number | Boolean | Object，传 null 会触发类型告警
+ * （实测控制台会刷 Invalid prop）。券 id 从 1 开始，0 不会被真实券占用。
+ */
+const NO_COUPON = 0
+const selectedCouponId = ref<number>(NO_COUPON)
 const results = ref<LineResult[] | null>(null)
 
 /**
@@ -139,7 +145,9 @@ async function submit(): Promise<void> {
         { skuId: line.skuId, quantity: line.quantity },
         {
           idempotencyKey: keyFor(line.skuId),
-          couponId: singleLine.value ? selectedCouponId.value : null
+          couponId: singleLine.value && selectedCouponId.value !== NO_COUPON
+            ? selectedCouponId.value
+            : null
         }
       )
       collected.push({ skuId: line.skuId, title: line.title, orderId, error: null })
@@ -212,8 +220,8 @@ onMounted(async () => {
 
       <el-card v-if="singleLine" class="aurora-checkout__coupon">
         <template #header>优惠券</template>
-        <el-select v-model="selectedCouponId" placeholder="不使用优惠券" clearable class="aurora-checkout__select">
-          <el-option label="不使用优惠券" :value="null" />
+        <el-select v-model="selectedCouponId" class="aurora-checkout__select">
+          <el-option label="不使用优惠券" :value="NO_COUPON" />
           <el-option
             v-for="coupon in usableCoupons"
             :key="coupon.id"
