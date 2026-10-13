@@ -8,6 +8,7 @@
 ![Java](https://img.shields.io/badge/Java-21-orange)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
 ![Tests](https://img.shields.io/badge/tests-390%20green-brightgreen)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 **当前状态**：M0-M6 已交付（工程骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测 / 秒杀·优惠券·分库试点 / Vue3 用户端与管理台）；M7 部署上线待做。前端构建与类型检查通过，端到端联调需要先起中间件栈与 8 个服务（见下方快速开始）。
 
@@ -22,6 +23,37 @@
 - **🛠️ 手写分布式组件**（读源码级理解，非黑盒调用）：[分布式 ID](aurora-id-generator/README.md)、[限流器与熔断器](aurora-ratelimit/README.md)（基准对比 Guava）、[简化 RPC](aurora-rpc/README.md)（自定义协议 + Netty，与 OpenFeign 一键切换）；
 - **⚖️ 两种一致性方案可切换对照**：主链路走 MQ 最终一致性，同一下单流程可切 Seata AT（`aurora.tx.mode=at`），窗口期与回滚行为有[对照报告](docs/m2-tx-comparison.md)；
 - **✅ 三级验收接缝**：中间件就绪 → 服务健康 → 业务金路径（68 断言可重复执行），任何时刻停下都是可运行的作品。
+
+## 🖼️ 界面预览
+
+前端是 Vue 3 + TypeScript + Element Plus，一份代码里两套界面——用户端与管理台。截图均为本地全链路跑通后实拍（数据由 [`docker/seed-demo.sh`](docker/seed-demo.sh) 铺出）。
+
+| 商品列表 | 秒杀详情（实时倒计时 / 限购 / 余量） |
+| --- | --- |
+| ![商品列表](docs/screenshots/user-products.png) | ![秒杀详情](docs/screenshots/user-seckill-detail.png) |
+| **商品管理**（含「可售库存」与展示库存的区分） | **我的订单**（状态由支付回调推进） |
+| ![商品管理](docs/screenshots/admin-products.png) | ![我的订单](docs/screenshots/user-orders.png) |
+
+<details>
+<summary><b>展开全部 12 张（用户端 9 + 管理台 3）</b></summary>
+
+**用户端**
+
+| 商品详情 | 购物车 |
+| --- | --- |
+| ![商品详情](docs/screenshots/user-product-detail.png) | ![购物车](docs/screenshots/user-cart.png) |
+| **结算**（单商品模型，多件即多单） | **订单详情** |
+| ![结算](docs/screenshots/user-checkout.png) | ![订单详情](docs/screenshots/user-order-detail.png) |
+| **优惠券** | **秒杀列表** |
+| ![优惠券](docs/screenshots/user-coupons.png) | ![秒杀列表](docs/screenshots/user-seckill.png) |
+
+**管理台**
+
+| 券模板管理 | 秒杀活动管理 |
+| --- | --- |
+| ![券模板管理](docs/screenshots/admin-coupons.png) | ![秒杀活动管理](docs/screenshots/admin-seckill.png) |
+
+</details>
 
 ## 🏗️ 架构总览
 
@@ -129,7 +161,15 @@ bash docker/smoke-rpc.sh        # 可选：切手写 RPC 实测后自动还原
 cd aurora-web && npm install && npm run dev   # http://localhost:5173
 ```
 
-前端只请求同源的 `/api`，开发期由 Vite 反代到网关（`VITE_GATEWAY` 可覆盖），所以不需要配跨域。管理台入口要求 `role=ADMIN`，而注册出来的账号一律是普通用户（后端没有注册出管理员的路径），要试用管理台得手工改库：
+**5️⃣ 铺演示数据**（可选，想让界面像上面截图那样有内容）：
+
+```bash
+bash docker/seed-demo.sh --reset   # 清掉冒烟脚本的残留，再铺演示数据
+```
+
+铺完得到 16 个商品、3 张券、1 个秒杀活动和 3 笔已支付订单，以及一个 **`admin` / `admin12345`（已提权 ADMIN）** 的演示账号，可直接登录看用户端与管理台。
+
+前端只请求同源的 `/api`，开发期由 Vite 反代到网关（`VITE_GATEWAY` 可覆盖），所以不需要配跨域。管理台入口要求 `role=ADMIN`，而注册出来的账号一律是普通用户（后端没有注册出管理员的路径），要自己建的账号能进管理台得手工改库：
 
 ```bash
 docker exec aurora-mysql mysql -uroot -paurora123 -e "UPDATE aurora_user.users SET role='ADMIN' WHERE username='你的用户名';"
@@ -189,7 +229,16 @@ curl -s -X POST http://localhost:8000/api/order/orders \
 | RocketMQ 控制台 | http://localhost:8180 | Topic/消费组 |
 | MySQL / Redis | 宿主 **13306** / **16379**（root/aurora123） | 网络内为标准端口 |
 
-> ⚠️ **已知陷阱**：① 8080/3306/6379 在本机被其他项目占用，宿主端口做了偏移（服务间通信走标准端口）；② MySQL `aurora123` 为 **dev-only** 默认值，生产凭据走 nacos + 部署注入；③ 修改 `import.sh` 后需**重跑**才能生效（nacos 不感知文件变化）；④ SkyWalking agent 二进制不入 git，获取见 [tools/README.md](tools/README.md)。
+> ⚠️ **已知陷阱**：① 8080/3306/6379 在本机被其他项目占用，宿主端口做了偏移（服务间通信走标准端口）；② MySQL `aurora123` 为 **dev-only** 默认值，生产凭据走 nacos + 部署注入；③ 修改 `import.sh` 后需**重跑**才能生效（nacos 不感知文件变化）；④ SkyWalking agent 二进制不入 git（`tools/` 已被 `.gitignore` 排除），需自行下载解压到 `tools/skywalking-agent/`：
+
+```bash
+mkdir -p tools && cd tools
+curl -fL -o agent.tar.gz https://dlcdn.apache.org/skywalking/java-agent/9.3.0/apache-skywalking-java-agent-9.3.0.tgz
+tar -xzf agent.tar.gz && mv skywalking-agent skywalking-agent.tmp && mkdir -p skywalking-agent
+mv skywalking-agent.tmp/* skywalking-agent/ && rm -rf skywalking-agent.tmp agent.tar.gz
+```
+
+> 没有这个目录时，上面启动脚本会自动跳过 `-javaagent`，服务照常启动，只是 SkyWalking 里看不到链路。
 
 ## 🔭 可观测性与压测
 
@@ -252,4 +301,4 @@ mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对�
 
 ## 📄 许可证
 
-暂未声明（个人学习项目），上线前随发布决定。
+[MIT](LICENSE) © 2026 曾波涵

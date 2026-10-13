@@ -32,6 +32,15 @@ bash nacos/import.sh        # 命名空间 dev + 配置/密钥导入 Nacos
 - `bash smoke-services.sh` — 服务接缝：网关 + 6 服务经 `/api/<service>/actuator/health` 全 200（需先启动服务）
 - `bash smoke-flows.sh` — 业务金路径接缝：注册→登录→浏览→加购→改价收敛→登出，逐步断言（需全部服务在跑）
 
+## 演示数据
+
+- `bash seed-demo.sh` — 铺一套像样的演示数据（16 个商品 + 3 张券 + 1 个秒杀活动 + 3 笔已支付订单 + `admin` 账号），便于截图、演示或 clone 后直接看效果；幂等，已存在的会跳过
+- `bash seed-demo.sh --reset` — 先清掉上面这些冒烟脚本生成的测试残留（`Flow Product *` / `smoke-*` / `audit-*` 等），再铺演示数据
+
+> ⚠️ 脚本里所有带中文的请求体都走「写临时文件 + `curl --data-binary @文件`」，SQL 走 stdin。
+> 原因是 MSYS/Git Bash 会把非 ASCII 的**命令行参数**按本地代码页转换，中文经 argv 传给原生
+> curl/mysql 会变乱码，表现为服务端报「请求体格式错误（10001）」。别把它们改回 `-d "…"` 内联。
+
 ## 备注
 
 - RocketMQ 容器以 root 运行：镜像不含 store/logs 目录，卷挂载点属主为 root
