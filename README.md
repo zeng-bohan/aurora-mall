@@ -233,12 +233,14 @@ curl -s -X POST http://localhost:8000/api/order/orders \
 
 ```bash
 mkdir -p tools && cd tools
-curl -fL -o agent.tar.gz https://dlcdn.apache.org/skywalking/java-agent/9.3.0/apache-skywalking-java-agent-9.3.0.tgz
-tar -xzf agent.tar.gz && mv skywalking-agent skywalking-agent.tmp && mkdir -p skywalking-agent
-mv skywalking-agent.tmp/* skywalking-agent/ && rm -rf skywalking-agent.tmp agent.tar.gz
+# 9.3.0 已从 dlcdn 下架，走 archive 镜像（约 31 MB，慢时可加 -C - 续传）
+curl -fL -C - -o agent.tgz https://archive.apache.org/dist/skywalking/java-agent/9.3.0/apache-skywalking-java-agent-9.3.0.tgz
+tar -xzf agent.tgz && rm -f agent.tgz
 ```
 
 > 没有这个目录时，上面启动脚本会自动跳过 `-javaagent`，服务照常启动，只是 SkyWalking 里看不到链路。
+>
+> 另注：`agent.service_name` 等在 `config/agent.config` 里用的是 `${SW_AGENT_NAME:...}` 这类**环境变量**占位符；配在启动脚本里的 `-DSW_AGENT_NAME=`（JVM 系统属性）同样会被读到，但两者机制不同——要改服务名，直接改那条 `-D` 参数即可。
 
 ## 🔭 可观测性与压测
 
@@ -254,6 +256,19 @@ bash docker/smoke-observability.sh   # 3 断言：Prometheus targets 全 UP / Lo
 | Prometheus | 8 个服务的 `/actuator/prometheus` 抓取目标全部 UP（含 M5 新增的秒杀） |
 | Loki | loki4j 直推日志，可按 traceId 跨服务检索一次请求的全部日志 |
 | SkyWalking | agent 挂进 7 个服务（秒杀同样带 toolkit 依赖，agent 由启动参数决定），OAP 可查到真实链路 |
+
+下面四张都是本地全链路跑通后的实拍：
+
+| Grafana 全链路总览 | Prometheus 抓取目标 8/8 UP |
+| --- | --- |
+| ![Grafana](docs/screenshots/obs-grafana-overview.jpg) | ![Prometheus](docs/screenshots/obs-prometheus-targets.png) |
+| **SkyWalking 服务列表**（调用量 / 成功率 / 延迟 / Apdex） | **SkyWalking 自动推断的 MQ 依赖** |
+| ![SkyWalking 服务](docs/screenshots/obs-skywalking-services.png) | ![SkyWalking MQ](docs/screenshots/obs-skywalking-mq.png) |
+
+> Grafana 面板里的 p99 需要 micrometer 的 `percentiles-histogram` 开关
+> （在 `docker/nacos/import.sh` 的 `aurora-common.yml` 里打开）。
+> 不开的话 Prometheus 只收到 `_count/_sum/_max`、没有 `_bucket`，
+> 那条 `histogram_quantile` 会永远显示 "No data"。
 
 压测（M4 T6）：同一购物车金路径、同参数下 Feign 与手写 RPC 的阶梯对照（10/50/100 线程），报告见 [docs/m4-load-test.md](docs/m4-load-test.md)，计划文件 `docker/jmeter/aurora-load.jmx` 可原样重放。结论摘要：默认 Feign 在 50 线程起出现失败、100 线程 28.5% 请求失败（客户端临时端口耗尽），手写 RPC 100 线程零错误、吞吐约 2.5×。
 

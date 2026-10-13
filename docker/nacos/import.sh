@@ -80,10 +80,19 @@ spring:
       client:
         config:
           default:
-            # 位于用户请求路径上；不要沿用 feign 的 10s/60s 默认值
-            # （heredoc 内容经控制台管道传输：保持纯 ascii）
+            # On the user request path; do not keep feign's 10s/60s defaults.
+            # NOTE: heredoc content goes through the console pipe, so EVERY line
+            # published to nacos must stay pure ASCII -- non-ASCII gets mangled
+            # into mojibake on the way to curl's argv. Keep comments in English.
             connect-timeout: 2000
             read-timeout: 3000
+management:
+  metrics:
+    distribution:
+      # Without this only _count/_sum/_max are published, no _bucket --
+      # and the p99 panel in the Grafana dashboard stays "No data" forever.
+      percentiles-histogram:
+        http.server.requests: true
 YAML
 )
 USER_CFG=$(cat <<'YAML'
@@ -111,8 +120,8 @@ aurora:
 YAML
 )
 GATEWAY_CFG=$(cat <<'YAML'
-# 网关限流：路由 id -> 规则；没有规则的路由不受限。
-# 大促前发布新阈值；重新绑定立即生效。
+# Gateway rate limit: route id -> rule; routes without a rule are unlimited.
+# Publish new thresholds before a sale; rebinding takes effect immediately.
 aurora:
   rate-limit:
     enabled: true
@@ -134,9 +143,9 @@ YAML
 )
 
 SECKILL_CFG=$(cat <<'YAML'
-# 秒杀活动维度限流（网关路由级限流之外的第二道闸）：
-# 每个活动在 window-seconds 内最多 per-activity-limit 次抢购请求。
-# 大促前调大或临时关闭；发布后立即生效（服务侧 @RefreshScope）。
+# Per-activity seckill limit (the second gate behind the gateway route limit):
+# each activity accepts at most per-activity-limit requests per window-seconds.
+# Raise or disable before a sale; takes effect on publish (@RefreshScope).
 aurora:
   seckill:
     rate-limit:
