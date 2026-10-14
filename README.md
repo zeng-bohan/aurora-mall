@@ -1,319 +1,175 @@
-<div align="center">
+# aurora-mall
 
-# 🌌 aurora-mall
+一个用于学习和验证分布式电商架构的 Java 微服务项目，包含用户端与管理端 Web 界面。主要交易流程覆盖下单、库存预留、支付回调和超时关单，并提供可切换的事务方案与自研分布式组件。
 
-**从 0 构建的 Java 微服务电商系统** —— 7 个微服务、完整交易链路、手写分布式组件，每一个架构决策都可在本地复现、用数据验证。
+## 功能
 
-[![CI](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml/badge.svg)](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml)
-![Java](https://img.shields.io/badge/Java-21-orange)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.0-green)
-![Tests](https://img.shields.io/badge/tests-390%20green-brightgreen)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+- 用户注册、登录、令牌刷新、登出；商品浏览与管理、购物车、订单和支付模拟。
+- 订单库存预留、RocketMQ 事务消息与延迟关单；支持将订单事务切换为 Seata AT 对照模式。
+- 优惠券领取与下单抵扣、秒杀活动和异步下单；当前订单模型为单商品订单，购物车多商品结算会分别生成订单。
+- 缓存穿透保护、网关限流与熔断、请求幂等和业务补偿。
+- 独立实现分布式 ID 生成器、限流/熔断组件与基于 Netty 的 RPC 组件；购物车到商品服务可在 OpenFeign 与自研 RPC 间切换。
+- Vue 用户端与管理台；Prometheus、Grafana、Loki 和 SkyWalking 可观测性配置。
 
-**当前状态**：M0-M6 已交付（工程骨架 / 用户-商品-购物车 / 交易链路与分布式事务 / 手写限流熔断与 RPC / 可观测性与压测 / 秒杀·优惠券·分库试点 / Vue3 用户端与管理台）；M7 部署上线待做。前端构建与类型检查通过，端到端联调需要先起中间件栈与 8 个服务（见下方快速开始）。
+支付使用模拟回调链路，不连接真实支付渠道。
 
-</div>
+## 技术栈
 
----
-
-## 📖 这是什么
-
-一个把「分布式原理」当一等公民对待的电商系统：下单 → Redis 原子预扣 → RocketMQ 事务消息 → 支付回调 → 延迟关单，每一步的幂等、补偿、对账都有实现与测试。它特殊在三个地方：
-
-- **🛠️ 手写分布式组件**（读源码级理解，非黑盒调用）：[分布式 ID](aurora-id-generator/README.md)、[限流器与熔断器](aurora-ratelimit/README.md)（基准对比 Guava）、[简化 RPC](aurora-rpc/README.md)（自定义协议 + Netty，与 OpenFeign 一键切换）；
-- **⚖️ 两种一致性方案可切换对照**：主链路走 MQ 最终一致性，同一下单流程可切 Seata AT（`aurora.tx.mode=at`），窗口期与回滚行为有[对照报告](docs/m2-tx-comparison.md)；
-- **✅ 三级验收接缝**：中间件就绪 → 服务健康 → 业务金路径（68 断言可重复执行），任何时刻停下都是可运行的作品。
-
-## 🖼️ 界面预览
-
-前端是 Vue 3 + TypeScript + Element Plus，一份代码里两套界面——用户端与管理台。截图均为本地全链路跑通后实拍（数据由 [`docker/seed-demo.sh`](docker/seed-demo.sh) 铺出）。
-
-| 商品列表 | 秒杀详情（实时倒计时 / 限购 / 余量） |
+| 范围 | 技术 |
 | --- | --- |
-| ![商品列表](docs/screenshots/user-products.png) | ![秒杀详情](docs/screenshots/user-seckill-detail.png) |
-| **商品管理**（含「可售库存」与展示库存的区分） | **我的订单**（状态由支付回调推进） |
-| ![商品管理](docs/screenshots/admin-products.png) | ![我的订单](docs/screenshots/user-orders.png) |
+| 后端 | Java 21、Spring Boot 3.5、Spring Cloud 2025、Spring Cloud Alibaba 2025 |
+| 数据与消息 | MySQL 8、Redis 7、RocketMQ 5.3、Nacos 2.4 |
+| 分布式事务 | RocketMQ 事务消息；可选 Seata AT |
+| 可观测性 | Prometheus、Grafana、Loki、SkyWalking |
+| 前端 | Vue 3、TypeScript、Vite、Element Plus、Pinia |
+| 构建与运行 | Maven 多模块、Docker Compose、GitHub Actions |
 
-<details>
-<summary><b>展开全部 12 张（用户端 9 + 管理台 3）</b></summary>
+## 架构
 
-**用户端**
-
-| 商品详情 | 购物车 |
-| --- | --- |
-| ![商品详情](docs/screenshots/user-product-detail.png) | ![购物车](docs/screenshots/user-cart.png) |
-| **结算**（单商品模型，多件即多单） | **订单详情** |
-| ![结算](docs/screenshots/user-checkout.png) | ![订单详情](docs/screenshots/user-order-detail.png) |
-| **优惠券** | **秒杀列表** |
-| ![优惠券](docs/screenshots/user-coupons.png) | ![秒杀列表](docs/screenshots/user-seckill.png) |
-
-**管理台**
-
-| 券模板管理 | 秒杀活动管理 |
-| --- | --- |
-| ![券模板管理](docs/screenshots/admin-coupons.png) | ![秒杀活动管理](docs/screenshots/admin-seckill.png) |
-
-</details>
-
-## 🏗️ 架构总览
-
-```mermaid
+~~~mermaid
 flowchart LR
-    C[客户端] --> G[aurora-gateway :8000<br/>路由 + 限流 + 手写JWT校验/黑名单/内部签名注入]
+    Web[Vue 用户端 / 管理台] --> GW[Spring Cloud Gateway]
+    GW --> S[用户、商品、购物车、库存、支付、秒杀服务]
+    GW --> O[订单服务]
+    S --> N[Nacos 注册与配置]
+    O --> N
+    S --> DB[(MySQL，按服务分库)]
+    O --> DB
+    S --> R[(Redis)]
+    O --> R
+    O --> MQ[RocketMQ]
+    O -. 可选事务对照 .-> SEATA[Seata AT]
+    S --> OBS[Prometheus / Grafana / Loki / SkyWalking]
+    O --> OBS
+~~~
 
-    G --> U[aurora-user]
-    G --> P[aurora-product]
-    G --> CA[aurora-cart]
-    G --> O[aurora-order]
-    G --> I[aurora-inventory]
-    G --> PA[aurora-payment]
-    G --> SK[aurora-seckill :8087<br/>秒杀：活动/预热/预扣]
+`gateway` 路由、限流与 JWT 校验；各业务服务通过 Nacos 发现与配置。订单链路以 RocketMQ 事务消息和延迟关单实现最终一致性。
 
-    CA -. OpenFeign / RPC 可切换 .-> P
+## 模块与目录
 
-    subgraph 注册与配置
-      N[(Nacos<br/>注册 + 配置中心 dev)]
-    end
+仓库采用 Maven 多模块结构（父 POM 列出 14 个模块）：
 
-    U & P & CA & O & I & PA --> N
+| 路径 | 职责 |
+| --- | --- |
+| `aurora-gateway` | API 网关、认证校验与限流 |
+| `aurora-user`、`aurora-product` | 用户与商品服务 |
+| `aurora-cart`、`aurora-order` | 购物车与订单服务 |
+| `aurora-inventory`、`aurora-payment`、`aurora-seckill` | 库存、模拟支付与秒杀服务 |
+| `aurora-common`、`aurora-api` | 公共基础设施与服务契约 |
+| `aurora-id-generator`、`aurora-ratelimit`、`aurora-rpc` | 分布式 ID、限流/熔断与 RPC 组件 |
+| `aurora-sharding-pilot` | 数据分片试点模块 |
+| `aurora-web` | Vue 前端 |
+| `docker` | 本地中间件栈、数据库初始化 SQL、冒烟和演示脚本 |
+| `docs` | 设计对比、压测报告与截图 |
 
-    O -. 事务消息/延迟关单 .-> MQ[(RocketMQ 5.3)]
-    MQ -. stock-reserved/order-paid .-> I & PA & O
-    O -. Seata AT 对照实验 .-> SE[(undo_log)]
+MySQL 的各服务建库与表结构脚本位于 [docker/mysql/init](docker/mysql/init)。新建数据卷时由 MySQL 镜像初始化；已有数据卷不会自动重新执行初始化脚本。项目以这些 SQL 初始化文件管理本地结构，没有 Flyway/Liquibase 自动迁移流程。
 
-    U & P & O & I & PA -.-> SQL[(MySQL 8<br/>库表按服务隔离)]
-    U & P & CA & O & I -.-> R[(Redis 7<br/>黑名单/缓存/购物车/库存预扣/分布式限流)]
-    O & PA -.-> OMQ[(本地消息表 + 补发 job)]
+## 快速开始
 
-    subgraph 可观测性
-      SW[SkyWalking] & PR[Prometheus] & LK[Loki] --> GR[Grafana]
-    end
-```
+### 环境要求
 
-交易主链路：**RocketMQ 事务消息 + 延迟关单**的最终一致性；服务间调用走 Nacos 发现 + Feign（cart→product 可切手写 RPC）；服务侧校验 `X-Internal-Secret`，内部路径与用户身份流量在网关和服务两侧双重封死。
+- JDK 21
+- Maven 3.9 或更高版本
+- Docker Compose
+- Bash（Windows 可使用 Git Bash）
 
-## 🧰 技术栈
+### 启动基础设施
 
-| 层 | 选型 | 版本 |
-| --- | --- | --- |
-| 语言/框架 | JDK · Spring Boot · Spring Cloud · Spring Cloud Alibaba | 21 · 3.5.0 · 2025.0.0 · 2025.0.0.0 |
-| 存储 | MySQL · Redis | 8.0 · 7 |
-| 消息 | RocketMQ（事务消息 + 延迟消息） | 5.3.1 |
-| 分布式事务 | RocketMQ 事务消息 ⇄ Seata AT（对照） | 2.5.0 |
-| 可观测 | SkyWalking · Prometheus · Grafana · Loki | 9.7 · v2.54 · 11.3 · 3.4 |
-| 前端 | Vue · Vite · TypeScript · Element Plus · Pinia | 3.5 · 6 · 5.7 · 2.9 · 2.3 |
-| 手写组件 | ID 生成器 · 限流/熔断 · RPC（协议+Netty+注册发现） | 见各 README |
+~~~bash
+cd docker
+docker compose up -d
+bash smoke.sh
+bash nacos/import.sh
+~~~
 
-## ✨ 核心亮点
+`smoke.sh` 检查中间件就绪；`nacos/import.sh` 在本地生成并复用被 Git 忽略的开发密钥，并将应用配置写入 Nacos。先完成导入，再启动 Java 服务。MySQL、Redis、Nacos、RocketMQ 及观测组件的地址见 [docker/README.md](docker/README.md)。
 
-- **完整交易链路**：预扣 → 事务消息 → 支付回调推进 → 30 分钟未支付延迟关单回滚；幂等、补偿、对账全链路闭环——含支付/关单竞态的退款信号（钱收了单关了会自动退）。
-- **缓存三防**：Cache Aside + 空值缓存 + 手写布隆过滤器（线程安全 + 定期重播种）+ 逻辑过期/互斥重建。
-- **过载保护**：网关 Redis 分布式滑动窗口限流（Nacos 动态阈值）+ 逐接口熔断器（失败率/慢调用双触发）。
-- **秒杀（M5）**：Redis+Lua 原子预扣（时间窗 / 一人一单 / 库存三合一判定）、MQ 异步落单削峰（请求路径零 DB 访问）、失败补偿恰好一次、订单唯一键 + DB 条件扣减兜底不超卖。
-- **优惠券（M5）**：券并入 order 域（生命周期围绕订单，避免跨服务事务）；领取靠 SQL 守卫防超发 + 唯一键保一人一张；下单用券通过 `CouponHook` 在**订单事务内**锁定并抵扣（金额与订单行同生共死，不存在"下单失败券却被扣住"的中间态）；关单自动回券。
-- **安全模型**：手写 JWT（黑名单注销、refresh 一次一换、登出会话级失效）、内部密钥 + 内部路径守卫 + 用户身份守卫、回调渠道 HMAC 签名、常量时间比较。
-- **验收文化**：390 例测试、0 失败 + 三级 smoke 接缝 + 可观测性活体验证 + 真 Netty/真 Redis/真 MySQL 双分片库集成测试。依赖外部中间件的 38 例在无环境时如实记为跳过（`mvn test` 仍全绿），不是不计入总数。
+Compose 在宿主机映射 MySQL `13306`、Redis `16379`、Nacos `8848`，网关默认使用 `8000`。上述配置面向本地开发；不要把仓库中的开发凭证或关闭认证的 Nacos 配置直接用于公网部署。
 
-## 🚀 快速开始
+### 构建并启动后端
 
-前置：JDK 21 · Maven 3.9+ · Docker Desktop（≥6GB 可用内存）· Git Bash（Windows）。
+在仓库根目录：
 
-```bash
-git clone https://github.com/zeng-bohan/aurora-mall.git && cd aurora-mall
-```
+~~~bash
+cd ..
+mvn -B clean verify
+~~~
 
-**1️⃣ 起基础设施全家桶**（MySQL/Redis/Nacos/RocketMQ/SkyWalking/Prometheus/Grafana/Loki）：
+构建后，在一个 Bash 终端启动 8 个服务进程：
 
-```bash
-cd docker && docker compose up -d && bash smoke.sh && bash nacos/import.sh
-```
-
-看到 `smoke OK` 即中间件就绪（首次拉镜像约 10 分钟）。`nacos/import.sh` 生成密钥并导入全部运行时配置（**必须在启动服务前执行**，否则服务 fail-fast 拒绝启动）。详见 [docker/README.md](docker/README.md)。
-
-**2️⃣ 构建并启动 8 个服务**（SkyWalking agent 存在时自动挂载）：
-
-```bash
-cd .. && mvn clean package
-AGENT=""; [ -d tools/skywalking-agent ] && \
-  AGENT="-javaagent:$PWD/tools/skywalking-agent/skywalking-agent.jar"
-for svc in gateway user product cart order inventory payment seckill; do
-  java $AGENT -DSW_AGENT_NAME=aurora-$svc \
-    -DSW_AGENT_COLLECTOR_BACKEND_SERVICES=localhost:11800 \
-    -jar "aurora-$svc/target/aurora-$svc-0.1.0-SNAPSHOT.jar" > /tmp/"$svc".log 2>&1 &
+~~~bash
+for service in gateway user product cart order inventory payment seckill; do
+  java -jar "aurora-$service/target/aurora-$service-0.1.0-SNAPSHOT.jar" &
 done
-```
+wait
+~~~
 
-**3️⃣ 验收**：
+服务从 Nacos 获取运行配置。若只需调试单个服务，可在 IDE 中启动对应模块的 Spring Boot 应用。
 
-```bash
-bash docker/smoke-services.sh   # 网关 + 7 服务健康端点全 200
-bash docker/smoke-flows.sh      # 68 断言：金路径 + 两条交易链 + 网关限流链
-bash docker/smoke-seckill.sh    # 秒杀：并发抢购不超卖 / 一人一单 / Redis 与 DB 收敛一致
-bash docker/smoke-coupon.sh     # 券：领→用券下单抵扣→关单回券，含重复领/领完/门槛不足/过期四类边界
-bash docker/smoke-rpc.sh        # 可选：切手写 RPC 实测后自动还原
-```
+### 启动前端
 
-这些脚本都输出 `OK` / `... green` 即验收通过。`smoke-flows.sh` 自建用户与商品，`smoke-seckill.sh` 自建活动并预热，`smoke-coupon.sh` 自建账号/券/商品，都可重复执行。
+前端代理 `/api` 到本地网关。启动后端后，在另一终端运行：
 
-**4️⃣ 起前端**（可选，界面里走一遍完整链路）：
+~~~bash
+cd aurora-web
+npm ci
+npm run dev
+~~~
 
-```bash
-cd aurora-web && npm install && npm run dev   # http://localhost:5173
-```
+前端开发地址为 `http://localhost:5173`。管理界面要求 ADMIN 角色；注册流程创建的是普通用户，演示管理员账号由本地演示数据脚本提供。不要将演示账号用于生产环境。
 
-**5️⃣ 铺演示数据**（可选，想让界面像上面截图那样有内容）：
+## API 与权限
 
-```bash
-bash docker/seed-demo.sh --reset   # 清掉冒烟脚本的残留，再铺演示数据
-```
+客户端通过网关 `http://localhost:8000` 访问业务接口。常用入口：
 
-铺完得到 16 个商品、3 张券、1 个秒杀活动和 3 笔已支付订单，以及一个 **`admin` / `admin12345`（已提权 ADMIN）** 的演示账号，可直接登录看用户端与管理台。
-
-前端只请求同源的 `/api`，开发期由 Vite 反代到网关（`VITE_GATEWAY` 可覆盖），所以不需要配跨域。管理台入口要求 `role=ADMIN`，而注册出来的账号一律是普通用户（后端没有注册出管理员的路径），要自己建的账号能进管理台得手工改库：
-
-```bash
-docker exec aurora-mysql mysql -uroot -paurora123 -e "UPDATE aurora_user.users SET role='ADMIN' WHERE username='你的用户名';"
-```
-
-详见 [aurora-web/README.md](aurora-web/README.md)。
-
-## 🎮 使用示例
-
-一次完整的「登录 → 下单 → 幂等重试」交互（均经网关）：
-
-```bash
-# 登录拿 token
-curl -s -X POST http://localhost:8000/api/user/login \
-  -H "Content-Type: application/json" \
-  -d '{"username":"alice","password":"secret123"}'
-# → {"code":0,"data":{"accessToken":"eyJ...","refreshToken":"..."}}
-
-# 下单（Idempotency-Key 防重复提交）
-curl -s -X POST http://localhost:8000/api/order/orders \
-  -H "Authorization: Bearer $TOKEN" -H "Idempotency-Key: demo-key-1" \
-  -H "Content-Type: application/json" \
-  -d '{"skuId":100,"quantity":3}'
-# → {"code":0,"data":{"orderId":...,"status":0}}    待支付
-
-# 同一个 Idempotency-Key 重放 → 幂等拒绝
-# → {"code":40900,"message":"..."}
-```
-
-<details>
-<summary><b>📋 业务端点速查</b>（点击展开）</summary>
-
-| 分组 | 端点 | 说明 |
-| --- | --- | --- |
-| 认证（公开） | `POST /api/user/register` `login` `refresh` | 注册/登录/续期，双 token |
-| 认证（需 token） | `POST /api/user/logout` · `GET /api/user/me` | 登出即黑名单，旧 token 立即 401 |
-| 商品（公开读） | `GET /api/product/products` · `GET .../products/{id}` · `GET .../batch` | 游客可读，缓存三防 |
-| 商品（admin） | `POST/PUT/DELETE /api/product/admin/products...` | 需 `role=ADMIN`，写路径延迟双删 |
-| 购物车（需 token） | `GET/POST/PUT/DELETE /api/cart/carts...` | Redis Hash，行项目含商品快照 |
-| 订单（需 token） | `POST /api/order/orders`（带 `Idempotency-Key`，用券加 `Coupon-Id` 头）· `GET .../orders`（我的订单，分页）· `GET .../{id}` | 30min 未支付自动关单 |
-| 支付（需 token） | `POST /api/payment/payments` · `GET .../{orderId}` | mock 通道；回调带渠道 HMAC 签名 |
-| 券（需 token） | `GET /api/order/coupons/templates` · `POST .../{templateId}/claim` · `GET .../mine` | 领取靠 SQL 守卫防超发 + 唯一键一人一张 |
-| 秒杀（需 token） | `GET /api/seckill/activities` · `POST .../{id}/orders` · `GET .../{id}/orders/mine` | 异步落单，抢购后轮询取结果 |
-| 管理台（需 token + ADMIN） | `/api/product/admin/products` · `/api/order/admin/coupons` · `/api/seckill/admin/activities` · `/api/inventory/admin/stocks/{skuId}` | 库存入口是开可售库存的唯一 HTTP 路径 |
-
-</details>
-
-### 🖥️ 运行中的控制台
-
-| 服务 | 地址 | 说明 |
-| --- | --- | --- |
-| 网关 | http://localhost:8000 | 业务入口 `/api/<service>/**` |
-| SkyWalking UI | http://localhost:8090 | 链路追踪与拓扑 |
-| Grafana | http://localhost:3000（admin/aurora123） | 指标/日志大盘 |
-| Prometheus | http://localhost:9090 | 指标抓取 |
-| Nacos 控制台 | http://localhost:8848/nacos | 服务注册/配置（限流阈值动态下发） |
-| RocketMQ 控制台 | http://localhost:8180 | Topic/消费组 |
-| MySQL / Redis | 宿主 **13306** / **16379**（root/aurora123） | 网络内为标准端口 |
-
-> ⚠️ **已知陷阱**：① 8080/3306/6379 在本机被其他项目占用，宿主端口做了偏移（服务间通信走标准端口）；② MySQL `aurora123` 为 **dev-only** 默认值，生产凭据走 nacos + 部署注入；③ 修改 `import.sh` 后需**重跑**才能生效（nacos 不感知文件变化）；④ SkyWalking agent 二进制不入 git（`tools/` 已被 `.gitignore` 排除），需自行下载解压到 `tools/skywalking-agent/`：
-
-```bash
-mkdir -p tools && cd tools
-# 9.3.0 已从 dlcdn 下架，走 archive 镜像（约 31 MB，慢时可加 -C - 续传）
-curl -fL -C - -o agent.tgz https://archive.apache.org/dist/skywalking/java-agent/9.3.0/apache-skywalking-java-agent-9.3.0.tgz
-tar -xzf agent.tgz && rm -f agent.tgz
-```
-
-> 没有这个目录时，上面启动脚本会自动跳过 `-javaagent`，服务照常启动，只是 SkyWalking 里看不到链路。
->
-> 另注：`agent.service_name` 等在 `config/agent.config` 里用的是 `${SW_AGENT_NAME:...}` 这类**环境变量**占位符；配在启动脚本里的 `-DSW_AGENT_NAME=`（JVM 系统属性）同样会被读到，但两者机制不同——要改服务名，直接改那条 `-D` 参数即可。
-
-## 🔭 可观测性与压测
-
-可观测栈走 provisioning（不手点控制台），一条命令活体验证：
-
-```bash
-bash docker/smoke-observability.sh   # 3 断言：Prometheus targets 全 UP / Loki 按 traceId 命中 / OAP 有 trace
-```
-
-| 组件 | 已交付内容 |
+| 功能 | 示例路径 |
 | --- | --- |
-| Grafana | provisioning 自动装配：Prometheus + Loki 数据源、大盘「aurora-mall 全链路总览」、告警规则「order 服务 5xx 比例过高」（2 分钟 5xx 比例 >5%，持续 1 分钟）→ webhook 接点（本地 `docker/webhook-receiver.py` 可收验） |
-| Prometheus | 8 个服务的 `/actuator/prometheus` 抓取目标全部 UP（含 M5 新增的秒杀） |
-| Loki | loki4j 直推日志，可按 traceId 跨服务检索一次请求的全部日志 |
-| SkyWalking | agent 挂进 7 个服务（秒杀同样带 toolkit 依赖，agent 由启动参数决定），OAP 可查到真实链路 |
+| 注册、登录、续期、登出、当前用户 | `/api/user/register`、`/api/user/login`、`/api/user/refresh`、`/api/user/logout`、`/api/user/me` |
+| 商品浏览与管理 | `/api/product/products`、`/api/product/admin/products` |
+| 购物车 | `/api/cart/carts` |
+| 订单与优惠券 | `/api/order/orders`、`/api/order/coupons/templates` |
+| 秒杀 | `/api/seckill/activities`、`/api/seckill/activities/{id}/orders` |
 
-下面四张都是本地全链路跑通后的实拍：
+网关使用 JWT access/refresh token；登出会撤销 token。管理接口执行角色校验，内部服务接口使用共享密钥和身份头守卫。支付回调由服务端校验 HMAC 签名。详细路由与请求模型以各模块 Controller 和 [aurora-web/README.md](aurora-web/README.md) 为准。
 
-| Grafana 全链路总览 | Prometheus 抓取目标 8/8 UP |
+## 配置与数据
+
+仓库没有统一的 `.env.example`。本地基础地址与覆盖项见各服务的 `application.yml`；主要变量包括：
+
+| 变量 | 用途 |
 | --- | --- |
-| ![Grafana](docs/screenshots/obs-grafana-overview.jpg) | ![Prometheus](docs/screenshots/obs-prometheus-targets.png) |
-| **SkyWalking 服务列表**（调用量 / 成功率 / 延迟 / Apdex） | **SkyWalking 自动推断的 MQ 依赖** |
-| ![SkyWalking 服务](docs/screenshots/obs-skywalking-services.png) | ![SkyWalking MQ](docs/screenshots/obs-skywalking-mq.png) |
+| `NACOS_ADDR` | Nacos 地址 |
+| `MYSQL_ADDR`、`MYSQL_PASSWORD` | MySQL 地址与密码 |
+| `REDIS_HOST`、`REDIS_PORT` | Redis 连接 |
+| `ROCKETMQ_ADDR` | RocketMQ NameServer |
+| `AURORA_TX_MODE`、`SEATA_ENABLED`、`SEATA_ADDR` | 订单事务方案及可选 Seata 连接 |
+| `AURORA_RPC_ENABLED`、`RPC_HOST`、`RPC_PORT` | 购物车到商品服务的 RPC 开关与监听配置 |
+| `AURORA_SECKILL_ORDER_MODE` | 秒杀订单处理模式 |
+| `VITE_GATEWAY` | 前端 Vite 开发代理目标 |
 
-> Grafana 面板里的 p99 需要 micrometer 的 `percentiles-histogram` 开关
-> （在 `docker/nacos/import.sh` 的 `aurora-common.yml` 里打开）。
-> 不开的话 Prometheus 只收到 `_count/_sum/_max`、没有 `_bucket`，
-> 那条 `histogram_quantile` 会永远显示 "No data"。
+`docker/nacos/import.sh` 生成 JWT、内部调用和支付回调密钥，并发布到 Nacos 的 `dev` 命名空间；本地密钥保存在 `docker/nacos/.secrets.env`（已忽略）。不要提交该文件或在 README、日志中粘贴密钥。
 
-压测（M4 T6）：同一购物车金路径、同参数下 Feign 与手写 RPC 的阶梯对照（10/50/100 线程），报告见 [docs/m4-load-test.md](docs/m4-load-test.md)，计划文件 `docker/jmeter/aurora-load.jmx` 可原样重放。结论摘要：默认 Feign 在 50 线程起出现失败、100 线程 28.5% 请求失败（客户端临时端口耗尽），手写 RPC 100 线程零错误、吞吐约 2.5×。
+## 开发与部署
 
-压测（M5 S3）：秒杀抢购在「活动限流关闭 / 打开（300 req/s）」两轮下的对照（10/50/100 线程、各 20s/档、每请求一个不同买家），报告见 [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md)，计划文件 `docker/jmeter/aurora-seckill.jmx` 可原样重放。结论摘要：两轮 20 万级尝试下限量 3000 **恰好**成交 3000，Redis 与 DB 同时收敛到 0、无残留 PENDING（无超卖无丢单）；限流窗口峰值精确封顶在 300（ZCARD 逐秒采样），入口挡掉约 92.6% 的尝试；**无限流那轮在这台单机上并未被打挂**（2,897/s、中位 5–7ms）——限流的价值在于把中签路径（MQ + DB）的成本按预算摊平，而不是"保护闸门"。
+后端构建并运行测试：
 
-## 🧪 测试
+~~~bash
+mvn -B clean verify
+~~~
 
-```bash
-mvn test                          # 全模块测试；依赖外部中间件的 38 例无环境时记为跳过
-mvn -pl aurora-rpc test           # 手写 RPC：协议/传输/注册发现（真 Netty，零外部依赖）
-mvn -pl aurora-ratelimit test     # 限流算法 + 熔断状态机 + Guava 对照基准
-```
+前端：
 
-验收接缝：`docker/smoke.sh`（中间件）→ `docker/smoke-services.sh`（健康）→ `docker/smoke-flows.sh`（金路径：链 A 下单→支付→库存收敛→回调重放；链 B 经配置中心改关单延迟→自动关单→库存恢复→配置还原）→ `docker/smoke-seckill.sh`（秒杀：并发抢购不超卖、一人一单、结果收敛、Redis 与 DB 口径一致）→ `docker/smoke-coupon.sh`（券：领取→用券下单抵扣→关单回券，含四类边界）。
+~~~bash
+cd aurora-web
+npm ci
+npm run typecheck
+npm run build
+~~~
 
-## 🗺️ 路线图
+基础设施健康检查使用 `bash docker/smoke.sh`；服务健康检查使用 `bash docker/smoke-services.sh`。`smoke-flows.sh`、`smoke-seckill.sh`、`smoke-coupon.sh` 和 `seed-demo.sh` 会创建或调整本地业务数据，只应在开发数据库中运行，脚本说明见 [docker/README.md](docker/README.md)。
 
-| 阶段 | 内容 | 状态 |
-| --- | --- | --- |
-| M0 | 工程骨架 + 中间件全家桶 + CI | ✅ |
-| M1 | 用户 / 商品 / 购物车（JWT、缓存三防） | ✅ |
-| M2 | 订单 / 库存 / 支付（事务消息、Seata 对照、幂等、ID 生成器） | ✅ |
-| M3 | 手写组件：限流熔断 + RPC + 端口切换 | ✅ |
-| M4 | 可观测性（SkyWalking/指标/Loki/告警）+ JMeter 压测报告 | ✅ |
-| M5 | 秒杀 / 优惠券 / ShardingSphere 分库试点 | ✅ 秒杀（S1 活动与预热 / S2 Lua 预扣 + MQ 异步落单 / S3 冒烟接缝 + 活动维度限流 + 压测报告）；优惠券（S4 模板与领取 / S5 下单抵扣 + 关单回券 + 冒烟接缝）；分库试点（S6 试点模块 13 条断言 + [对照报告](docs/m5-sharding-pilot.md)，产品链路未引入） |
-| M6 | 完整前端（Vue3 用户端 + 管理后台） | ✅ 用户端（商品/购物车/结算/订单/支付/券/秒杀）+ 管理台（商品/券模板/秒杀活动），构建与类型检查通过，详见 [aurora-web/README.md](aurora-web/README.md) |
-| M7 | 部署上线（服务器 + ICP 备案） | 未开始 |
+GitHub Actions 执行 Maven 验证、前端构建，并构建服务 Docker 镜像；工作流不会将镜像推送到镜像仓库。当前 Compose 文件编排中间件，应用服务仍需单独启动；`docker/Dockerfile.service` 可用于构建单服务镜像。
 
-## 📚 文档索引
+## 许可证
 
-- [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) — MQ 最终一致 vs Seata AT 对照实验
-- [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) — OpenFeign vs 手写 RPC 对照（等价性 + 微基准 + 边界）
-- [docs/m4-load-test.md](docs/m4-load-test.md) — 同链路压测对照（Feign vs 手写 RPC，阶梯 10/50/100 线程）
-- [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md) — 秒杀压测对照（活动限流关闭 vs 打开，含量级/一致性证据）
-- [docs/m5-sharding-pilot.md](docs/m5-sharding-pilot.md) — ShardingSphere 分库试点对照（路由/归并/事务边界/唯一性，含依赖矩阵踩坑记录）
-- [aurora-web/README.md](aurora-web/README.md) — 前端（用户端 + 管理台）：目录、鉴权与刷新单飞、已知缺口
-- [aurora-id-generator/README.md](aurora-id-generator/README.md) · [aurora-ratelimit/README.md](aurora-ratelimit/README.md) · [aurora-rpc/README.md](aurora-rpc/README.md) — 手写组件设计取舍与实测数据
-
-## 🤝 协作
-
-- 分支：trunk-based + feature 分支，merge 前经 review
-- 语言：代码标识符用英文、提交信息用中文，注释跟随文档用中文
-- 核心链路（库存扣减 / 幂等 / 状态机 / 手写组件）必写单测，不追覆盖率
-- 问题与建议走 [GitHub Issues](https://github.com/zeng-bohan/aurora-mall/issues)
-
-## 📄 许可证
-
-[MIT](LICENSE) © 2026 曾波涵
+[MIT](LICENSE)
