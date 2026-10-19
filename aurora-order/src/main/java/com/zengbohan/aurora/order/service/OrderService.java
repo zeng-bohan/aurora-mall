@@ -212,15 +212,32 @@ public class OrderService {
      * 分页参数在这里夹紧而不是靠前端自觉：size 不设上限的话，一个
      * {@code size=1000000} 就能把整张表拉出来；current 小于 1 会算出负偏移，
      * 在 MySQL 上直接是语法错。上限取 100，够用且不失控。
+     * <p>
+     * 偏移量用 {@link Math#multiplyExact} 算并捕获溢出：夹紧只保证两个因子各自合法，
+     * 不保证乘积不溢出——{@code current=9223372036854775807} 配 {@code size=10}
+     * 的乘积是负数，{@code LIMIT 10 OFFSET -<大数>} 又是一个 MySQL 语法错（实测 HTTP 500）。
+     * 溢出或偏移已超过总数时直接返回空页：那种页码本来就没有数据，不必再问数据库。
      */
     public OrderPage listOrders(long userId, long current, long size) {
         long safeSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         long safeCurrent = Math.max(current, 1);
         long total = orderMapper.countByUser(userId);
-        List<Order> rows = orderMapper.pageByUser(userId, safeSize, (safeCurrent - 1) * safeSize);
+        long offset = offsetOrBeyond(safeCurrent, safeSize);
+        List<Order> rows = offset >= total
+                ? List.of()
+                : orderMapper.pageByUser(userId, safeSize, offset);
         List<OrderView> records = rows.stream().map(this::toView).toList();
         return new OrderPage(records, total, safeCurrent, safeSize,
                 (total + safeSize - 1) / safeSize);
+    }
+
+    /** {@code (current-1)*size}；溢出时返回 {@link Long#MAX_VALUE} 表示"远超任何页"。 */
+    private static long offsetOrBeyond(long current, long size) {
+        try {
+            return Math.multiplyExact(current - 1, size);
+        } catch (ArithmeticException e) {
+            return Long.MAX_VALUE;
+        }
     }
 
     // 供支付链路使用（T5）：CREATED -> PAID，重放幂等。

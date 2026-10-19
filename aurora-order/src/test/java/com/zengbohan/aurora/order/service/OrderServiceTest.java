@@ -296,4 +296,33 @@ class OrderServiceTest {
         verify(orderMapper).pageByUser(7L, 10L, 20L);
         assertThat(page.pages()).isEqualTo(3);
     }
+
+    /**
+     * 夹紧 current/size 只保证因子合法，不保证乘积不溢出：
+     * current=Long.MAX_VALUE 时 (current-1)*size 变负数，MySQL 收到负 OFFSET 直接语法错
+     * （实测 HTTP 500）。溢出应被识别为"远超任何页"，返回空页且不再问数据库。
+     */
+    @Test
+    void listOrdersDoesNotOverflowTheOffsetIntoNegative() {
+        when(orderMapper.countByUser(7L)).thenReturn(3L);
+
+        OrderPage page = service.listOrders(7L, Long.MAX_VALUE, 10);
+
+        assertThat(page.records()).isEmpty();
+        assertThat(page.current()).isEqualTo(Long.MAX_VALUE);
+        // 关键：绝不把负数偏移发给数据库
+        verify(orderMapper, never()).pageByUser(anyLong(), anyLong(), anyLong());
+    }
+
+    /** 页码超出总页数时返回空页，同样不该查库。 */
+    @Test
+    void listOrdersSkipsTheQueryWhenThePageIsBeyondTheEnd() {
+        when(orderMapper.countByUser(7L)).thenReturn(3L);
+
+        OrderPage page = service.listOrders(7L, 5, 10);
+
+        assertThat(page.records()).isEmpty();
+        assertThat(page.total()).isEqualTo(3);
+        verify(orderMapper, never()).pageByUser(anyLong(), anyLong(), anyLong());
+    }
 }
