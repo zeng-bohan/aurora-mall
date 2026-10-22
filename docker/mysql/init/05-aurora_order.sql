@@ -23,9 +23,21 @@ CREATE TABLE IF NOT EXISTS idempotent_record (
     KEY idx_idempotent_created (created_at)
 ) ENGINE = InnoDB;
 
+-- 下单幂等映射：与订单在同一个本地事务里写入。
+-- 同一 (user_id, idem_key) 永远对应同一张订单；request_hash 防止同键换参数。
+CREATE TABLE IF NOT EXISTS order_idempotency (
+    user_id      BIGINT       NOT NULL,
+    idem_key     VARCHAR(128) NOT NULL,
+    order_id     BIGINT       NOT NULL,
+    request_hash CHAR(64)     NOT NULL,
+    created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, idem_key),
+    KEY idx_order_idempotency_order (order_id)
+) ENGINE = InnoDB;
+
 CREATE TABLE IF NOT EXISTS tx_message (
     id         BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    biz_key    VARCHAR(64)  NOT NULL COMMENT '订单号：本地事务与消息的一致性锚点',
+    biz_key    VARCHAR(64)  NOT NULL COMMENT '订单号：本地事务与消息的一致性依据',
     topic      VARCHAR(64)  NOT NULL,
     tag        VARCHAR(64)  NOT NULL,
     payload    TEXT         NOT NULL,

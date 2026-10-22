@@ -146,6 +146,27 @@ class CircuitBreakerTest {
     }
 
     @Test
+    void ignoredProbeFailuresReleaseHalfOpenSlots() throws Exception {
+        // 半开阶段抛出的配置类异常不计失败，但也不能永久占住探针槽位
+        CircuitBreaker breaker = breaker(config()
+                .ignoreFailures(e -> e instanceof IllegalStateException)
+                .build());
+        for (int i = 0; i < 4; i++) {
+            assertThatThrownBy(() -> breaker.execute(counted())).isInstanceOf(IllegalArgumentException.class);
+        }
+        assertThat(breaker.state()).isEqualTo(CircuitBreakerState.OPEN);
+        advance(1001);
+        assertThat(breaker.state()).isEqualTo(CircuitBreakerState.HALF_OPEN);
+
+        // 两个被忽略的探针用完配额后必须归还；否则后续正常探针会被误拒
+        assertThatThrownBy(() -> breaker.execute(boom())).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> breaker.execute(boom())).isInstanceOf(IllegalStateException.class);
+        breaker.execute(ok());
+        breaker.execute(ok());
+        assertThat(breaker.state()).isEqualTo(CircuitBreakerState.CLOSED);
+    }
+
+    @Test
     void halfOpenFailureFallsBackToOpen() throws Exception {
         CircuitBreaker breaker = breaker(config().build());
         for (int i = 0; i < 4; i++) {

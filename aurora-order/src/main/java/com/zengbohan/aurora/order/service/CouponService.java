@@ -206,7 +206,7 @@ public class CouponService {
 
     /**
      * 下单用券钩子：{@code discountFor} 是纯函数（门槛判定 + 抵扣额），
-     * {@code bind} 必须在订单事务内执行（UNUSED→LOCKED 与订单行同生共死）。
+     * {@code bind} 必须在订单事务内执行（UNUSED→LOCKED 与订单行在同一事务内提交或回滚）。
      */
     public class CouponUseHook implements OrderService.CouponHook {
 

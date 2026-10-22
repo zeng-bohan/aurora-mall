@@ -3,8 +3,6 @@ package com.zengbohan.aurora.seckill.service;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.common.idempotent.Idempotent;
-import com.zengbohan.aurora.common.idempotent.Strategy;
 import com.zengbohan.aurora.seckill.dto.SeckillBuyView;
 import com.zengbohan.aurora.seckill.entity.SeckillActivity;
 import com.zengbohan.aurora.seckill.entity.SeckillOrder;
@@ -21,6 +19,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -33,8 +32,9 @@ import java.util.UUID;
  * 两种模式的闸门完全一致：窗口判定、一人一单、库存扣减都在 reserve Lua 里原子完成，
  * 通过闸门的请求数被库存量硬性封顶。
  * <p>
- * 失败补偿：落单或投递失败时用 compensate Lua 归还名额（恰好一次，见脚本注释），
- * 同时把结果从 PENDING 改成 FAIL:{原因}，客户端才不会一直等下去。
+ * 失败补偿：落单永久失败时用 compensate Lua 归还名额（恰好一次，见脚本注释），
+ * 同时把结果从 PENDING/PROCESSING 改成 FAIL:{原因}。投递结果不确定时保留 PENDING，
+ * 由对账任务确认订单是否已落，再决定记录结果还是归还名额。
  */
 @Service
 public class SeckillOrderService {
@@ -48,8 +48,6 @@ public class SeckillOrderService {
     static final long RESERVE_ENDED = 3L;
     static final long RESERVE_SOLD_OUT = 4L;
     static final long RESERVE_ALREADY_BOUGHT = 5L;
-
-    static final String BIZ_TYPE = "seckill-order";
 
     private final SeckillActivityService activityService;
     private final SeckillOrderWriter orderWriter;
@@ -120,7 +118,7 @@ public class SeckillOrderService {
                 return new SeckillBuyView(SeckillBuyView.STATUS_PLACED,
                         Long.parseLong(state.substring(SeckillLuaScripts.RESULT_ORDER_PREFIX.length())));
             }
-            if (SeckillLuaScripts.RESULT_PENDING.equals(state)) {
+            if (SeckillLuaScripts.isPending(state) || SeckillLuaScripts.isProcessing(state)) {
                 return new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null);
             }
             if (state.startsWith(SeckillLuaScripts.RESULT_FAIL_PREFIX)) {
@@ -138,30 +136,43 @@ public class SeckillOrderService {
     /**
      * 异步落单（消费者调用）。
      * <p>
-     * 幂等有两层，缺一不可：
-     * <ol>
-     *   <li>本方法上的 DB_DEDUP 守卫挡住同一条消息的重投递（key = 发送时生成的 messageId）；</li>
-     *   <li>方法本身可重复执行：落单受唯一键约束、补偿恰好一次、结果写入是覆盖写。</li>
-     * </ol>
-     * 失败语义刻意区分：<b>永久失败</b>（典型是 DB 库存已尽）在这里补偿并正常返回，
-     * 不触发重投递；<b>瞬时失败</b>（DB 不可用等）直接抛出——切面会清掉守卫让重投递
-     * 重新处理，而守卫在，重复投递不会造成二次补偿。
+     * 状态机：PENDING -> PROCESSING -> ORDER / FAIL。认领是 Redis 原子操作，
+     * 对账任务只补偿 PENDING 或超时的 PROCESSING，因此「归还名额」与「迟到消息写订单」
+     * 不会同时发生。DB 去重行与订单写入在同一事务（{@link SeckillOrderWriter#placeOnce}），
+     * 订单失败时去重行一起回滚，MQ 重投递不会被永久挡住。
+     * <p>
+     * 失败语义：永久失败（DB 库存已尽）补偿并正常返回；瞬时失败把状态重置为 PENDING
+     * 后抛出，由 MQ 重投递；对账任务兜底处理进程崩溃等不再重投的情况。
      */
-    @Idempotent(strategy = Strategy.DB_DEDUP, bizType = BIZ_TYPE, key = "#messageId")
     public void materialize(String messageId, long activityId, long userId) {
+        if (claim(activityId, userId) != 1L) {
+            // ORDER = 已成交；FAIL = 已补偿；结果键不存在 = 没有预扣
+            log.info("seckill message skipped (activity={}, user={}, msg={})", activityId, userId, messageId);
+            return;
+        }
         SeckillActivity activity = null;
         try {
             activity = activityService.require(activityId);
-            long orderId = orderWriter.place(activity, userId);
-            recordPlaced(activity, userId, orderId);
-            log.info("seckill order materialized (activity={}, user={}, order={})", activityId, userId, orderId);
+            SeckillOrderWriter.PlaceOutcome outcome = orderWriter.placeOnce(messageId, activity, userId);
+            if (outcome.duplicate()) {
+                SeckillOrder existing = findOrder(activityId, userId);
+                if (existing == null) {
+                    // 去重行已提交却没有订单：只可能是历史脏数据，抛出重投递（不补偿，避免超卖）
+                    throw new IllegalStateException(
+                            "dedup row exists without order (activity=" + activityId + ", user=" + userId + ")");
+                }
+                recordPlaced(activity, userId, existing.getId());
+                log.info("seckill order already existed (activity={}, user={}, order={})",
+                        activityId, userId, existing.getId());
+                return;
+            }
+            recordPlaced(activity, userId, outcome.orderId());
+            log.info("seckill order materialized (activity={}, user={}, order={})",
+                    activityId, userId, outcome.orderId());
         } catch (DuplicateKeyException e) {
-            // 订单已存在：生产者重发、或补偿后重抢而订单其实已落。名额已被那张订单占用，
-            // 绝不归还——还回去等于同一份库存卖两次。宁可少卖一个名额，也不冒超卖风险。
-            // （activity 在此必然非 null：唯一键冲突只能来自 require 成功之后的 place）
+            // 订单唯一键兜底：该用户已有订单，名额被那张订单占用，绝不归还
             SeckillOrder existing = findOrder(activityId, userId);
             if (existing == null) {
-                // 唯一键冲突却查不到行，不该发生：抛出重投递（不补偿，避免超卖）
                 log.error("duplicate key but no order row (activity={}, user={})", activityId, userId, e);
                 throw e;
             }
@@ -169,11 +180,14 @@ public class SeckillOrderService {
             log.info("seckill order already existed (activity={}, user={}, order={})",
                     activityId, userId, existing.getId());
         } catch (BusinessException e) {
-            // 永久失败（DB 库存已尽 / 活动已不存在）：归还名额并记录原因后结束这条消息。
-            // 用户若重新抢购，那是新的预扣 + 新 messageId，不会被去重挡住。
-            compensate(activityId, userId, e.getErrorCode());
-            log.warn("seckill order rejected permanently (activity={}, user={}): {}",
-                    activityId, userId, e.getErrorCode());
+            // 永久失败：补偿会把状态从 PROCESSING 改成 FAIL；并发对账先接管时这里返回 0，不重复归还
+            long compensated = compensate(activityId, userId, e.getErrorCode());
+            log.warn("seckill order rejected permanently (activity={}, user={}, reason={}, compensated={})",
+                    activityId, userId, e.getErrorCode(), compensated);
+        } catch (RuntimeException e) {
+            // 瞬时失败：交还处理权，MQ 重投递或对账任务接手；不能在这里补偿（订单可能已部分写入）
+            resetPending(activityId, userId);
+            throw e;
         }
     }
 
@@ -195,12 +209,21 @@ public class SeckillOrderService {
         }
     }
 
-    // 异步入队：投递不出去就必须归还名额，否则名额被吃掉、订单又永远不会生成。
+    // 异步入队：消息是否被 Broker 接收分为三种结果。
+    // 只有「确定没有配置 MQ」才立即补偿；超时等不确定结果保留 PENDING，
+    // 由对账任务在确认没有订单后收敛，避免把已送达的消息当成丢失。
     private SeckillBuyView publishAsync(long activityId, long userId) {
         String messageId = UUID.randomUUID().toString();
-        if (!publisher.sendOrderRequest(messageId, activityId, userId)) {
+        SeckillEventPublisher.DispatchResult result =
+                publisher.sendOrderRequest(messageId, activityId, userId);
+        if (result == SeckillEventPublisher.DispatchResult.NOT_CONFIGURED) {
             compensate(activityId, userId, ErrorCode.SYSTEM_ERROR);
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "下单请求未能受理，请稍后重试");
+        }
+        if (result == SeckillEventPublisher.DispatchResult.UNKNOWN) {
+            // 结果未知：不回补名额，也不谎报成功；结果停在 PENDING，对账任务会确认订单或补偿
+            log.warn("seckill dispatch result unknown (activity={}, user={}, msg={}); left pending for reconcile",
+                    activityId, userId, messageId);
         }
         return new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null);
     }
@@ -233,9 +256,22 @@ public class SeckillOrderService {
         return result == null ? RESERVE_NOT_PREPARED : result;
     }
 
-    private void compensate(long activityId, long userId, ErrorCode reason) {
-        redis.execute(scripts.compensate, SeckillLuaScripts.keys(activityId),
+    // 认领：PENDING/PROCESSING -> PROCESSING；ORDER/FAIL 或结果缺失返回 0。
+    private long claim(long activityId, long userId) {
+        Long result = redis.execute(scripts.claim, SeckillLuaScripts.keys(activityId),
+                String.valueOf(userId), String.valueOf(System.currentTimeMillis()));
+        return result == null ? 0L : result;
+    }
+
+    private void resetPending(long activityId, long userId) {
+        redis.execute(scripts.resetPending, SeckillLuaScripts.keys(activityId),
+                String.valueOf(userId), String.valueOf(System.currentTimeMillis()));
+    }
+
+    private long compensate(long activityId, long userId, ErrorCode reason) {
+        Long result = redis.execute(scripts.compensate, SeckillLuaScripts.keys(activityId),
                 String.valueOf(userId), reason.name());
+        return result == null ? 0L : result;
     }
 
     // 结果写 ORDER:{id}，并把 TTL 重新对齐到"活动结束 + 1 天"（键可能已被回收过）
@@ -250,6 +286,57 @@ public class SeckillOrderService {
         return orderMapper.selectOne(Wrappers.<SeckillOrder>lambdaQuery()
                 .eq(SeckillOrder::getActivityId, activityId)
                 .eq(SeckillOrder::getUserId, userId));
+    }
+
+    /**
+     * 对账：处理停在 PENDING / 超时 PROCESSING 的受理结果。
+     * <p>
+     * 先查订单：消息其实已落单就补记 ORDER；确认没有订单后才补偿。
+     * compensate Lua 会再次检查结果状态，因此与消费者并发时不重复归还。
+     *
+     * @return 本次修正的条数
+     */
+    public int reconcile(SeckillActivity activity, long pendingTimeoutMillis, long processingTimeoutMillis) {
+        Map<Object, Object> entries = redis.opsForHash().entries(SeckillLuaScripts.resultKey(activity.getId()));
+        if (entries.isEmpty()) {
+            return 0;
+        }
+        long now = System.currentTimeMillis();
+        int changed = 0;
+        for (Map.Entry<Object, Object> entry : entries.entrySet()) {
+            String state = entry.getValue() == null ? null : entry.getValue().toString();
+            boolean pending = SeckillLuaScripts.isPending(state);
+            boolean processing = SeckillLuaScripts.isProcessing(state);
+            if (!pending && !processing) {
+                continue;
+            }
+            long since = SeckillLuaScripts.millisOf(state);
+            long timeout = pending ? pendingTimeoutMillis : processingTimeoutMillis;
+            // 时间戳缺失（旧格式）按超时处理
+            if (since > 0 && now - since < timeout) {
+                continue;
+            }
+            long userId;
+            try {
+                userId = Long.parseLong(entry.getKey().toString());
+            } catch (NumberFormatException e) {
+                log.warn("skip malformed seckill result field {} for activity {}", entry.getKey(), activity.getId());
+                continue;
+            }
+            SeckillOrder order = findOrder(activity.getId(), userId);
+            if (order != null) {
+                recordPlaced(activity, userId, order.getId());
+                changed++;
+                continue;
+            }
+            long compensated = compensate(activity.getId(), userId, ErrorCode.SYSTEM_ERROR);
+            if (compensated == 1L) {
+                changed++;
+                log.warn("reconciled stale seckill reservation (activity={}, user={}, state={})",
+                        activity.getId(), userId, state);
+            }
+        }
+        return changed;
     }
 
     // 与预热同口径：结束后仍保留一天，供结果查询与对账

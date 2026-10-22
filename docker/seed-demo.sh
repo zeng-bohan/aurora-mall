@@ -108,7 +108,7 @@ step "2 演示账号"
 post_json /api/user/register "" <<EOF >/dev/null
 {"username":"$DEMO_USER","password":"$DEMO_PASS","nickname":"$DEMO_NICK"}
 EOF
-# 注册出来的账号一律普通用户；管理台需要 ADMIN，这里直接改库提权。
+# 注册出来的账号一律普通用户；运营台需要 ADMIN，这里直接改库提权。
 mysql_q "UPDATE aurora_user.users SET role='ADMIN' WHERE username='$DEMO_USER';" >/dev/null
 ok "账号 $DEMO_USER 就绪并已提权 ADMIN"
 
@@ -248,7 +248,7 @@ step "完成"
 cat <<EOF
   演示账号    $DEMO_USER / $DEMO_PASS（ADMIN）
   前端        http://localhost:5173
-  管理台      登录后右上角切到「管理台」
+  运营台      登录后右上角切到「运营台」
 
   提示：$DEMO_USER 名下已有订单，可直接看订单列表与详情。
 EOF

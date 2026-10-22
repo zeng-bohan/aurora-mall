@@ -1,26 +1,25 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
 import { seckillApi } from '@/api'
 import type { SeckillActivityView } from '@/api/seckill'
 import { SECKILL_PHASE_LABEL, SeckillBuyStatus, SeckillPhase } from '@/api/seckill'
 import { ApiError, ErrorCode } from '@/api/types'
 import { useNow } from '@/composables/useNow'
+import { useReveal } from '@/composables/useReveal'
 import { formatCountdown, formatDateTime } from '@/utils/datetime'
 import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
 
-/** 轮询上限：后端异步落单通常一两秒内完成，超过这个次数说明消费者卡住了，别无限转圈。 */
-const MAX_POLLS = 60
+const MAX_POLLS = 90
 
 const route = useRoute()
-const router = useRouter()
 const now = useNow()
 
 const activity = ref<SeckillActivityView | null>(null)
-const loading = ref(false)
+const loading = ref(true)
 const buying = ref(false)
 const outcome = ref<string | null>(null)
 const outcomeType = ref<'success' | 'error' | 'info'>('info')
@@ -31,8 +30,74 @@ let pollTimer: number | null = null
 let pollCount = 0
 
 const activityId = computed(() => Number(route.params.id))
-const running = computed(() => activity.value?.phase === SeckillPhase.RUNNING)
-const canBuy = computed(() => running.value && (activity.value?.availableStock ?? 0) > 0)
+
+const phase = computed(() => {
+  if (!activity.value) {
+    return SeckillPhase.NOT_STARTED
+  }
+  const start = new Date(activity.value.startAt).getTime()
+  const end = new Date(activity.value.endAt).getTime()
+  if (Number.isNaN(start) || Number.isNaN(end)) {
+    return activity.value.phase
+  }
+  if (now.value < start) {
+    return SeckillPhase.NOT_STARTED
+  }
+  if (now.value >= end) {
+    return SeckillPhase.ENDED
+  }
+  return SeckillPhase.RUNNING
+})
+
+const running = computed(() => phase.value === SeckillPhase.RUNNING)
+const soldOut = computed(() => (activity.value?.availableStock ?? 0) <= 0)
+const canBuy = computed(() => running.value && !soldOut.value && !buying.value)
+
+const countdown = computed(() => {
+  if (!activity.value) {
+    return null
+  }
+  if (phase.value === SeckillPhase.NOT_STARTED) {
+    return formatCountdown(activity.value.startAt, now.value)
+  }
+  if (phase.value === SeckillPhase.RUNNING) {
+    return formatCountdown(activity.value.endAt, now.value)
+  }
+  return null
+})
+
+const countdownLabel = computed(() => {
+  if (phase.value === SeckillPhase.NOT_STARTED) {
+    return '距开抢'
+  }
+  if (phase.value === SeckillPhase.RUNNING) {
+    return '距结束'
+  }
+  return '活动已结束'
+})
+
+const buyLabel = computed(() => {
+  if (phase.value === SeckillPhase.NOT_STARTED) {
+    return '尚未开始'
+  }
+  if (phase.value === SeckillPhase.ENDED) {
+    return '已结束'
+  }
+  if (soldOut.value) {
+    return '已售罄'
+  }
+  return waiting.value ? '排队中…' : '立即抢购'
+})
+
+const soldPercent = computed(() => {
+  if (!activity.value || activity.value.totalStock <= 0) {
+    return 0
+  }
+  const sold = activity.value.totalStock - activity.value.availableStock
+  return Math.min(Math.max((sold / activity.value.totalStock) * 100, 0), 100)
+})
+
+useReveal()
 
 function stopPolling(): void {
   if (pollTimer !== null) {
@@ -56,7 +121,7 @@ async function load(): Promise<void> {
 function settle(orderId: number | null): void {
   stopPolling()
   placedOrderId.value = orderId
-  outcome.value = '抢到了，订单已生成'
+  outcome.value = '抢到了，订单已生成。'
   outcomeType.value = 'success'
   void load()
 }
@@ -65,7 +130,7 @@ async function pollOnce(): Promise<void> {
   pollCount += 1
   if (pollCount > MAX_POLLS) {
     stopPolling()
-    outcome.value = '排队超时，请到订单页确认结果（名额已占，一般不会丢）'
+    outcome.value = '结果暂时未知：名额已占用，系统会自动确认订单或返还名额。可稍后刷新，或到订单页核对。'
     outcomeType.value = 'info'
     return
   }
@@ -75,7 +140,6 @@ async function pollOnce(): Promise<void> {
       settle(result.orderId)
     }
   } catch (error) {
-    // 40400 = 该活动下还没有我的记录：MQ 还没消费到，继续等
     if (error instanceof ApiError && error.code === ErrorCode.NOT_FOUND) {
       return
     }
@@ -104,12 +168,10 @@ async function buy(): Promise<void> {
       settle(result.orderId)
       return
     }
-    // QUEUED：名额已经扣下了，落单是异步的，轮询等结果
-    outcome.value = '已占到名额，正在生成订单…'
+    outcome.value = '已占到名额，正在生成订单。'
     outcomeType.value = 'info'
     startPolling()
   } catch (error) {
-    // 售罄 / 已参与 / 未开始这些都是业务结论，直接展示后端文案
     outcome.value = describeError(error)
     outcomeType.value = 'error'
     await load()
@@ -129,117 +191,98 @@ watch(activityId, () => {
 </script>
 
 <template>
-  <div class="aurora-page">
-    <el-page-header content="秒杀详情" @back="router.back()" />
+  <div class="seckill-page">
+    <div class="container">
+      <RouterLink class="back-link" to="/seckill">← 返回秒杀排期</RouterLink>
 
-    <el-skeleton v-if="loading" :rows="4" animated class="aurora-skeleton" />
+      <div v-if="loading" class="store-skeleton" aria-busy="true" aria-label="正在加载活动" />
 
-    <el-card v-else-if="activity" class="aurora-activity">
-      <div class="aurora-activity__head">
-        <h2 class="aurora-activity__title">{{ activity.title }}</h2>
-        <el-tag :type="running ? 'success' : 'info'">
-          {{ SECKILL_PHASE_LABEL[activity.phase] ?? activity.phase }}
-        </el-tag>
+      <div v-else-if="!activity" class="store-empty">
+        <h1>活动不存在</h1>
+        <p>它可能已经结束，或链接已经失效。</p>
+        <RouterLink class="btn" to="/seckill">回到排期</RouterLink>
       </div>
 
-      <div class="aurora-activity__price aurora-amount">{{ formatYuan(activity.seckillPrice) }}</div>
+      <article v-else class="ticket" data-reveal>
+        <div class="ticket__main">
+          <div>
+            <p class="release-row__meta">{{ SECKILL_PHASE_LABEL[phase] ?? phase }}</p>
+            <h1>{{ activity.title }}</h1>
+          </div>
 
-      <el-descriptions :column="1" border class="aurora-activity__info">
-        <el-descriptions-item label="商品编号">{{ activity.skuId }}</el-descriptions-item>
-        <el-descriptions-item label="库存">
-          剩余 {{ activity.availableStock }} / 共 {{ activity.totalStock }}
-        </el-descriptions-item>
-        <el-descriptions-item label="限购">每人 {{ activity.perUserLimit }} 件</el-descriptions-item>
-        <el-descriptions-item label="活动时间">
-          {{ formatDateTime(activity.startAt) }} ~ {{ formatDateTime(activity.endAt) }}
-        </el-descriptions-item>
-        <el-descriptions-item label="倒计时">
-          <template v-if="activity.phase === SeckillPhase.NOT_STARTED">
-            距开抢 {{ formatCountdown(activity.startAt, now) ?? '即将开始' }}
-          </template>
-          <template v-else-if="running">
-            距结束 {{ formatCountdown(activity.endAt, now) ?? '即将结束' }}
-          </template>
-          <template v-else>已结束</template>
-        </el-descriptions-item>
-      </el-descriptions>
+          <div class="stock-meter">
+            <div class="stock-meter__bar" role="progressbar" :aria-valuenow="Math.round(soldPercent)" aria-valuemin="0" aria-valuemax="100" aria-label="已售比例">
+              <div class="stock-meter__fill" :style="{ width: `${soldPercent}%` }" />
+            </div>
+            <div class="stock-meter__label">
+              <span>剩余 {{ activity.availableStock }} 件</span>
+              <span>共 {{ activity.totalStock }} 件</span>
+            </div>
+          </div>
 
-      <div class="aurora-activity__actions">
-        <el-button type="danger" size="large" :disabled="!canBuy" :loading="buying" @click="buy">
-          {{ activity.availableStock > 0 ? '立即抢购' : '已售罄' }}
-        </el-button>
-        <el-button :loading="waiting" @click="load">刷新</el-button>
-      </div>
+          <dl class="product-specs">
+            <div>
+              <dt>秒杀价</dt>
+              <dd>{{ formatYuan(activity.seckillPrice) }}</dd>
+            </div>
+            <div>
+              <dt>商品编号</dt>
+              <dd>{{ activity.skuId }}</dd>
+            </div>
+            <div>
+              <dt>每人限购</dt>
+              <dd>{{ activity.perUserLimit }} 件</dd>
+            </div>
+            <div>
+              <dt>活动时间</dt>
+              <dd>{{ formatDateTime(activity.startAt) }} 至 {{ formatDateTime(activity.endAt) }}</dd>
+            </div>
+          </dl>
 
-      <el-alert
-        v-if="outcome"
-        :type="outcomeType"
-        :closable="false"
-        show-icon
-        :title="outcome"
-        class="aurora-activity__outcome"
-      >
-        <template v-if="placedOrderId" #default>
-          <el-button text type="primary" @click="router.push({ name: 'order-detail', params: { id: placedOrderId } })">
-            查看订单 {{ placedOrderId }}
-          </el-button>
-        </template>
-      </el-alert>
+          <div class="seckill-rules">
+            <p>预扣成功只代表占到名额，订单由消息队列异步生成。</p>
+            <p>同一活动下重复参与会被服务端拒绝；结果以订单页为准。</p>
+          </div>
+        </div>
 
-      <el-alert
-        v-if="waiting"
-        type="info"
-        :closable="false"
-        show-icon
-        title="正在等待异步落单"
-        description="抢购请求已经在 Redis 原子预扣中占到名额，订单由消息队列异步生成，通常一两秒内完成。"
-        class="aurora-activity__outcome"
-      />
-    </el-card>
+        <div class="ticket__side">
+          <div>
+            <p class="countdown-label">{{ countdownLabel }}</p>
+            <p v-if="countdown" class="countdown" aria-live="polite">{{ countdown }}</p>
+            <p v-if="countdown === null" class="countdown countdown--ended">—</p>
+          </div>
 
-    <el-empty v-else description="活动不存在" />
+          <button type="button" class="btn btn--signal btn--block" :disabled="!canBuy" @click="buy">
+            {{ buyLabel }}
+          </button>
+          <button type="button" class="btn btn--outline btn--block" :disabled="waiting" @click="load">
+            刷新状态
+          </button>
+
+          <p
+            v-if="outcome"
+            class="seckill-outcome"
+            :class="{
+              'seckill-outcome--success': outcomeType === 'success',
+              'seckill-outcome--error': outcomeType === 'error'
+            }"
+            aria-live="polite"
+          >
+            {{ outcome }}
+            <RouterLink
+              v-if="placedOrderId"
+              class="auth-alt"
+              :to="{ name: 'order-detail', params: { id: placedOrderId } }"
+            >
+              查看订单 {{ placedOrderId }}
+            </RouterLink>
+          </p>
+
+          <p v-if="waiting" class="seckill-outcome" aria-live="polite">
+            正在等待异步落单。请求已在 Redis 原子预扣中占到名额，通常一两秒内生成订单。
+          </p>
+        </div>
+      </article>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.aurora-skeleton {
-  margin-top: 16px;
-}
-
-.aurora-activity {
-  margin-top: 16px;
-  max-width: 720px;
-}
-
-.aurora-activity__head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.aurora-activity__title {
-  margin: 0;
-  font-size: 20px;
-}
-
-.aurora-activity__price {
-  font-size: 26px;
-  font-weight: 700;
-  color: #f56c6c;
-  margin: 12px 0 16px;
-}
-
-.aurora-activity__info {
-  margin-bottom: 20px;
-}
-
-.aurora-activity__actions {
-  display: flex;
-  gap: 12px;
-}
-
-.aurora-activity__outcome {
-  margin-top: 16px;
-}
-</style>

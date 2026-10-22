@@ -17,7 +17,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-// 补发 job：PAID 未发布的记录被重发并打标；毒丸不饿死后续；无待补发不动作。
+// 补发 job：PAID 未发布的记录被重发并打标；单条失败不影响后续；无待补发不动作。
 class PaymentEventRetryJobTest {
 
     private PaymentOrderMapper mapper;
@@ -59,6 +59,20 @@ class PaymentEventRetryJobTest {
 
         verify(paymentService).publishPaid(healthy);
         verify(mapper, never()).markEventPublished(1002L);
+    }
+
+    @Test
+    void repeatedFailuresKeepTheRecordForLaterRetryInsteadOfGivingUp() {
+        PaymentOrder poison = paid(1001L);
+        when(mapper.findUnpublishedPaid(any(LocalDateTime.class))).thenReturn(List.of(poison));
+        doThrow(new RuntimeException("mq down")).when(paymentService).publishPaid(poison);
+
+        for (int i = 0; i < 12; i++) {
+            job.republishUnpublished();
+        }
+
+        // 12 轮失败后仍在扫描，只推进计数；不会把记录永久标记为失败
+        verify(mapper, org.mockito.Mockito.times(12)).incrementPublishAttempts(1001L);
     }
 
     @Test

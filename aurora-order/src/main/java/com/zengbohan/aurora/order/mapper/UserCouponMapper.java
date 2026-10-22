@@ -28,7 +28,7 @@ public interface UserCouponMapper extends BaseMapper<UserCoupon> {
             + "WHERE id = #{id} AND user_id = #{userId} AND status = 'UNUSED'")
     int lock(@Param("id") long id, @Param("userId") long userId);
 
-    /** 把锁定的券绑到订单上（在订单事务内执行，与订单行同生共死）。 */
+    /** 把锁定的券绑到订单上（在订单事务内执行，与订单行一起提交或回滚）。 */
     @Update("UPDATE user_coupon SET order_id = #{orderId} WHERE id = #{id} AND status = 'LOCKED'")
     int bindToOrder(@Param("id") long id, @Param("orderId") long orderId);
 

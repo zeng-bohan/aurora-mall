@@ -73,6 +73,25 @@ public class CircuitBreaker {
             if (!ignored) {
                 long elapsedMillis = (System.nanoTime() - startNanos) / 1_000_000;
                 recordResult(success, elapsedMillis, permission);
+            } else {
+                releaseIgnoredProbe(permission);
+            }
+        }
+    }
+
+    /**
+     * 被忽略的异常不参与统计，但半开探针的槽位必须归还。
+     * 否则连续几次配置类异常会把 halfOpenInFlight 永久占满，熔断器卡在 HALF_OPEN。
+     */
+    private void releaseIgnoredProbe(Permission permission) {
+        if (permission.kind() != Permission.Kind.PROBE) {
+            return;
+        }
+        synchronized (lock) {
+            if (permission.generation() == halfOpenGeneration
+                    && state == CircuitBreakerState.HALF_OPEN
+                    && halfOpenInFlight > 0) {
+                halfOpenInFlight--;
             }
         }
     }

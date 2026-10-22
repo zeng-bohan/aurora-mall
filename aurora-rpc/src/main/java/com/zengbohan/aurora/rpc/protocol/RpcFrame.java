@@ -34,6 +34,12 @@ public final class RpcFrame {
         return new RpcFrame(requestId, MessageType.RESPONSE, serializerCode, status, requireBody(body));
     }
 
+    // 控制帧也可以携带 status：握手失败时服务端在断连前回 UNAUTHORIZED，
+    // 客户端据此把错误归类为配置问题，而不是普通断线。
+    public static RpcFrame control(long requestId, byte serializerCode, byte status, byte[] body) {
+        return new RpcFrame(requestId, MessageType.CONTROL, serializerCode, status, requireBody(body));
+    }
+
     // decode 的后半段：头元数据 + 切出的真实 body 组装成完整帧。
     static RpcFrame from(FrameHeader header, byte[] body) {
         return new RpcFrame(header.requestId(), header.type(), header.serializerCode(),

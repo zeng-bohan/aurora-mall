@@ -12,7 +12,7 @@ import org.springframework.messaging.Message;
 import org.springframework.stereotype.Component;
 
 /**
- * 绑定到模板的生产者组（aurora-order-producer）。确认以本地 tx_message 行为锚：
+ * 绑定到模板的生产者组（aurora-order-producer）。确认依据是本地 tx_message 行：
  * 该行存在则提交，不存在则回滚。同一个查询也用于回答 broker 的回查，
  * 因此本地提交与确认之间发生崩溃时，最终恰好解析为一次 COMMIT。
  */

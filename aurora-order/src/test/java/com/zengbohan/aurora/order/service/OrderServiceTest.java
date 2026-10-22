@@ -11,7 +11,9 @@ import com.zengbohan.aurora.order.client.ProductClient;
 import com.zengbohan.aurora.order.dto.OrderPage;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
+import com.zengbohan.aurora.order.entity.OrderIdempotency;
 import com.zengbohan.aurora.order.entity.TxMessage;
+import com.zengbohan.aurora.order.mapper.OrderIdempotencyMapper;
 import com.zengbohan.aurora.order.mapper.OrderMapper;
 import com.zengbohan.aurora.order.mapper.TxMessageMapper;
 import com.zengbohan.aurora.order.mq.OrderEventPublisher;
@@ -42,6 +44,7 @@ class OrderServiceTest {
     private AtOrderPlacer atOrderPlacer;
     private InventoryClient inventoryClient;
     private OrderMapper orderMapper;
+    private OrderIdempotencyMapper idempotencyMapper;
     private TxMessageMapper txMessageMapper;
     private TransactionTemplate transactionTemplate;
     private OrderEventPublisher publisher;
@@ -58,6 +61,7 @@ class OrderServiceTest {
         atOrderPlacer = mock(AtOrderPlacer.class);
         inventoryClient = mock(InventoryClient.class);
         orderMapper = mock(OrderMapper.class);
+        idempotencyMapper = mock(OrderIdempotencyMapper.class);
         txMessageMapper = mock(TxMessageMapper.class);
         transactionTemplate = mock(TransactionTemplate.class);
         publisher = mock(OrderEventPublisher.class);
@@ -76,7 +80,8 @@ class OrderServiceTest {
         when(inventoryClient.rollback(eq(1L), any())).thenReturn(Result.ok());
 
         service = new OrderService(new ObjectMapper(), idGenerator, productGuard, inventoryClient,
-                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "mq", false);
+                orderMapper, idempotencyMapper, txMessageMapper, transactionTemplate, publisher,
+                atOrderPlacer, 3, 1800, "mq", false);
     }
 
     @Test
@@ -99,6 +104,41 @@ class OrderServiceTest {
         verify(inventoryClient).reserve(eq(1L), any());
         verify(publisher).sendStockReservedTransactionally(eq("1001"), anyString());
         verify(publisher).sendCloseTimeout(1001L, 3);
+    }
+
+    @Test
+    void repeatedKeyReturnsTheOriginalOrderWithoutReservingAgain() {
+        OrderIdempotency existing = new OrderIdempotency();
+        existing.setOrderId(777L);
+        // 指纹由 sku、数量、金额与是否用券决定；这里先跑一次拿到真实哈希
+        when(idempotencyMapper.selectOne(any())).thenReturn(null);
+        long first = service.placeOrder(7L, new PlaceOrderRequest(1L, 2), "req-replay");
+        assertThat(first).isEqualTo(1001L);
+        ArgumentCaptor<OrderIdempotency> captor = ArgumentCaptor.forClass(OrderIdempotency.class);
+        verify(idempotencyMapper).insert(captor.capture());
+        existing.setRequestHash(captor.getValue().getRequestHash());
+        when(idempotencyMapper.selectOne(any())).thenReturn(existing);
+
+        long replayed = service.placeOrder(7L, new PlaceOrderRequest(1L, 2), "req-replay");
+
+        assertThat(replayed).isEqualTo(777L);
+        // 第一次 + 回放只应该预扣一次
+        verify(inventoryClient).reserve(anyLong(), any());
+    }
+
+    @Test
+    void sameKeyWithDifferentPayloadIsRejected() {
+        when(idempotencyMapper.selectOne(any())).thenReturn(null);
+        service.placeOrder(7L, new PlaceOrderRequest(1L, 2), "req-conflict");
+        OrderIdempotency existing = new OrderIdempotency();
+        existing.setOrderId(777L);
+        existing.setRequestHash("different");
+        when(idempotencyMapper.selectOne(any())).thenReturn(existing);
+
+        assertThatThrownBy(() -> service.placeOrder(7L, new PlaceOrderRequest(1L, 3), "req-conflict"))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.DUPLICATE_REQUEST.getCode());
+        verify(inventoryClient).reserve(anyLong(), any());
     }
 
     @Test
@@ -160,7 +200,8 @@ class OrderServiceTest {
     @Test
     void atModeDelegatesToTheAtPlacerWithoutMqSideEffects() {
         OrderService atService = new OrderService(new ObjectMapper(), idGenerator, productGuard, inventoryClient,
-                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at", true);
+                orderMapper, idempotencyMapper, txMessageMapper, transactionTemplate, publisher,
+                atOrderPlacer, 3, 1800, "at", true);
         when(atOrderPlacer.placeAt(eq(7L), any())).thenReturn(9999L);
 
         long orderId = atService.placeOrder(7L, new PlaceOrderRequest(1L, 1), "req-at");
@@ -174,7 +215,8 @@ class OrderServiceTest {
     @Test
     void atModeWithoutSeataEnabledRefusesToBoot() {
         assertThatThrownBy(() -> new OrderService(new ObjectMapper(), idGenerator, productGuard, inventoryClient,
-                orderMapper, txMessageMapper, transactionTemplate, publisher, atOrderPlacer, 3, 1800, "at", false))
+                orderMapper, idempotencyMapper, txMessageMapper, transactionTemplate, publisher,
+                atOrderPlacer, 3, 1800, "at", false))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("seata.enabled");
     }

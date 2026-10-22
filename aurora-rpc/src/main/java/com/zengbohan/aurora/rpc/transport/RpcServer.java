@@ -208,7 +208,10 @@ public class RpcServer {
                         secret.getBytes(StandardCharsets.UTF_8))) {
                     ctx.channel().attr(AttributeKeys.AUTHENTICATED).set(true);
                 } else {
-                    ctx.close(); // 密钥错误，断连
+                    // 先回 UNAUTHORIZED 再断连：客户端可以把它归类为配置错误，
+                    // 而不是把反复重连算进熔断失败率
+                    writeControlAndClose(ctx, frame.serializerCode(), frame.requestId(),
+                            StatusCodes.UNAUTHORIZED, "bad handshake secret");
                 }
             } else if (body.startsWith(ControlFrames.PING)) {
                 writeControl(ctx, frame.serializerCode(), frame.requestId(), ControlFrames.PONG);
@@ -271,9 +274,22 @@ public class RpcServer {
         }
 
         private void writeControl(ChannelHandlerContext ctx, byte serializerCode, long requestId, String body) {
-            RpcFrame control = RpcFrame.request(requestId, MessageType.CONTROL, serializerCode,
+            writeControlStatus(ctx, serializerCode, requestId, StatusCodes.OK, body);
+        }
+
+        private void writeControlStatus(ChannelHandlerContext ctx, byte serializerCode, long requestId,
+                byte status, String body) {
+            RpcFrame control = RpcFrame.control(requestId, serializerCode, status,
                     body.getBytes(StandardCharsets.UTF_8));
             ctx.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(control)));
+        }
+
+        private void writeControlAndClose(ChannelHandlerContext ctx, byte serializerCode, long requestId,
+                byte status, String body) {
+            RpcFrame control = RpcFrame.control(requestId, serializerCode, status,
+                    body.getBytes(StandardCharsets.UTF_8));
+            ctx.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(control)))
+                    .addListener(io.netty.channel.ChannelFutureListener.CLOSE);
         }
     }
 }

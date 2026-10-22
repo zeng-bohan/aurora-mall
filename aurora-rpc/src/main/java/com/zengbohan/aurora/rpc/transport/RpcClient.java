@@ -59,6 +59,8 @@ public class RpcClient {
     private volatile boolean running;
     // 上次发 ping 的时刻（纳秒），实现心跳间隔与重连退避解耦。
     private volatile long lastPingNanos;
+    // 对端明确拒绝握手（密钥不一致）：重连没有意义，停止退避循环。
+    private volatile boolean unauthorized;
 
     public RpcClient(String host, int port, String internalSecret) {
         this(host, port, internalSecret, 3000, 30_000, 500);
@@ -131,7 +133,7 @@ public class RpcClient {
     }
 
     private void connectOrRecover() {
-        if (!running) {
+        if (!running || unauthorized) {
             return;
         }
         Channel ch = channel;
@@ -223,16 +225,22 @@ public class RpcClient {
 
         RpcFrame request = RpcFrame.request(requestId, MessageType.REQUEST, JsonSerializerCode.JSON, requestBody);
         // pipeline 以 ByteBuf 为消息类型（LengthFieldBasedFrameDecoder 之后），出站需包一层
-        ch.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(request)))
-                .addListener((GenericFutureListener<Future<? super Void>>) f -> {
-                    if (!f.isSuccess()) {
-                        // 发送失败：立即失败该调用，不等超时
-                        DefaultPromise<byte[]> p = pending.remove(requestId);
-                        if (p != null) {
-                            p.tryFailure(new RpcUnavailableException("send failed: " + f.cause()));
+        try {
+            ch.writeAndFlush(Unpooled.wrappedBuffer(ProtocolCodec.encode(request)))
+                    .addListener((GenericFutureListener<Future<? super Void>>) f -> {
+                        if (!f.isSuccess()) {
+                            // 发送失败：立即失败该调用，不等超时
+                            DefaultPromise<byte[]> p = pending.remove(requestId);
+                            if (p != null) {
+                                p.tryFailure(new RpcUnavailableException("send failed: " + f.cause()));
+                            }
                         }
-                    }
-                });
+                    });
+        } catch (RuntimeException e) {
+            // writeAndFlush 同步抛出时 finally 还没建立，必须在这里清掉挂起项
+            pending.remove(requestId);
+            throw new RpcUnavailableException("send failed: " + e.getMessage());
+        }
 
         try {
             return promise.get(requestTimeoutMillis, TimeUnit.MILLISECONDS);
@@ -274,6 +282,14 @@ public class RpcClient {
                 return;
             }
             if (frame.type() == MessageType.CONTROL) {
+                if (frame.status() == StatusCodes.UNAUTHORIZED) {
+                    // 握手被拒是配置错误：停止重连，并让在途调用拿到可归类的异常
+                    unauthorized = true;
+                    failAllPending(new RpcUnauthorizedException("handshake rejected by "
+                            + host + ":" + port + ": " + new String(frame.body(), StandardCharsets.UTF_8)));
+                    ctx.close();
+                    return;
+                }
                 return; // pong，忽略
             }
             if (frame.type() == MessageType.RESPONSE) {

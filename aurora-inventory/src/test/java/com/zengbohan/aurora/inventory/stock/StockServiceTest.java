@@ -272,6 +272,33 @@ class StockServiceTest {
     }
 
     @Test
+    void setStockUsesDbSellableViewAsTheRedisCasExpectation() {
+        when(mapper.selectForUpdate(1L)).thenReturn(row(1L, 100, 20));
+        when(redis.execute(Mockito.same(lua.setIfUnchanged),
+                Mockito.eq(List.of(StockLuaScripts.key(1L))), Mockito.eq("80"), Mockito.eq("50")))
+                .thenReturn(1L);
+
+        service.setStock(1L, 50);
+
+        verify(mapper).resetAvailable(1L, 50);
+        verify(redis).execute(Mockito.same(lua.setIfUnchanged),
+                Mockito.eq(List.of(StockLuaScripts.key(1L))), Mockito.eq("80"), Mockito.eq("50"));
+    }
+
+    @Test
+    void setStockRefusesToOverwriteWhenReservationIsInFlight() {
+        when(mapper.selectForUpdate(1L)).thenReturn(row(1L, 100, 20));
+        when(redis.execute(Mockito.same(lua.setIfUnchanged), anyList(), anyString(), anyString()))
+                .thenReturn(0L);
+
+        assertThatThrownBy(() -> service.setStock(1L, 50))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("在途");
+        // DB 更新会随事务回滚；Redis 没有被覆盖
+        verify(valueOps, never()).set(anyString(), anyString());
+    }
+
+    @Test
     void reconcileRebuildsMissingKeysAndLogsDeltas() {
         ProductStock seeded = row(1L, 100, 20);
         when(mapper.selectList(any())).thenReturn(List.of(seeded));

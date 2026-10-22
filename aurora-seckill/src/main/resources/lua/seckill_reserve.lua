@@ -5,13 +5,14 @@
 -- KEYS[3] = 结果 hash key seckill:result:{activityId}（field = userId）
 -- ARGV[1] = userId，ARGV[2] = 当前毫秒时间戳
 -- 返回：
---     1 预扣成功（stock -1、userId 入已购集合、结果写 PENDING）
+--     1 预扣成功（stock -1、userId 入已购集合、结果写 PENDING:{时间戳}）
 --    -1 活动未预热或字段缺失（调用方提示运营先触发预热）
 --     2 未开始
 --     3 已结束
 --     4 已售罄
 --     5 该用户已参与过（一人一单）
--- 说明：库存、已购标记、受理结果在同一脚本内变更，不存在「扣了库存没标记」或
+-- 说明：PENDING 带时间戳，对账任务据此识别超时未落单的预扣；
+-- 库存、已购标记、受理结果在同一脚本内变更，不存在「扣了库存没标记」或
 -- 「已扣库存但客户端查不到受理状态」的中间态；三个 key 的 TTL 同口径
 -- （活动结束后仍保留一天），保证补偿窗口与结果查询窗口一致。
 local activity = redis.call('HMGET', KEYS[1], 'startAt', 'endAt', 'stock')
@@ -38,6 +39,6 @@ redis.call('SADD', KEYS[2], ARGV[1])
 local ttl = math.floor((endAt - now) / 1000) + 86400
 redis.call('EXPIRE', KEYS[2], ttl)
 -- 受理结果：同步模式下随后被 ORDER:{id} 覆盖；MQ 模式下由消费者覆盖为 ORDER:{id} 或 FAIL:{原因}
-redis.call('HSET', KEYS[3], ARGV[1], 'PENDING')
+redis.call('HSET', KEYS[3], ARGV[1], 'PENDING:' .. ARGV[2])
 redis.call('EXPIRE', KEYS[3], ttl)
 return 1

@@ -1,0 +1,69 @@
+@font-face {
+  font-family: 'Rokkitt';
+  src: url('../assets/fonts/rokkitt-800-latin.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+2000-206F, U+20AC, U+2122, U+2212;
+}
+
+@font-face {
+  font-family: 'Literata';
+  src: url('../assets/fonts/literata-latin.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+2000-206F, U+20AC, U+2122, U+2212;
+}
+
+:root {
+  color-scheme: light;
+
+  --ink: #071014;
+  --ink-2: #1b292f;
+  --ink-3: #425258;
+  --muted: #5f6b70;
+
+  --paper: #ffffff;
+  --stone: #f2f3f1;
+  --stone-2: #e6e8e4;
+  --line: #d8d3c8;
+  --line-strong: #b8b1a4;
+
+  --signal: #ff6a13;
+  --signal-deep: #b93f06;
+  --signal-soft: #ffe7d8;
+
+  --positive: #1f6b45;
+  --positive-soft: #dff3e8;
+  --negative: #a9251c;
+  --negative-soft: #ffe4e1;
+  --warning: #8a4a0b;
+  --warning-soft: #fff1d6;
+  --info: #1d4f9c;
+  --info-soft: #e5edfb;
+
+  --focus: #0b63ce;
+
+  --font-display: 'Rokkitt', 'Arial Narrow', Arial, sans-serif;
+  --font-text: 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, -apple-system, 'Segoe UI',
+    sans-serif;
+  --font-serif: 'Literata', 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, sans-serif;
+
+  --max: 1240px;
+  --gutter: clamp(16px, 4vw, 48px);
+  --app-max: 1200px;
+
+  --step-1: 13px;
+  --step-2: 14px;
+  --step-3: 16px;
+  --step-4: 20px;
+  --step-5: clamp(24px, 2.6vw, 32px);
+  --step-6: clamp(36px, 5vw, 64px);
+  --step-7: clamp(64px, 10vw, 148px);
+
+  --radius-app: 8px;
+  --radius-control: 6px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur: 240ms;
+}

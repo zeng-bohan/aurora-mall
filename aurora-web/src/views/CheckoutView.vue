@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { couponApi, orderApi, productApi } from '@/api'
 import type { CouponView } from '@/api/coupon'
 import { CouponStatus } from '@/api/coupon'
 import { newIdempotencyKey } from '@/api/idempotency'
+import PageHead from '@/components/PageHead.vue'
+import StatusPill from '@/components/StatusPill.vue'
 import { useCartStore } from '@/stores/cart'
 import { describeError, isDuplicate } from '@/utils/errors'
 import { formatYuan, toCents } from '@/utils/money'
@@ -25,6 +27,12 @@ interface LineResult {
   error: string | null
 }
 
+interface IdempotencyRecord {
+  key: string
+  quantity: number
+  couponId: number
+}
+
 const route = useRoute()
 const router = useRouter()
 const cart = useCartStore()
@@ -34,41 +42,24 @@ const fromCart = ref(true)
 const loading = ref(true)
 const submitting = ref(false)
 const coupons = ref<CouponView[]>([])
-/**
- * 券选择用 0 当"不使用"的哨兵值，不用 null：Element Plus 的 el-option
- * 把 value 声明成 String | Number | Boolean | Object，传 null 会触发类型告警
- * （实测控制台会刷 Invalid prop）。券 id 从 1 开始，0 不会被真实券占用。
- */
+const couponError = ref('')
 const NO_COUPON = 0
 const selectedCouponId = ref<number>(NO_COUPON)
 const results = ref<LineResult[] | null>(null)
+const syncWarning = ref('')
 
 /**
- * 幂等键按「商品」缓存，而不是每次提交新生成：
- * 同一次提交意图重试时必须复用同一个键，后端的去重才起作用。
+ * 幂等键绑定「这次提交意图」：商品、数量、券都没变才复用。
+ * 成功的一行立刻从待提交列表移除并销掉键，避免重复点击生成第二笔订单。
  */
-const idempotencyKeys = new Map<number, string>()
+const idempotency = new Map<number, IdempotencyRecord>()
 
-function keyFor(skuId: number): string {
-  let key = idempotencyKeys.get(skuId)
-  if (!key) {
-    key = newIdempotencyKey()
-    idempotencyKeys.set(skuId, key)
-  }
-  return key
-}
-
-/**
- * 后端的订单模型是**单 SKU 的**（PlaceOrderRequest 只有 skuId + quantity），
- * 所以多件商品结算会生成多个订单。这里如实呈现，而不是假装能一次下单多件。
- */
 const singleLine = computed(() => lines.value.length === 1)
 
 const totalCents = computed(() =>
   lines.value.reduce((sum, line) => sum + toCents(line.price) * line.quantity, 0)
 )
 
-/** 券只能挂在一个订单上（Coupon-Id 是请求头，一单一个），所以多件商品时不提供选择。 */
 const usableCoupons = computed(() => {
   if (!singleLine.value) {
     return []
@@ -83,21 +74,38 @@ const selectedCoupon = computed(
   () => coupons.value.find((coupon) => coupon.id === selectedCouponId.value) ?? null
 )
 
-/**
- * 应付金额预览。真实金额由订单服务按商品快照算——请求体里不传金额，
- * 所以这里算的只是给用户看的估计，最终以订单详情为准。
- */
 const payableCents = computed(() => {
   const discount = selectedCoupon.value ? toCents(selectedCoupon.value.discountAmount) : 0
   return Math.max(totalCents.value - discount, 0)
 })
+
+const submitLabel = computed(() => {
+  if (submitting.value) {
+    return '提交中…'
+  }
+  return lines.value.length > 1 ? `提交 ${lines.value.length} 笔订单` : '提交订单'
+})
+
+watch(selectedCouponId, () => {
+  idempotency.clear()
+})
+
+function keyFor(line: Line): string {
+  const couponId = singleLine.value && selectedCouponId.value !== NO_COUPON ? selectedCouponId.value : NO_COUPON
+  const existing = idempotency.get(line.skuId)
+  if (existing && existing.quantity === line.quantity && existing.couponId === couponId) {
+    return existing.key
+  }
+  const record: IdempotencyRecord = { key: newIdempotencyKey(), quantity: line.quantity, couponId }
+  idempotency.set(line.skuId, record)
+  return record.key
+}
 
 async function loadLines(): Promise<void> {
   loading.value = true
   try {
     const skuParam = route.query.skuId
     if (typeof skuParam === 'string' && skuParam !== '') {
-      // 立即购买：单品直下，不经过购物车
       fromCart.value = false
       const sku = await productApi.detail(Number(skuParam))
       const parsed = Number(route.query.quantity)
@@ -130,7 +138,7 @@ async function loadCoupons(): Promise<void> {
   try {
     coupons.value = await couponApi.mine()
   } catch {
-    // 券列表拿不到不影响下单，静默降级为"不使用优惠券"
+    couponError.value = '优惠券暂时无法加载，本单将不使用优惠券。'
     coupons.value = []
   }
 }
@@ -138,41 +146,57 @@ async function loadCoupons(): Promise<void> {
 async function submit(): Promise<void> {
   submitting.value = true
   results.value = null
+  syncWarning.value = ''
+  const pending = [...lines.value]
   const collected: LineResult[] = []
-  for (const line of lines.value) {
+  const succeeded = new Set<number>()
+  const couponId = singleLine.value && selectedCouponId.value !== NO_COUPON ? selectedCouponId.value : null
+
+  for (const line of pending) {
     try {
       const orderId = await orderApi.place(
         { skuId: line.skuId, quantity: line.quantity },
-        {
-          idempotencyKey: keyFor(line.skuId),
-          couponId: singleLine.value && selectedCouponId.value !== NO_COUPON
-            ? selectedCouponId.value
-            : null
-        }
+        { idempotencyKey: keyFor(line), couponId }
       )
       collected.push({ skuId: line.skuId, title: line.title, orderId, error: null })
+      succeeded.add(line.skuId)
+      idempotency.delete(line.skuId)
     } catch (error) {
       collected.push({
         skuId: line.skuId,
         title: line.title,
         orderId: null,
-        error: isDuplicate(error) ? '该订单已提交过（幂等拒绝），请到订单列表确认' : describeError(error)
+        error: isDuplicate(error) ? '这次提交与另一笔下单冲突，请刷新后重试' : describeError(error)
       })
     }
   }
-  submitting.value = false
-  results.value = collected
 
-  // 成功的行从购物车摘掉；失败的原样留着，用户改完还能再来一次
-  for (const result of collected) {
-    if (result.orderId !== null && fromCart.value) {
-      await cart.remove(result.skuId).catch(() => undefined)
+  results.value = collected
+  lines.value = lines.value.filter((line) => !succeeded.has(line.skuId))
+
+  if (fromCart.value) {
+    for (const line of pending) {
+      if (!succeeded.has(line.skuId)) {
+        continue
+      }
+      try {
+        await cart.remove(line.skuId)
+      } catch {
+        syncWarning.value = '订单已创建，但购物车未能同步移除已下单商品，请刷新购物车核对。'
+      }
     }
   }
+
+  submitting.value = false
 
   if (collected.every((result) => result.orderId !== null)) {
     ElMessage.success('下单成功，请在 30 分钟内完成支付')
     await router.replace({ name: 'orders' })
+    return
+  }
+
+  if (succeeded.size > 0) {
+    ElMessage.warning('部分商品下单成功，失败项仍保留在待提交列表')
   }
 }
 
@@ -183,151 +207,180 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="aurora-page">
-    <h2 class="aurora-title">结算</h2>
+  <div class="app-page">
+    <PageHead
+      title="结算"
+      :meta="fromCart ? '按购物车中在售商品结算' : '立即购买：单品直下，不经过购物车'"
+    />
 
-    <el-skeleton v-if="loading" :rows="4" animated />
+    <div v-if="loading" aria-busy="true" aria-label="正在加载结算信息">
+      <div class="skeleton-block skeleton-row" />
+      <div class="skeleton-block skeleton-row" />
+      <div class="skeleton-block skeleton-row" />
+    </div>
 
-    <el-empty v-else-if="lines.length === 0" description="没有可结算的商品">
-      <el-button type="primary" @click="router.replace('/products')">去挑商品</el-button>
-    </el-empty>
+    <template v-else-if="lines.length === 0 && !results">
+      <div class="empty-state">
+        <h2>没有可结算的商品</h2>
+        <p>购物车里的商品可能已经下架，或者你还没有挑选商品。</p>
+        <RouterLink class="btn" to="/products">去目录挑选</RouterLink>
+      </div>
+    </template>
 
-    <template v-else>
-      <el-table :data="lines" border>
-        <el-table-column prop="title" label="商品" min-width="200" />
-        <el-table-column label="单价" width="120" align="right">
-          <template #default="{ row }">
-            <span class="aurora-amount">{{ formatYuan(row.price) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="quantity" label="数量" width="90" align="center" />
-        <el-table-column label="小计" width="140" align="right">
-          <template #default="{ row }">
-            <span class="aurora-amount">{{ formatYuan(row.price * row.quantity) }}</span>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-alert
-        v-if="lines.length > 1"
-        type="info"
-        :closable="false"
-        show-icon
-        title="每件商品会各生成一个订单"
-        description="后端订单是单商品模型，一次结算多件就等于下多单；优惠券也只对单个订单生效，所以多件时不可选。"
-        class="aurora-checkout__note"
-      />
-
-      <el-card v-if="singleLine" class="aurora-checkout__coupon">
-        <template #header>优惠券</template>
-        <el-select v-model="selectedCouponId" class="aurora-checkout__select">
-          <el-option label="不使用优惠券" :value="NO_COUPON" />
-          <el-option
-            v-for="coupon in usableCoupons"
-            :key="coupon.id"
-            :label="`${coupon.title}（满 ${formatYuan(coupon.thresholdAmount)} 减 ${formatYuan(coupon.discountAmount)}）`"
-            :value="coupon.id"
-          />
-        </el-select>
-        <p v-if="usableCoupons.length === 0" class="aurora-checkout__hint">
-          当前没有可用于这笔订单的券（未使用、且订单金额达到门槛）。
-        </p>
-      </el-card>
-
-      <div class="aurora-checkout__summary">
-        <div>
-          <span>合计：</span>
-          <strong class="aurora-amount">{{ formatYuan(payableCents / 100) }}</strong>
-          <span v-if="selectedCoupon" class="aurora-checkout__discount">
-            已优惠 {{ formatYuan(selectedCoupon.discountAmount) }}
-          </span>
+    <template v-else-if="lines.length === 0 && results">
+      <section class="panel" aria-live="polite">
+        <h2 class="panel-head">提交结果</h2>
+        <div class="list-row" v-for="result in results" :key="result.skuId">
+          <div>
+            <p class="list-row__title">{{ result.title }}</p>
+            <p class="list-row__meta">
+              {{ result.orderId !== null ? `订单号 ${result.orderId}` : result.error }}
+            </p>
+          </div>
+          <div class="list-row__end">
+            <StatusPill
+              v-if="result.orderId !== null"
+              tone="paid"
+              label="已下单"
+            />
+            <StatusPill v-else tone="danger" label="未下单" />
+          </div>
         </div>
-        <el-button type="primary" size="large" :loading="submitting" @click="submit">
-          提交订单
-        </el-button>
+        <div class="summary-actions" style="margin-top: 20px">
+          <RouterLink class="btn" to="/orders">去我的订单</RouterLink>
+          <RouterLink class="btn btn--outline" to="/products">继续挑选</RouterLink>
+        </div>
+      </section>
+    </template>
+
+    <div v-else class="checkout-layout">
+      <div class="checkout-main">
+        <section class="panel" aria-label="订单内容">
+          <h2 class="panel-head">订单内容</h2>
+          <div class="checkout-line" v-for="line in lines" :key="line.skuId">
+            <div>
+              <p class="list-row__title">{{ line.title }}</p>
+              <p class="list-row__meta">{{ formatYuan(line.price) }} × {{ line.quantity }}</p>
+            </div>
+            <span class="list-row__meta num">× {{ line.quantity }}</span>
+            <span class="checkout-line__amount">{{ formatYuan(line.price * line.quantity) }}</span>
+          </div>
+        </section>
+
+        <div v-if="lines.length > 1" class="notice notice--info">
+          <strong>每件商品会各生成一个订单</strong>
+          <p>
+            后端订单是单商品模型，一次结算多件等于下多单；优惠券只对单个订单生效，所以多件时不可选。
+          </p>
+        </div>
+
+        <section v-if="singleLine" class="panel" aria-label="优惠券">
+          <h2 class="panel-head">优惠券</h2>
+          <p v-if="couponError" class="notice notice--warning">{{ couponError }}</p>
+          <div class="coupon-choices">
+            <label class="coupon-choice">
+              <input v-model="selectedCouponId" type="radio" :value="NO_COUPON" name="coupon" />
+              <span>不使用优惠券</span>
+            </label>
+            <label v-for="coupon in usableCoupons" :key="coupon.id" class="coupon-choice">
+              <input v-model="selectedCouponId" type="radio" :value="coupon.id" name="coupon" />
+              <span>
+                {{ coupon.title }} · 满 {{ formatYuan(coupon.thresholdAmount) }} 减
+                {{ formatYuan(coupon.discountAmount) }}
+              </span>
+            </label>
+          </div>
+          <p v-if="usableCoupons.length === 0" class="field__hint" style="margin-top: 10px">
+            当前没有可用于这笔订单的券（未使用、且订单金额达到门槛）。<RouterLink to="/coupons">去领券</RouterLink>
+          </p>
+        </section>
+
+        <section v-if="results" class="panel checkout-results" aria-live="polite">
+          <h2 class="panel-head">提交结果</h2>
+          <div class="list-row" v-for="result in results" :key="result.skuId">
+            <div>
+              <p class="list-row__title">{{ result.title }}</p>
+              <p class="list-row__meta">
+                {{ result.orderId !== null ? `订单号 ${result.orderId}` : result.error }}
+              </p>
+            </div>
+            <div class="list-row__end">
+              <RouterLink
+                v-if="result.orderId !== null"
+                class="btn btn--outline btn--sm"
+                :to="{ name: 'order-detail', params: { id: result.orderId } }"
+              >
+                查看订单
+              </RouterLink>
+              <StatusPill v-else tone="danger" label="未下单" />
+            </div>
+          </div>
+        </section>
       </div>
 
-      <el-alert
-        type="warning"
-        :closable="false"
-        show-icon
-        title="金额以订单服务计算为准"
-        description="应付金额由服务端按商品快照算出，这里的数字只是预览。"
-        class="aurora-checkout__note"
-      />
+      <aside class="checkout-summary">
+        <div class="panel">
+          <h2 class="panel-head">应付</h2>
+          <div class="summary-line">
+            <span>商品小计</span>
+            <strong class="num">{{ formatYuan(totalCents / 100) }}</strong>
+          </div>
+          <div v-if="selectedCoupon" class="summary-line" style="margin-top: 8px">
+            <span>优惠券</span>
+            <strong class="num">−{{ formatYuan(selectedCoupon.discountAmount) }}</strong>
+          </div>
+          <div class="summary-total">
+            <span>应付金额</span>
+            <strong>{{ formatYuan(payableCents / 100) }}</strong>
+          </div>
+          <p class="field__hint" style="margin: 8px 0 16px">
+            金额由订单服务按商品快照计算，这里的数字只是预览。提交后 30 分钟内未支付会自动关单。
+          </p>
+          <div class="summary-actions">
+            <button type="button" class="btn btn--block" :disabled="submitting" @click="submit">
+              {{ submitLabel }}
+            </button>
+            <RouterLink class="btn btn--outline btn--block" :to="fromCart ? '/cart' : '/products'">
+              {{ fromCart ? '返回购物车' : '返回目录' }}
+            </RouterLink>
+          </div>
+        </div>
 
-      <el-card v-if="results" class="aurora-checkout__results">
-        <template #header>提交结果</template>
-        <el-table :data="results" border>
-          <el-table-column prop="title" label="商品" min-width="180" />
-          <el-table-column label="结果" min-width="220">
-            <template #default="{ row }">
-              <el-tag v-if="row.orderId !== null" type="success">订单号 {{ row.orderId }}</el-tag>
-              <el-tag v-else type="danger">{{ row.error }}</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-button
-          v-if="results.some((row) => row.orderId !== null)"
-          class="aurora-checkout__go"
-          @click="router.push({ name: 'orders' })"
-        >
-          去我的订单
-        </el-button>
-      </el-card>
-    </template>
+        <p v-if="syncWarning" class="notice notice--warning" aria-live="polite">
+          {{ syncWarning }}
+        </p>
+
+      </aside>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.aurora-title {
-  font-size: 20px;
-  margin: 8px 0 16px;
-}
-
-.aurora-checkout__note {
-  margin-top: 16px;
-}
-
-.aurora-checkout__coupon {
-  margin-top: 16px;
-}
-
-.aurora-checkout__select {
-  width: 360px;
-  max-width: 100%;
-}
-
-.aurora-checkout__hint {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: #909399;
-}
-
-.aurora-checkout__summary {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
+.checkout-main {
+  display: grid;
   gap: 16px;
-  margin-top: 20px;
 }
 
-.aurora-checkout__summary strong {
-  color: #f56c6c;
-  font-size: 20px;
+.coupon-choices {
+  display: grid;
+  gap: 8px;
 }
 
-.aurora-checkout__discount {
-  margin-left: 12px;
-  font-size: 13px;
-  color: #67c23a;
+.coupon-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  cursor: pointer;
 }
 
-.aurora-checkout__results {
-  margin-top: 16px;
+.coupon-choice input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--ink);
 }
 
-.aurora-checkout__go {
-  margin-top: 12px;
+.coupon-choice span {
+  font-size: var(--step-2);
 }
 </style>

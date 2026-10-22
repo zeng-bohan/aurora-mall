@@ -1,0 +1,10 @@
+# 连接池 Feign 对照轮：SPRING_PROFILES_ACTIVE=feign-pool 启动 cart。
+# 其余参数（网关、商品服务、数据）与默认 Feign 轮保持一致。
+spring:
+  cloud:
+    openfeign:
+      httpclient:
+        hc5:
+          enabled: true
+        max-connections: 200
+        max-connections-per-route: 100

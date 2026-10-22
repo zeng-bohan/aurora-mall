@@ -1,15 +1,9 @@
 <template>
-  <div class="aurora-page aurora-blank">
-    <el-result icon="warning" title="无权访问" sub-title="这个页面需要管理员角色。">
-      <template #extra>
-        <el-button type="primary" @click="$router.replace('/products')">回到商品页</el-button>
-      </template>
-    </el-result>
+  <div class="app-page">
+    <div class="empty-state">
+      <h1>无权访问</h1>
+      <p>当前账户没有这个页面的权限。运营台只对 ADMIN 角色开放；接口侧也会再次校验。</p>
+      <RouterLink class="btn" to="/products">回到目录</RouterLink>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.aurora-blank {
-  padding-top: 48px;
-}
-</style>

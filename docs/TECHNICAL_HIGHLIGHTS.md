@@ -14,7 +14,7 @@
 
 **代码位置**：`aurora-rpc/src/main/java/com/zengbohan/aurora/rpc/protocol/ProtocolCodec.java`、`transport/RpcClient.java`、`transport/RpcServer.java`、`proxy/RpcProxyFactory.java`、`proxy/RpcClientPool.java`
 
-**验证**：`mvn -pl aurora-rpc test`，13 个传输集成用例、10 个编解码用例、8 个全链路代理用例。传输等价性用 `bash docker/smoke-rpc.sh`（11 条断言），并发对照见 [m4-load-test.md](m4-load-test.md)。
+**验证**：`mvn -pl aurora-rpc test`，14 个传输集成用例、10 个编解码用例、8 个全链路代理用例。传输等价性用 `bash docker/smoke-rpc.sh`（11 条断言），并发对照见 [m4-load-test.md](m4-load-test.md)。
 
 **边界**：单连接多路复用，没有连接池，大响应会阻塞小响应；未实现 Seata XID 透传，所以 order→inventory 保持 Feign；注册中心只实现注册、订阅与健康过滤，没有权重和集群路由。
 
@@ -24,19 +24,19 @@
 
 **做法**：`seckill_reserve.lua` 在一次脚本执行里完成时间窗判断、已购集合检查、库存扣减和结果写入 PENDING。`seckill_compensate.lua` 用 `SREM` 的返回值作为幂等凭据，只有确实移除掉已购标记时才回补库存，避免补偿重放造成超卖。两条路径的结果都写进同一个结果 hash，客户端只查这一个键。
 
-**MQ 模式**：预扣成功后投递消息即返回，请求路径不碰 DB。消费者写入订单与扣减 DB 库存在同一个事务里，DB 是最终事实。投递失败、落单永久失败（DB 库存已尽）都会补偿。瞬时失败抛给 MQ 重投，重投由 `DB_DEDUP` 幂等守卫兜住。
+**MQ 模式**：预扣成功后投递消息即返回，请求路径不碰 DB。消费者写入订单、去重行和扣减 DB 库存在同一个事务里，DB 是最终事实。受理结果走状态机 `PENDING → PROCESSING → ORDER/FAIL`，认领和补偿都是 Lua 原子操作；发送结果不确定时保留 PENDING，由 `SeckillReconcileJob` 确认订单或归还名额。详见 [reliability-fixes.md](reliability-fixes.md) 第 1、2 节。
 
-**代码位置**：`aurora-seckill/src/main/resources/lua/seckill_reserve.lua`、`seckill_compensate.lua`、`service/SeckillOrderService.java`、`service/SeckillOrderWriter.java`、`mq/SeckillOrderListener.java`
+**代码位置**：`aurora-seckill/src/main/resources/lua/seckill_{reserve,claim,reset_pending,compensate}.lua`、`service/SeckillOrderService.java`、`service/SeckillOrderWriter.java`、`service/SeckillReconcileJob.java`、`mq/SeckillEventPublisher.java`
 
-**验证**：`mvn -pl aurora-seckill test`。Lua 脚本的真实 Redis 用例在中间件可用时运行，否则跳过。压测与一致性结论见 [m5-seckill-load-test.md](m5-seckill-load-test.md)：20 万级尝试下恰好成交 3000，DB 与 Redis 同时归零，无残留 PENDING。
+**验证**：`mvn -pl aurora-seckill -am test`。`SeckillLuaIntegrationTest` 对真实 Redis 有 11 例；`SeckillOrderTransactionIntegrationTest` 对真实 MySQL 验证 3 个事务场景。压测与一致性结论见 [m5-seckill-load-test.md](m5-seckill-load-test.md)。
 
-**边界**：结果 hash 的 TTL 到活动结束后一天，之后只能回落到 DB 查询；限流是活动维度，不区分用户。
+**边界**：结果 hash 的 TTL 到活动结束后一天，之后只能回落到 DB 查询；对账按活动扫描，单机规模设计；限流是活动维度，不区分用户。
 
 ## 3. 事务一致性：本地消息表、事务消息与回查
 
 **要解决的问题**：下单要写订单、扣库存，还要保证后续事件不丢。
 
-**做法**：本地事务里同时写 `orders` 与 `tx_message`。RocketMQ 事务消息的确认以 `tx_message` 行是否存在为锚，同一个查询也用于回答 broker 的回查，因此本地提交与确认之间崩溃时最终解析为一次 COMMIT。提交后发送失败不回滚订单，由 `TxMessageRetryJob` 重发；关单由延迟消息触发，`CloseTimeoutJob` 扫描兜底，两条路径都会回券。
+**做法**：本地事务里同时写 `orders` 与 `tx_message`。RocketMQ 事务消息的确认依据是 `tx_message` 行是否存在，同一个查询也用于回答 broker 的回查，因此本地提交与确认之间崩溃时最终解析为一次 COMMIT。提交后发送失败不回滚订单，由 `TxMessageRetryJob` 重发；关单由延迟消息触发，`CloseTimeoutJob` 扫描兜底，两条路径都会回券。
 
 **代码位置**：`aurora-order/src/main/java/com/zengbohan/aurora/order/service/OrderService.java`、`mq/OrderTxListener.java`、`mq/TxMessageRetryJob.java`、`mq/CloseTimeoutJob.java`
 
@@ -48,7 +48,7 @@
 
 **要解决的问题**：order 调用 inventory 预扣时如果超时，结果未知：可能扣了，也可能没扣。直接重试可能重复扣减。
 
-**做法**：预扣按订单号幂等，库存侧只在确实预扣过时才回补。order 在收到传输类失败时调用补偿，补偿对没落地过的预扣不会凭空加库存。库存服务还有对账任务处理 Redis 与 DB 的偏差。
+**做法**：预扣按订单号幂等，库存侧只在确实预扣过时才回补。order 在收到传输类失败时调用补偿，补偿对没落地过的预扣不会增加库存。库存服务还有对账任务处理 Redis 与 DB 的偏差；管理员改可售库存时用 DB 行锁 + Redis CAS，遇到在途变更拒绝覆盖。
 
 **代码位置**：`aurora-order/.../OrderService.java` 的 `reserveStock` 与 `rollbackStockQuietly`；`aurora-inventory/.../stock/StockService.java`
 
@@ -58,13 +58,13 @@
 
 **要解决的问题**：商品详情是读多写少的热点，需要挡住不存在的 ID，也要避免更新时读到旧值。
 
-**做法**：读取顺序是布隆过滤器 → 空值缓存 → 逻辑过期信封。逻辑过期允许单个重建者刷新期间继续返回旧值，物理 TTL 比逻辑过期长并带抖动。布隆过滤器用写时复制的方式整体替换，读路径不加锁。
+**做法**：读取顺序是布隆过滤器 → 空值缓存 → 逻辑过期信封。逻辑过期允许单个重建者刷新期间继续返回旧值，物理 TTL 比逻辑过期长并带抖动。布隆过滤器用写时复制的方式整体替换，读路径不加锁。所有缓存操作都有安全包装：Redis 不可用时回源 DB，重建任务被线程池拒绝时释放互斥锁。
 
 **代码位置**：`aurora-product/src/main/java/com/zengbohan/aurora/product/cache/ProductCacheService.java`、`StringBloomFilter.java`、`VolatileBloomFilterHolder.java`
 
 **验证**：`mvn -pl aurora-product test`，覆盖布隆过滤器、空值缓存与逻辑过期。
 
-**边界**：布隆过滤器是进程内实现，多实例各自一份，新商品写入后其他实例要等重建；重建策略按本项目的单机部署设计。
+**边界**：布隆过滤器是进程内实现，多实例各自一份，新商品写入后其他实例要等重建；重建与新建商品写入的竞态尚未消除；重建策略按本项目的单机部署设计。
 
 ## 6. 网关与内部接口的访问边界
 
@@ -82,11 +82,11 @@
 
 **要解决的问题**：下单、落单、支付回调都可能重放。
 
-**做法**：下单用 `Idempotency-Key` 请求头加 Redis 去重，键为用户与幂等键的组合；秒杀落单用消息里的 `messageId` 做 DB 去重；支付与关单的状态迁移是带前置状态的条件更新，重放只会命中零行。
+**做法**：下单用 `order_idempotency` 表持久化 `(user_id, idem_key) → order_id`，并保存请求指纹；映射、订单和 `tx_message` 同一事务提交。同键同指纹返回原订单，同键换参数拒绝。秒杀落单用消息 `messageId` 做 DB 去重，去重行与订单同事务；支付与关单用带前置状态的条件更新。
 
-**代码位置**：`aurora-common/src/main/java/com/zengbohan/aurora/common/idempotent/`、`aurora-order/.../OrderService.java`、`aurora-seckill/.../SeckillOrderService.java`
+**代码位置**：`aurora-order/.../service/OrderService.java`、`entity/OrderIdempotency.java`、`aurora-common/.../idempotent/`、`aurora-seckill/.../SeckillOrderWriter.java`
 
-**验证**：`IdempotentAspectTest`、`JdbcDedupStoreTest`、`OrderServiceTest` 与 `SeckillOrderServiceTest` 的重放用例。
+**验证**：`OrderServiceTest`（回放、同键换参数）、`SeckillOrderTransactionIntegrationTest`（真实 MySQL 回滚）、`IdempotentAspectTest`、`JdbcDedupStoreTest`。
 
 ## 8. 分布式 ID
 
@@ -114,6 +114,6 @@
 
 **代码位置**：`aurora-*/src/test/java`、`.github/workflows/ci.yml`
 
-**验证**：`mvn -B clean verify`，当前 395 个用例，0 失败，38 个跳过。
+**验证**：`mvn -B clean verify`。CI 的 `build-test` job 启动 MySQL 8.4 与 Redis 7，导入建表 SQL 后运行全量测试，并检查 seckill / inventory 的 surefire 报告：出现 skipped 就让构建失败。这样 Lua 脚本、事务回滚和并发用例进入必过项，不再靠“缺环境就跳过”保绿。
 
-**边界**：跳过的用例在本地不起中间件时不会验证 Lua 脚本与并发语义，CI 也没有起中间件。这部分只能靠本地 `docker compose up -d` 后的完整运行补上。
+**边界**：CI 改动尚未在 GitHub runner 上实际跑过；Nacos 注册等需要额外中间件的用例仍按环境跳过。

@@ -25,11 +25,21 @@ src/
 ├── api/            # 后端契约层：每个服务一个模块，加一个 http 拦截器
 ├── stores/         # Pinia：登录态、购物车
 ├── router/         # 路由与守卫（requiresAuth / requiresAdmin）
-├── views/          # 页面；admin/ 下是管理台
-├── components/     # AppHeader 等
-├── composables/    # useNow（驱动倒计时）
+├── views/          # 页面；admin/ 下是运营台
+├── components/     # AppHeader / AppFooter / AdminLayout / 状态与空态组件
+├── styles/         # tokens.css（设计变量）+ 商城、运营台、Element Plus 覆盖
+├── composables/    # useNow（驱动倒计时）、useReveal（进入动画）
 └── utils/          # 金额、时间、错误文案
 ```
+
+## 界面结构
+
+商城与运营台是两套独立布局，不再共用同一排导航：
+
+- 商城：`AppHeader` + 页面内容 + `AppFooter`。商品列表默认用印刷目录式的价格带编排，也可以切到响应式网格；商品没有实拍图，目录图形按商品类型绘制并明确标注。
+- 运营台：`AdminLayout`，232px 侧边导航、56px 顶部工具栏（面包屑 + 店铺入口 + 退出）、独立内容区；路由挂在 `/admin` 下，子页面只负责数据与表单。
+- 设计变量集中在 `styles/tokens.css`：颜色、语义色、字号、间距、圆角、阴影、页面最大宽度。商城与运营台共享变量，运营台的密度和标题字号在 `app.css` 中单独校准。
+- 1440 / 768 / 390 三个宽度都做过截图检查；运营台在 900px 以下把侧边栏收进抽屉。
 
 ## 几处值得说明的取舍
 

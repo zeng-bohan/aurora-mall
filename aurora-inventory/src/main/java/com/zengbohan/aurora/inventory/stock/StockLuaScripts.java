@@ -18,6 +18,8 @@ public class StockLuaScripts {
     public final DefaultRedisScript<Long> rollback;
     /** 结果未知的预扣补偿：只在预扣守卫存在时回补（见 lua 注释）。 */
     public final DefaultRedisScript<Long> compensateReserve;
+    /** 管理员设置库存：CAS，只覆盖无在途变更的值。 */
+    public final DefaultRedisScript<Long> setIfUnchanged;
 
     public StockLuaScripts() {
         reserve = new DefaultRedisScript<>();
@@ -29,6 +31,9 @@ public class StockLuaScripts {
         compensateReserve = new DefaultRedisScript<>();
         compensateReserve.setLocation(new ClassPathResource("lua/stock_compensate_reserve.lua"));
         compensateReserve.setResultType(Long.class);
+        setIfUnchanged = new DefaultRedisScript<>();
+        setIfUnchanged.setLocation(new ClassPathResource("lua/stock_set.lua"));
+        setIfUnchanged.setResultType(Long.class);
     }
 
     public static String key(long skuId) {

@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import { SKU_ON_SALE } from '@/api/product'
+import EmptyState from '@/components/EmptyState.vue'
+import PageHead from '@/components/PageHead.vue'
+import ProductFigure from '@/components/ProductFigure.vue'
 import { useCartStore } from '@/stores/cart'
 import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
@@ -11,14 +14,20 @@ import { formatYuan } from '@/utils/money'
 const router = useRouter()
 const cart = useCartStore()
 const busySkuId = ref<number | null>(null)
+const clearing = ref(false)
+
+const totalLines = computed(() => cart.items.length)
+const offShelfCount = computed(() => cart.items.length - cart.checkoutItems.length)
 
 async function changeQuantity(skuId: number, quantity: number): Promise<void> {
+  if (quantity < 1 || quantity > 999) {
+    return
+  }
   busySkuId.value = skuId
   try {
     await cart.updateQuantity(skuId, quantity)
   } catch (error) {
     ElMessage.error(describeError(error))
-    // 改失败就把视图拉回服务端的真实值，别让界面停在用户以为改成了的数量上
     await cart.load().catch(() => undefined)
   } finally {
     busySkuId.value = null
@@ -29,7 +38,7 @@ async function remove(skuId: number): Promise<void> {
   try {
     await ElMessageBox.confirm('确定从购物车移除这件商品吗？', '移除', { type: 'warning' })
   } catch {
-    return // 用户取消
+    return
   }
   busySkuId.value = skuId
   try {
@@ -47,10 +56,13 @@ async function clearAll(): Promise<void> {
   } catch {
     return
   }
+  clearing.value = true
   try {
     await cart.clear()
   } catch (error) {
     ElMessage.error(describeError(error))
+  } finally {
+    clearing.value = false
   }
 }
 
@@ -60,112 +72,115 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="aurora-page">
-    <h2 class="aurora-title">购物车</h2>
+  <div class="app-page">
+    <PageHead
+      title="购物车"
+      :meta="`${totalLines} 行 · ${cart.checkoutItems.length} 件可结算 · 金额仅统计在售商品`"
+    />
 
-    <el-table v-loading="cart.loading" :data="cart.items" empty-text="购物车是空的">
-      <el-table-column label="商品" min-width="220">
-        <template #default="{ row }">
-          <RouterLink :to="{ name: 'product-detail', params: { id: row.skuId } }">
-            {{ row.title }}
-          </RouterLink>
-          <el-tag v-if="row.status !== SKU_ON_SALE" type="info" size="small" class="aurora-tag">
-            已下架
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="单价" width="120" align="right">
-        <template #default="{ row }">
-          <span class="aurora-amount">{{ formatYuan(row.price) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="数量" width="180">
-        <template #default="{ row }">
-          <el-input-number
-            :model-value="row.quantity"
-            :min="1"
-            :max="Math.min(row.stock > 0 ? row.stock : 1, 999)"
-            size="small"
-            :disabled="busySkuId === row.skuId"
-            @change="(value: number | undefined) => value && changeQuantity(row.skuId, value)"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column label="小计" width="140" align="right">
-        <template #default="{ row }">
-          <span class="aurora-amount">{{ formatYuan(row.price * row.quantity) }}</span>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="100">
-        <template #default="{ row }">
-          <el-button
-            type="danger"
-            text
-            size="small"
-            :disabled="busySkuId === row.skuId"
-            @click="remove(row.skuId)"
-          >
-            移除
-          </el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-
-    <div class="aurora-cart__footer">
-      <el-button text :disabled="cart.items.length === 0" @click="clearAll">清空购物车</el-button>
-      <div class="aurora-cart__summary">
-        <span>合计（仅可购买商品）：</span>
-        <strong class="aurora-amount">{{ formatYuan(cart.estimatedTotal) }}</strong>
-        <el-button
-          type="primary"
-          :disabled="cart.checkoutItems.length === 0"
-          @click="router.push({ name: 'checkout' })"
-        >
-          去结算
-        </el-button>
-      </div>
+    <div v-if="cart.loading && cart.items.length === 0" aria-busy="true" aria-label="正在加载购物车">
+      <div class="skeleton-block skeleton-row" />
+      <div class="skeleton-block skeleton-row" />
+      <div class="skeleton-block skeleton-row" />
     </div>
 
-    <el-alert
-      v-if="cart.items.length > cart.checkoutItems.length"
-      type="warning"
-      :closable="false"
-      show-icon
-      title="有商品已下架，不会被结算"
-      class="aurora-cart__alert"
-    />
+    <EmptyState
+      v-else-if="cart.items.length === 0"
+      title="购物车是空的"
+      hint="从目录里挑一件商品，或者去秒杀排期看看这一期有什么。"
+    >
+      <RouterLink class="btn" to="/products">去目录挑选</RouterLink>
+    </EmptyState>
+
+    <div v-else class="cart-layout">
+      <section class="panel" aria-label="购物车商品">
+        <div class="panel-head">
+          <h2>商品</h2>
+          <span class="num">合计 {{ formatYuan(cart.estimatedTotal) }}</span>
+        </div>
+
+        <div class="cart-line" v-for="item in cart.items" :key="item.skuId">
+          <RouterLink class="cart-line__figure" :to="{ name: 'product-detail', params: { id: item.skuId } }">
+            <ProductFigure :title="item.title" :label="`${item.title} 的目录图形`" />
+          </RouterLink>
+
+          <div>
+            <RouterLink class="cart-line__title" :to="{ name: 'product-detail', params: { id: item.skuId } }">
+              {{ item.title }}
+            </RouterLink>
+            <p class="cart-line__meta">
+              {{ formatYuan(item.price) }} / 件
+              <template v-if="item.status !== SKU_ON_SALE"> · 已下架，不会结算</template>
+              <template v-else-if="item.stock <= 0"> · 参考库存为 0</template>
+            </p>
+            <button type="button" class="link-danger" @click="remove(item.skuId)">移除</button>
+          </div>
+
+          <div class="cart-line__controls">
+            <div class="quantity quantity--sm" role="group" :aria-label="`${item.title} 的数量`">
+              <button
+                type="button"
+                :disabled="busySkuId === item.skuId || item.quantity <= 1"
+                @click="changeQuantity(item.skuId, item.quantity - 1)"
+              >
+                −
+              </button>
+              <output>{{ item.quantity }}</output>
+              <button
+                type="button"
+                :disabled="busySkuId === item.skuId || item.quantity >= 999"
+                @click="changeQuantity(item.skuId, item.quantity + 1)"
+              >
+                +
+              </button>
+            </div>
+            <span class="cart-line__amount num">{{ formatYuan(item.price * item.quantity) }}</span>
+          </div>
+        </div>
+
+        <div class="panel-head" style="margin: 16px 0 0">
+          <button type="button" class="link-muted" :disabled="clearing" @click="clearAll">
+            {{ clearing ? '清空中…' : '清空购物车' }}
+          </button>
+        </div>
+      </section>
+
+      <aside class="cart-summary">
+        <div class="panel">
+          <h2 class="panel-head">结算</h2>
+          <div class="summary-line">
+            <span>可结算商品</span>
+            <strong class="num">{{ cart.checkoutItems.length }} 件</strong>
+          </div>
+          <div class="summary-line" style="margin-top: 8px">
+            <span>商品合计</span>
+            <strong class="num">{{ formatYuan(cart.estimatedTotal) }}</strong>
+          </div>
+          <div class="summary-total">
+            <span>应付（预览）</span>
+            <strong>{{ formatYuan(cart.estimatedTotal) }}</strong>
+          </div>
+          <p class="field__hint" style="margin: 8px 0 16px">
+            最终金额由订单服务按商品快照计算，优惠券在结算页选择。
+          </p>
+          <div class="summary-actions">
+            <button
+              type="button"
+              class="btn btn--block"
+              :disabled="cart.checkoutItems.length === 0"
+              @click="router.push({ name: 'checkout' })"
+            >
+              去结算
+            </button>
+            <RouterLink class="btn btn--outline btn--block" to="/products">继续挑选</RouterLink>
+          </div>
+        </div>
+
+        <div v-if="offShelfCount > 0" class="notice notice--warning">
+          <strong>{{ offShelfCount }} 行商品已下架</strong>
+          <p>下架商品保留在购物车里，但不会被结算。</p>
+        </div>
+      </aside>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.aurora-title {
-  font-size: 20px;
-  margin: 8px 0 16px;
-}
-
-.aurora-tag {
-  margin-left: 8px;
-}
-
-.aurora-cart__footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 16px;
-}
-
-.aurora-cart__summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.aurora-cart__summary strong {
-  color: #f56c6c;
-  font-size: 18px;
-}
-
-.aurora-cart__alert {
-  margin-top: 16px;
-}
-</style>

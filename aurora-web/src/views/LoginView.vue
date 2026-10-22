@@ -13,23 +13,37 @@ const auth = useAuthStore()
 const cart = useCartStore()
 
 const form = reactive({ username: '', password: '' })
+const errors = reactive({ username: '', password: '' })
+const serverError = ref('')
 const submitting = ref(false)
 
+function safeRedirect(): string {
+  const value = route.query.redirect
+  if (typeof value === 'string' && value.startsWith('/') && !value.startsWith('//')) {
+    return value
+  }
+  return '/products'
+}
+
+function validate(): boolean {
+  errors.username = form.username.trim() ? '' : '请输入用户名'
+  errors.password = form.password ? '' : '请输入密码'
+  return !errors.username && !errors.password
+}
+
 async function onSubmit(): Promise<void> {
-  if (!form.username || !form.password) {
-    ElMessage.warning('请填写用户名与密码')
+  serverError.value = ''
+  if (!validate()) {
     return
   }
   submitting.value = true
   try {
-    await auth.login(form.username, form.password)
-    // 登录后立刻按新身份装载购物车
+    await auth.login(form.username.trim(), form.password)
     await cart.load().catch(() => undefined)
     ElMessage.success('登录成功')
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/products'
-    await router.replace(redirect)
+    await router.replace(safeRedirect())
   } catch (error) {
-    ElMessage.error(describeError(error))
+    serverError.value = describeError(error)
   } finally {
     submitting.value = false
   }
@@ -37,58 +51,63 @@ async function onSubmit(): Promise<void> {
 </script>
 
 <template>
-  <div class="aurora-page aurora-auth">
-    <el-card class="aurora-auth__card">
-      <h2 class="aurora-auth__title">登录</h2>
-      <el-form label-position="top" @submit.prevent="onSubmit">
-        <el-form-item label="用户名">
-          <el-input v-model="form.username" autocomplete="username" placeholder="4-32 个字符" />
-        </el-form-item>
-        <el-form-item label="密码">
-          <el-input
+  <div class="auth-page">
+    <section class="auth-brand" aria-label="AURORA 极光选品">
+      <p class="display auth-brand__word">AURORA</p>
+      <p>一份可以逐笔核对的选品目录。登录后，购物车、订单、优惠券和秒杀排期都从这里继续。</p>
+      <p class="auth-brand__foot">Java 21 · Spring Boot 3.5 · 模拟支付链路</p>
+    </section>
+
+    <div class="auth-form-wrap">
+      <form class="auth-form" novalidate @submit.prevent="onSubmit">
+        <h1>登录</h1>
+        <p class="auth-form__lead">使用你的目录账户继续。令牌只保存在本机浏览器。</p>
+
+        <div v-if="serverError" class="notice notice--danger" role="alert">
+          {{ serverError }}
+        </div>
+
+        <div class="field">
+          <label for="login-username">用户名</label>
+          <input
+            id="login-username"
+            v-model="form.username"
+            name="username"
+            autocomplete="username"
+            placeholder="4-32 个字符"
+            :aria-invalid="Boolean(errors.username)"
+            :aria-describedby="errors.username ? 'login-username-error' : undefined"
+          />
+          <p v-if="errors.username" id="login-username-error" class="field__error">
+            {{ errors.username }}
+          </p>
+        </div>
+
+        <div class="field">
+          <label for="login-password">密码</label>
+          <input
+            id="login-password"
             v-model="form.password"
+            name="password"
             type="password"
-            show-password
             autocomplete="current-password"
             placeholder="至少 6 位"
-            @keyup.enter="onSubmit"
+            :aria-invalid="Boolean(errors.password)"
+            :aria-describedby="errors.password ? 'login-password-error' : undefined"
           />
-        </el-form-item>
-        <el-button type="primary" :loading="submitting" class="aurora-auth__submit" @click="onSubmit">
-          登录
-        </el-button>
-      </el-form>
-      <p class="aurora-auth__hint">
-        还没有账号？<RouterLink to="/register">去注册</RouterLink>
-      </p>
-    </el-card>
+          <p v-if="errors.password" id="login-password-error" class="field__error">
+            {{ errors.password }}
+          </p>
+        </div>
+
+        <button type="submit" class="btn" :disabled="submitting">
+          {{ submitting ? '登录中…' : '登录' }}
+        </button>
+
+        <p class="auth-alt">
+          还没有账户？<RouterLink to="/register">去注册</RouterLink>
+        </p>
+      </form>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.aurora-auth {
-  display: flex;
-  justify-content: center;
-  padding-top: 64px;
-}
-
-.aurora-auth__card {
-  width: 380px;
-}
-
-.aurora-auth__title {
-  margin: 0 0 16px;
-  font-size: 20px;
-}
-
-.aurora-auth__submit {
-  width: 100%;
-}
-
-.aurora-auth__hint {
-  margin: 16px 0 0;
-  font-size: 13px;
-  color: #909399;
-  text-align: center;
-}
-</style>

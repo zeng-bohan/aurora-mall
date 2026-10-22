@@ -36,6 +36,4 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrder> {
     int incrementPublishAttempts(@Param("orderId") long orderId);
 
     // 达到重试上限：放弃自动补发，等待人工处理。
-    @Update("UPDATE payment_orders SET event_failed = 1 WHERE order_id = #{orderId}")
-    int markEventFailed(@Param("orderId") long orderId);
 }

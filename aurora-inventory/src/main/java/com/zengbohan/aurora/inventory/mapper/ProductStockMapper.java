@@ -7,6 +7,10 @@ import org.apache.ibatis.annotations.Update;
 
 public interface ProductStockMapper extends BaseMapper<ProductStock> {
 
+    // 管理员设置库存前锁住行，串行化同一 SKU 的并发改库存操作。
+    @org.apache.ibatis.annotations.Select("SELECT * FROM product_stock WHERE sku_id = #{skuId} FOR UPDATE")
+    ProductStock selectForUpdate(@Param("skuId") long skuId);
+
     // 原子就地自增——绝不跨消费者做读-改-写。
     @Update("UPDATE product_stock SET reserved = reserved + #{quantity} WHERE sku_id = #{skuId}")
     int incrementReserved(@Param("skuId") long skuId, @Param("quantity") int quantity);

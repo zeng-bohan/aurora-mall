@@ -67,6 +67,12 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
+        <!-- 连接池对照组：默认 Feign 用 JDK HttpURLConnection，每请求新建连接；
+             HC5 复用连接，用来把「连接生命周期」和「协议/序列化」两个因素分离 -->
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-hc5</artifactId>
+        </dependency>
         <!-- 端口契约与手写 RPC（M3 T8） -->
         <dependency>
             <groupId>com.zengbohan.aurora</groupId>

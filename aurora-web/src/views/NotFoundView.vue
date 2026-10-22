@@ -1,15 +1,9 @@
 <template>
-  <div class="aurora-page aurora-blank">
-    <el-result icon="info" title="页面不存在" sub-title="链接可能已经失效，或者路径写错了。">
-      <template #extra>
-        <el-button type="primary" @click="$router.replace('/products')">回到商品页</el-button>
-      </template>
-    </el-result>
+  <div class="app-page">
+    <div class="empty-state">
+      <h1>页面不存在</h1>
+      <p>这个地址没有对应的页面。它可能已经改名，或者链接本身有误。</p>
+      <RouterLink class="btn" to="/products">回到目录</RouterLink>
+    </div>
   </div>
 </template>
-
-<style scoped>
-.aurora-blank {
-  padding-top: 48px;
-}
-</style>

@@ -46,22 +46,32 @@ public class StockService {
         if (quantity < 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "库存数量不能为负");
         }
-        // 先 DB 后 Redis：两步之间崩溃时 key 缺失或仍是旧值，
-        // 由 reserve 的 MISSING_KEY rebuild 与 reconcile 自愈；
-        // 反序（先 Redis）会在窗口内留下"新 Redis + 旧 DB"且 key 存在，无自愈路径
-        ProductStock row = stockMapper.selectById(skuId);
-        if (row == null) {
-            ProductStock created = new ProductStock();
-            created.setSkuId(skuId);
-            created.setAvailable(quantity);
-            created.setReserved(0);
-            stockMapper.insert(created);
-        } else {
-            // 即使在预占在途期间也保持"可售 == quantity"不变式：
-            // available = quantity + reserved，原子完成
-            stockMapper.resetAvailable(skuId, quantity);
-        }
-        redis.opsForValue().set(StockLuaScripts.key(skuId), String.valueOf(quantity));
+        // DB 行锁 + Redis CAS 一起用：
+        // 1) 行锁串行化同一 SKU 的并发改库存；
+        // 2) 只有 Redis 当前值等于 DB 的 available - reserved 时才覆盖 Redis。
+        // 两者不等说明有预扣/释放仍在途，直接覆盖会把在途数量重新放回可售；
+        // 此时抛错回滚 DB，让管理员稍后重试，而不是留下一个只能靠对账发现的偏差。
+        transactionTemplate.executeWithoutResult(status -> {
+            ProductStock row = stockMapper.selectForUpdate(skuId);
+            String expected;
+            if (row == null) {
+                ProductStock created = new ProductStock();
+                created.setSkuId(skuId);
+                created.setAvailable(quantity);
+                created.setReserved(0);
+                stockMapper.insert(created);
+                expected = "";
+            } else {
+                expected = String.valueOf(row.getAvailable() - row.getReserved());
+                stockMapper.resetAvailable(skuId, quantity);
+            }
+            Long applied = redis.execute(scripts.setIfUnchanged,
+                    List.of(StockLuaScripts.key(skuId)), expected, String.valueOf(quantity));
+            if (applied == null || applied != 1L) {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                        "库存有在途变更，本次设置未生效，请稍后重试");
+            }
+        });
     }
 
     /**
@@ -114,7 +124,7 @@ public class StockService {
      * 预扣补偿：order 侧发起预扣但结果未知（超时/断连/空响应）时的安全回补。
      * <p>
      * 与 {@link #rollback(long, long, int)} 的安全前提不同：本方法只在「该订单确实预扣过」
-     * （预扣守卫存在）时才把 redis 卖量加回去——对从未落地的预扣回补会凭空放大可售库存。
+     * （预扣守卫存在）时才把 redis 卖量加回去——对从未落地的预扣回补会放大可售库存。
      * 释放标记与关单路径共用，两条路径之间同样不会重复回补；DB 侧不参与，因为结果未知时
      * 订单行没有建立，也就没有 stock-reserved 事件落账。
      *

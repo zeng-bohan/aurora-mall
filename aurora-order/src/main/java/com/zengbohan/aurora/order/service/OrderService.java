@@ -5,8 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zengbohan.aurora.api.product.ProductSnapshot;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.common.idempotent.Idempotent;
-import com.zengbohan.aurora.common.idempotent.Strategy;
 import com.zengbohan.aurora.common.result.RemoteCall;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.id.SegmentIdGenerator;
@@ -15,18 +13,25 @@ import com.zengbohan.aurora.order.dto.OrderPage;
 import com.zengbohan.aurora.order.dto.OrderView;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
+import com.zengbohan.aurora.order.entity.OrderIdempotency;
 import com.zengbohan.aurora.order.entity.TxMessage;
+import com.zengbohan.aurora.order.mapper.OrderIdempotencyMapper;
 import com.zengbohan.aurora.order.mapper.OrderMapper;
 import com.zengbohan.aurora.order.mapper.TxMessageMapper;
 import com.zengbohan.aurora.order.mq.OrderEventPublisher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
 
 /**
@@ -49,6 +54,7 @@ public class OrderService {
     private final ProductGuard productGuard;
     private final InventoryClient inventoryClient;
     private final OrderMapper orderMapper;
+    private final OrderIdempotencyMapper idempotencyMapper;
     private final TxMessageMapper txMessageMapper;
     private final TransactionTemplate transactionTemplate;
     private final OrderEventPublisher publisher;
@@ -63,6 +69,7 @@ public class OrderService {
                         ProductGuard productGuard,
                         InventoryClient inventoryClient,
                         OrderMapper orderMapper,
+                        OrderIdempotencyMapper idempotencyMapper,
                         TxMessageMapper txMessageMapper,
                         TransactionTemplate transactionTemplate,
                         OrderEventPublisher publisher,
@@ -76,6 +83,7 @@ public class OrderService {
         this.productGuard = productGuard;
         this.inventoryClient = inventoryClient;
         this.orderMapper = orderMapper;
+        this.idempotencyMapper = idempotencyMapper;
         this.txMessageMapper = txMessageMapper;
         this.transactionTemplate = transactionTemplate;
         this.publisher = publisher;
@@ -97,7 +105,6 @@ public class OrderService {
         return closeTimeoutSeconds;
     }
 
-    @Idempotent(strategy = Strategy.REDIS, key = "#userId + ':' + #idempotencyKey", ttlSeconds = 600)
     public long placeOrder(long userId, PlaceOrderRequest request, String idempotencyKey) {
         return placeOrder(userId, request, idempotencyKey, null);
     }
@@ -105,16 +112,20 @@ public class OrderService {
     /**
      * 带券下单（M5 S5）。券的判定与锁定通过 {@code couponHook} 回调进来，订单侧不认识券的
      * 任何类型或表：抵扣额在事务前算（纯函数），锁定在订单本地事务内做
-     * （UNUSED→LOCKED 与订单行同生共死）。这样既不需要订单域持有券的数据访问，
+     * （UNUSED→LOCKED 与订单行在同一事务内提交或回滚）。这样既不需要订单域持有券的数据访问，
      * 也不会出现"下单失败、券却被扣住"的中间态。
      * <p>
-     * 两个入口都标 {@code @Idempotent}：内部委托调用不走代理，注解必须落在真正被调用的方法上。
+     * 幂等语义：同一用户 + 同一 Idempotency-Key + 同一请求指纹，返回第一次创建的订单号。
+     * 映射行与订单、tx_message 在同一个本地事务里提交；并发同键由唯一键兜底，
+     * 并发中后到的一方回滚自己的订单和库存预扣，再把已存在的订单号返回给调用方。
      */
-    @Idempotent(strategy = Strategy.REDIS, key = "#userId + ':' + #idempotencyKey", ttlSeconds = 600)
     public long placeOrder(long userId, PlaceOrderRequest request, String idempotencyKey,
                            CouponHook couponHook) {
         if (idempotencyKey == null || idempotencyKey.isBlank()) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "缺少 Idempotency-Key 请求头");
+        }
+        if (idempotencyKey.length() > 128) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "Idempotency-Key 不能超过 128 个字符");
         }
         if (Order.TX_MODE_AT.equals(txMode)) {
             // Seata AT 对比场景；@GlobalTransactional 放在独立 Bean 的方法上，
@@ -122,7 +133,14 @@ public class OrderService {
             if (couponHook != null) {
                 throw new BusinessException(ErrorCode.PARAM_ERROR, "Seata AT 对照模式不支持用券");
             }
-            return atOrderPlacer.placeAt(userId, request);
+            String atHash = fingerprint(request.skuId(), request.quantity(), "at");
+            Long replayed = findIdempotentOrder(userId, idempotencyKey, atHash);
+            if (replayed != null) {
+                return replayed;
+            }
+            long atOrderId = atOrderPlacer.placeAt(userId, request);
+            rememberIdempotent(userId, idempotencyKey, atOrderId, atHash);
+            return atOrderId;
         }
         ProductSnapshot product = productGuard.load(request.skuId());
         BigDecimal baseAmount = product.price().multiply(BigDecimal.valueOf(request.quantity()));
@@ -131,6 +149,13 @@ public class OrderService {
         BigDecimal total = couponHook == null
                 ? baseAmount
                 : baseAmount.subtract(couponHook.discountFor(baseAmount));
+        String requestHash = fingerprint(request.skuId(), request.quantity(),
+                total.stripTrailingZeros().toPlainString() + (couponHook == null ? "|plain" : "|coupon"));
+
+        Long replayed = findIdempotentOrder(userId, idempotencyKey, requestHash);
+        if (replayed != null) {
+            return replayed;
+        }
 
         // 先生成 orderId：预扣按订单幂等，超时/重试/重放都不会重复扣减
         long orderId = idGenerator.nextId();
@@ -161,9 +186,29 @@ public class OrderService {
                 message.setPayload(stockReservedPayload(orderId, request));
                 message.setStatus(TxMessage.STATUS_PENDING);
                 txMessageMapper.insert(message);
+
+                OrderIdempotency mapping = new OrderIdempotency();
+                mapping.setUserId(userId);
+                mapping.setIdemKey(idempotencyKey);
+                mapping.setOrderId(orderId);
+                mapping.setRequestHash(requestHash);
+                try {
+                    idempotencyMapper.insert(mapping);
+                } catch (DuplicateKeyException e) {
+                    // 并发同键：本事务回滚（订单、券、tx_message），由外层取回先赢的订单
+                    throw new ConcurrentIdempotentRequest(e);
+                }
             });
+        } catch (ConcurrentIdempotentRequest e) {
+            rollbackStockQuietly(orderId, request.skuId(), request.quantity(),
+                    "concurrent idempotent request for " + idempotencyKey);
+            Long winner = findIdempotentOrder(userId, idempotencyKey, requestHash);
+            if (winner != null) {
+                return winner;
+            }
+            throw new BusinessException(ErrorCode.DUPLICATE_REQUEST);
         } catch (RuntimeException e) {
-            // 本地事务没成：预扣必须还给用户，否则库存凭空少
+            // 本地事务没成：预扣必须还给用户，否则库存会少一份
             rollbackStockQuietly(orderId, request.skuId(), request.quantity(),
                     "local tx failed for order " + orderId);
             throw e;
@@ -297,7 +342,7 @@ public class OrderService {
                     () -> inventoryClient.reserve(skuId, new InventoryClient.ReserveRequest(orderId, quantity)));
         } catch (BusinessException e) {
             // 传输失败/空响应 = 结果未知，预扣可能已经扣减。补偿按订单幂等，且库存侧只在
-            // 「确实预扣过」时才回补，因此对从未落地的预扣也不会凭空加库存。
+            // 「确实预扣过」时才回补，因此对从未落地的预扣也不会增加库存。
             if (e.getErrorCode() == ErrorCode.SYSTEM_ERROR) {
                 compensateReserveQuietly(orderId, skuId, quantity);
             }
@@ -325,6 +370,52 @@ public class OrderService {
         } catch (RuntimeException e) {
             log.error("reserve compensation failed for order {} (sku {} x{})",
                     orderId, skuId, quantity, e);
+        }
+    }
+
+    /** 并发同键后到一方的内部控制流；不对外暴露。 */
+    private static final class ConcurrentIdempotentRequest extends RuntimeException {
+        ConcurrentIdempotentRequest(Throwable cause) {
+            super(cause);
+        }
+    }
+
+    private Long findIdempotentOrder(long userId, String idempotencyKey, String requestHash) {
+        OrderIdempotency row = idempotencyMapper.selectOne(
+                com.baomidou.mybatisplus.core.toolkit.Wrappers.<OrderIdempotency>lambdaQuery()
+                        .eq(OrderIdempotency::getUserId, userId)
+                        .eq(OrderIdempotency::getIdemKey, idempotencyKey));
+        if (row == null) {
+            return null;
+        }
+        if (!requestHash.equals(row.getRequestHash())) {
+            // 同一个键配不同业务参数：不能回放旧订单，也不该创建新订单
+            throw new BusinessException(ErrorCode.DUPLICATE_REQUEST, "该幂等键已用于另一笔下单");
+        }
+        return row.getOrderId();
+    }
+
+    private void rememberIdempotent(long userId, String idempotencyKey, long orderId, String requestHash) {
+        OrderIdempotency mapping = new OrderIdempotency();
+        mapping.setUserId(userId);
+        mapping.setIdemKey(idempotencyKey);
+        mapping.setOrderId(orderId);
+        mapping.setRequestHash(requestHash);
+        try {
+            idempotencyMapper.insert(mapping);
+        } catch (DuplicateKeyException e) {
+            // AT 对照路径没有把映射放进全局事务；重复只可能来自重放，保留先写入的行
+            log.warn("idempotency mapping already exists (user={}, key={})", userId, idempotencyKey);
+        }
+    }
+
+    private static String fingerprint(long skuId, int quantity, String amount) {
+        String raw = skuId + "|" + quantity + "|" + amount;
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(digest.digest(raw.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
         }
     }
 

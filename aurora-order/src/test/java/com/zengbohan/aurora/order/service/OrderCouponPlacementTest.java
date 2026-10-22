@@ -9,6 +9,7 @@ import com.zengbohan.aurora.id.SegmentIdGenerator;
 import com.zengbohan.aurora.order.client.InventoryClient;
 import com.zengbohan.aurora.order.dto.PlaceOrderRequest;
 import com.zengbohan.aurora.order.entity.Order;
+import com.zengbohan.aurora.order.mapper.OrderIdempotencyMapper;
 import com.zengbohan.aurora.order.mapper.OrderMapper;
 import com.zengbohan.aurora.order.mapper.TxMessageMapper;
 import com.zengbohan.aurora.order.mq.OrderEventPublisher;
@@ -68,7 +69,7 @@ class OrderCouponPlacementTest {
         }).when(transactionTemplate).executeWithoutResult(any());
 
         orderService = new OrderService(new ObjectMapper(), idGenerator, productGuard, inventoryClient,
-                orderMapper, mock(TxMessageMapper.class), transactionTemplate,
+                orderMapper, mock(OrderIdempotencyMapper.class), mock(TxMessageMapper.class), transactionTemplate,
                 mock(OrderEventPublisher.class), mock(AtOrderPlacer.class), 16, 1800L, "mq", false);
     }
 

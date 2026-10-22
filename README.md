@@ -9,15 +9,21 @@
 
 支付使用模拟回调链路，不连接真实支付渠道。所有压测与对照数据都来自本机环境，具体口径见对应报告。
 
+## 核心亮点
+
+- **交易一致性**：订单与本地消息表同事务提交，RocketMQ 事务消息以该消息行为提交依据；库存预扣、支付回调和关单都有可收敛的补偿路径。下单幂等键持久化到数据库，超时重试会拿回同一张订单。
+- **高并发秒杀**：Redis Lua 原子预扣，消息异步落单；落单结果有 `PENDING → PROCESSING → ORDER/FAIL` 状态机，发送结果未知时由对账任务确认或归还名额。压测 20 万级尝试、限量 3000，成交数与库存同时收敛。
+- **自研组件与对照实验**：Netty RPC、分布式 ID、限流与熔断都是独立模块；购物车到商品服务可以在 OpenFeign 与自研 RPC 之间切换，业务代码不变。对照实验保留连接模型、吞吐和错误的原始数据。
+
 ## 界面
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/screenshots/user-products.png" alt="商品列表" /></td>
+    <td width="50%"><img src="docs/screenshots/user-products.png" alt="商品目录" /></td>
     <td width="50%"><img src="docs/screenshots/user-seckill.png" alt="秒杀活动" /></td>
   </tr>
   <tr>
-    <td align="center">用户端：商品列表与搜索</td>
+    <td align="center">用户端：商品目录与价格带</td>
     <td align="center">用户端：秒杀活动</td>
   </tr>
   <tr>
@@ -25,23 +31,23 @@
     <td width="50%"><img src="docs/screenshots/obs-grafana-overview.jpg" alt="Grafana 全链路总览" /></td>
   </tr>
   <tr>
-    <td align="center">管理台：商品管理</td>
+    <td align="center">运营台：商品管理（独立后台布局）</td>
     <td align="center">可观测性：Grafana 全链路总览</td>
   </tr>
 </table>
 
-更多截图在 [docs/screenshots](docs/screenshots)。
+更多截图在 [docs/screenshots](docs/screenshots)，包含移动端与结算、订单、秒杀页面。
 
 ## 功能
 
 - 用户注册、登录、令牌刷新与登出。网关校验 JWT，登出会撤销令牌。
-- 商品浏览与管理、购物车、单商品订单、优惠券领取与下单抵扣、模拟支付回调。
+- 商品浏览（目录 / 网格两种视图）与管理、购物车、单商品订单、优惠券领取与下单抵扣、模拟支付回调。下单幂等键持久化，同键同请求返回原订单。
 - 订单库存预留、RocketMQ 事务消息与延迟关单。订单事务可切换为 Seata AT 对照模式。
-- 秒杀活动和异步下单。预扣由 Redis Lua 原子完成，落单交给 MQ 消费者。
-- 缓存穿透保护：空值缓存、布隆过滤器、逻辑过期。
+- 秒杀活动和异步下单。预扣由 Redis Lua 原子完成，落单交给 MQ 消费者；受理结果有对账任务兜底。
+- 缓存穿透保护：空值缓存、布隆过滤器、逻辑过期；Redis 不可用时商品详情回源数据库。
 - 网关限流与熔断、请求幂等、业务补偿任务。
 - 独立实现分布式 ID 生成器、限流/熔断组件和基于 Netty 的 RPC 组件。购物车到商品服务的调用可在 OpenFeign 与自研 RPC 之间切换，业务代码不变。
-- Vue 3 用户端与管理台，Prometheus、Grafana、Loki、SkyWalking 可观测性配置。
+- Vue 3 用户端与独立运营台（侧边导航 + 顶部工具栏），Prometheus、Grafana、Loki、SkyWalking 可观测性配置。
 
 ## 架构
 
@@ -62,7 +68,31 @@ flowchart LR
     O --> OBS
 ~~~
 
-订单链路用 RocketMQ 事务消息和延迟消息实现最终一致：本地事务里写订单与 `tx_message`，事务消息确认以该行为锚；库存预扣走 Redis Lua，DB 扣减由消费者完成；超时关单由延迟消息触发，扫描任务兜底。
+订单链路用 RocketMQ 事务消息和延迟消息实现最终一致：本地事务里写订单与 `tx_message`，事务消息以该消息行为提交依据；库存预扣走 Redis Lua，DB 扣减由消费者完成；超时关单由延迟消息触发，扫描任务兜底。
+
+核心交易链路：
+
+~~~mermaid
+flowchart TD
+    U[用户 / 运营台] --> GW[Gateway]
+    GW --> O[order]
+    O -->|Feign 预扣| INV[inventory]
+    O -->|本地事务 orders + tx_message| DB[(MySQL)]
+    O -->|事务消息 stock-reserved| MQ[RocketMQ]
+    MQ --> INV
+    INV -->|DB 预占 / 扣减| DB
+    INV -->|Redis Lua 可售库存| R[(Redis)]
+    O -->|延迟消息 close| MQ
+    P[payment] -->|查单| O
+    P -->|order-paid| MQ
+    MQ --> O
+    MQ --> INV
+    S[seckill] -->|Lua 预扣| R
+    S -->|秒杀落单消息| MQ
+    MQ --> S
+    S -->|seckill_order| DB
+~~~
+
 
 ## 模块
 
@@ -165,7 +195,7 @@ mvn -B clean verify      # 后端全模块构建与测试
 cd aurora-web && npm run typecheck && npm run build
 ```
 
-后端当前结果：395 个用例，0 失败，38 个跳过。跳过的用例需要真实 MySQL、Redis 或 Nacos，本机没起中间件时会自动跳过；这类用例包括 Redis Lua 库存脚本、券领取并发、秒杀 Lua、分库试点和 Nacos 注册。
+本机中间件全部启动时，当前结果：422 个用例，0 失败，0 跳过。`SeckillLuaIntegrationTest`、`StockLuaIntegrationTest`、`SeckillOrderTransactionIntegrationTest`、`CouponClaimConcurrencyRealMysqlTest` 都对着真实 Redis/MySQL 执行；如果中间件不可达，这些用例会显式跳过，surefire 报告里能看到。
 
 测试分三类：
 
@@ -173,7 +203,7 @@ cd aurora-web && npm run typecheck && npm run build
 - Spring 上下文与 Web 层测试：网关过滤器、守卫过滤器、控制器参数校验。
 - 真实中间件集成测试：用 Docker 起的 MySQL/Redis 验证 Lua 脚本与并发语义，缺环境时跳过。
 
-CI 在 `ubuntu-24.04` 上跑 `mvn -B clean verify`，并单独构建前端、构建全部服务镜像。工作流不推送镜像。
+CI 在 `ubuntu-24.04` 上启动 MySQL 8.4 和 Redis 7，导入与本地相同的建表 SQL，再跑 `mvn -B clean verify`；seckill / inventory 出现 skipped 会让构建失败。前端与全部服务镜像单独构建，工作流不推送镜像。首次推送后的真实 CI 结果还需再核对一次。
 
 ## 工程证据
 
@@ -187,11 +217,13 @@ CI 在 `ubuntu-24.04` 上跑 `mvn -B clean verify`，并单独构建前端、构
 | [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md) | 秒杀在限流开/关两轮下的吞吐、一致性与限流证据 |
 | [docs/m5-sharding-pilot.md](docs/m5-sharding-pilot.md) | ShardingSphere 分库试点：路由、分页、事务、唯一键 |
 | [docs/TECHNICAL_HIGHLIGHTS.md](docs/TECHNICAL_HIGHLIGHTS.md) | 核心设计对应的代码位置、验证方式与已知限制 |
+| [docs/reliability-fixes.md](docs/reliability-fixes.md) | 本次修复的失败场景、事务边界、状态机、测试证据与剩余风险 |
+| [docs/interview-guide.md](docs/interview-guide.md) | 面试导览：三个技术点的业务问题、代码位置、证据和边界 |
 
 几个可以直接核对的结论：
 
 - 秒杀压测两轮各 20 万级尝试，限量 3000 恰好成交 3000，DB 与 Redis 余量同时归零，没有残留 PENDING。
-- 同一购物车链路，Feign 轮在 50 线程出现连接耗尽错误，100 线程吞吐回落；RPC 轮在 100 线程仍为零错误。报告里明确写了这条差异主要来自连接生命周期，不是序列化格式。
+- 同一购物车链路，默认 Feign 在 160 线程并发下 50 线程档就出现连接耗尽错误，RPC 在 100 线程仍为零错误。补测连接池 Feign（HC5）后，50 线程单组下 RPC 的吞吐优势收窄到约 4.6%、p99 只差约 1 ms；报告把这组数据也写进去了，没有把连接复用的收益算成协议优势。
 - Seata AT 回滚注入后，已提交的订单行被 undo_log 撤销，库存预占保持不变。
 
 ## 目录结构
@@ -242,6 +274,11 @@ docs/                    报告与截图
 - Seata AT 只覆盖订单与库存两个分支，用于对照实验，不与 MQ 模式混跑同一 SKU。
 - 自研 RPC 是单连接多路复用，大响应会阻塞小响应；没有实现 XID 透传，所以 AT 链路仍走 Feign。连接池化留待后续。
 - 秒杀限流的 300 配额证据来自 Redis 窗口采样，入口被拒比例是按采样推导的，不是直接计数器。
+- 管理员设置可售库存时，如果存在未落账的在途预扣/释放，接口会拒绝并要求重试；没有提供强制覆盖入口。
+- 支付事件补发会一直重试到成功；`publish_attempts` 只用于观测，没有接 dead-letter 或人工处理队列。
+- 商品布隆过滤器是进程内实现，多实例各自一份；重建与新建商品写入的竞态尚未消除。
+- 库存对账会重建缺失的 Redis key，并对已存在 key 的差值告警；持续偏差不会自动覆盖，需要人工确认。
+- 下单幂等映射表长期保留，没有清理任务；每张订单一行，当前规模可以接受。
 - 压测数字来自单机环境（服务、中间件、压测器同机，每服务 256MB 堆），不代表生产容量，只适合同环境对照。
 - 本地开发凭证和关闭认证的 Nacos 配置只用于开发，不能直接用于公网部署。
 

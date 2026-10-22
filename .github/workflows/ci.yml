@@ -21,6 +21,30 @@ jobs:
     # 钉具体版本而非 ubuntu-latest：2026-10-19 起 latest 会迁到 Ubuntu 26，
     # 那次基础镜像跳变不该顺带改变验收结果（要迁移时单独一次提交改这两处）
     runs-on: ubuntu-24.04
+    services:
+      # 真实中间件进必过项：Lua 库存/秒杀脚本、MySQL 事务与并发用例不再因缺环境跳过。
+      # 端口与本地开发一致（13306/16379），测试代码里的默认值不用改。
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: aurora123
+          MYSQL_ROOT_HOST: '%'
+        ports:
+          - 13306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -paurora123"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
     steps:
       # action 按 commit SHA 钉死（供应链加固）：注释保留对应版本号，升级时两处一起改
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -31,8 +55,29 @@ jobs:
           java-version: 21
           cache: maven
 
+      # 建库建表与本地 docker compose 使用同一组 SQL，避免 CI 与本地口径分叉
+      - name: Load test schemas
+        run: |
+          for f in docker/mysql/init/*.sql; do
+            echo "loading $f"
+            docker exec -i "${{ job.services.mysql.id }}" mysql -uroot -paurora123 < "$f"
+          done
+
       - name: Build and test
+        env:
+          MYSQL_ADDR: localhost:13306
+          MYSQL_PASSWORD: aurora123
+          REDIS_HOST: localhost
+          REDIS_PORT: "16379"
         run: mvn -B clean verify
+
+      # 真实中间件用例一旦被意外跳过，构建也要失败：防止 CI 变绿但核心证据没跑
+      - name: Assert middleware tests ran
+        run: |
+          grep -R "Tests run:" aurora-seckill/target/surefire-reports/*.txt
+          grep -R "Tests run:" aurora-inventory/target/surefire-reports/*.txt
+          ! grep -R "Skipped: [1-9]" aurora-seckill/target/surefire-reports/*.txt
+          ! grep -R "Skipped: [1-9]" aurora-inventory/target/surefire-reports/*.txt
 
       # 复用测试 job 的构建产物：docker-build 不再重复一次全量 package
       - name: Upload service jars

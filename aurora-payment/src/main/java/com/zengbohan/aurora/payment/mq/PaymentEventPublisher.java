@@ -30,13 +30,18 @@ public class PaymentEventPublisher {
     public void sendOrderPaid(String messageId, String payload) {
         RocketMQTemplate template = templateProvider.getIfAvailable();
         if (template == null) {
-            log.warn("rocketmq not configured; skipping paid event {}", messageId);
-            return;
+            // 不能静默返回：调用方会误以为已发送并打上 event_published，支付成功事件就永久丢了。
+            // 抛出让补发 job 看到失败，继续重试。
+            throw new IllegalStateException("rocketmq not configured; paid event " + messageId + " was not sent");
         }
         Message<String> message = MessageBuilder.withPayload(payload)
                 .setHeader(RocketMQHeaders.KEYS, messageId)
                 .build();
         SendResult result = template.syncSend(TOPIC_TRADE + ":" + TAG_ORDER_PAID, message);
-        log.info("order-paid event sent (msgId={}, key={})", result.getMsgId(), messageId);
+        if (result == null || result.getSendStatus() == null) {
+            throw new IllegalStateException("paid event " + messageId + " returned no send status");
+        }
+        log.info("order-paid event sent (msgId={}, key={}, status={})",
+                result.getMsgId(), messageId, result.getSendStatus());
     }
 }

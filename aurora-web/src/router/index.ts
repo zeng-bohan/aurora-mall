@@ -90,22 +90,30 @@ const routes: RouteRecordRaw[] = [
   },
 
   {
-    path: '/admin/products',
-    name: 'admin-products',
-    component: () => import('@/views/admin/AdminProductsView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: '商品管理' }
-  },
-  {
-    path: '/admin/coupons',
-    name: 'admin-coupons',
-    component: () => import('@/views/admin/AdminCouponsView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: '券模板管理' }
-  },
-  {
-    path: '/admin/seckill',
-    name: 'admin-seckill',
-    component: () => import('@/views/admin/AdminSeckillView.vue'),
-    meta: { requiresAuth: true, requiresAdmin: true, title: '秒杀活动管理' }
+    path: '/admin',
+    component: () => import('@/components/AdminLayout.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+    children: [
+      { path: '', redirect: { name: 'admin-products' } },
+      {
+        path: 'products',
+        name: 'admin-products',
+        component: () => import('@/views/admin/AdminProductsView.vue'),
+        meta: { title: '商品管理' }
+      },
+      {
+        path: 'coupons',
+        name: 'admin-coupons',
+        component: () => import('@/views/admin/AdminCouponsView.vue'),
+        meta: { title: '券模板' }
+      },
+      {
+        path: 'seckill',
+        name: 'admin-seckill',
+        component: () => import('@/views/admin/AdminSeckillView.vue'),
+        meta: { title: '秒杀活动' }
+      }
+    ]
   },
 
   {

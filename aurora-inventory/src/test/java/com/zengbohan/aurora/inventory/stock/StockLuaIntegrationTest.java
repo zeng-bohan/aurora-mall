@@ -124,7 +124,7 @@ class StockLuaIntegrationTest {
         guards.add(guard);
         String marker = key + ":released:never";
 
-        // 该订单从未预扣过（守卫不存在）：补偿必须什么都不做——凭空加库存正是超卖的源头
+        // 该订单从未预扣过（守卫不存在）：补偿必须什么都不做——增加库存正是超卖的源头
         assertThat(redis.execute(scripts.compensateReserve, List.of(guard, key, marker), "3",
                 StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(0L);
         assertThat(redis.opsForValue().get(key)).isEqualTo("10");
@@ -165,6 +165,42 @@ class StockLuaIntegrationTest {
         assertThat(redis.execute(scripts.rollback, List.of(marker, key), "4",
                 StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(0L);
         assertThat(redis.opsForValue().get(key)).isEqualTo("10");
+        redis.delete(marker);
+    }
+
+    @Test
+    void setIfUnchangedOnlyOverwritesTheExpectedValue() {
+        redis.opsForValue().set(key, "80");
+
+        assertThat(redis.execute(scripts.setIfUnchanged, List.of(key), "80", "50")).isEqualTo(1L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("50");
+
+        // 在途预扣把值从 50 改成 49：此时旧期望值 80 已不匹配，覆盖必须被拒绝
+        redis.opsForValue().set(key, "49");
+        assertThat(redis.execute(scripts.setIfUnchanged, List.of(key), "50", "70")).isEqualTo(0L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("49");
+    }
+
+    @Test
+    void setIfUnchangedCanCreateAMissingKeyOnlyWhenExpectedMissing() {
+        redis.delete(key);
+        assertThat(redis.execute(scripts.setIfUnchanged, List.of(key), "", "30")).isEqualTo(1L);
+        assertThat(redis.opsForValue().get(key)).isEqualTo("30");
+
+        redis.delete(key);
+        assertThat(redis.execute(scripts.setIfUnchanged, List.of(key), "10", "20")).isEqualTo(0L);
+    }
+
+    @Test
+    void rollbackDoesNotCreateAMissingStockKey() {
+        // Redis 重启/淘汰后 key 缺失：回滚不能把订单数量写成整个可售库存，
+        // 应留给对账任务按 DB 的 available - reserved 重建
+        redis.delete(key);
+        String marker = "aurora:test:released:" + System.nanoTime();
+
+        assertThat(redis.execute(scripts.rollback, List.of(marker, key), "4",
+                StockLuaScripts.RELEASE_MARKER_TTL_SECONDS)).isEqualTo(1L);
+        assertThat(redis.hasKey(key)).as("缺失的 key 不能被回滚创建").isFalse();
         redis.delete(marker);
     }
 

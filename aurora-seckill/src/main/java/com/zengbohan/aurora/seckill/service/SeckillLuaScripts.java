@@ -12,8 +12,10 @@ public class SeckillLuaScripts {
 
     // 结果 hash 的值词汇表。字面量同时出现在 lua 里（脚本内无法引用 Java 常量），
     // 改动必须两边一起改——这里集中定义是为了让 Java 侧只有一个事实源。
-    /** 已受理、等待落单。 */
-    public static final String RESULT_PENDING = "PENDING";
+    /** 已受理、等待落单：PENDING:{受理毫秒时间戳}。 */
+    public static final String RESULT_PENDING_PREFIX = "PENDING:";
+    /** 消费者已认领：PROCESSING:{认领毫秒时间戳}。 */
+    public static final String RESULT_PROCESSING_PREFIX = "PROCESSING:";
     /** 已落单：ORDER:{orderId}。 */
     public static final String RESULT_ORDER_PREFIX = "ORDER:";
     /** 永久失败（名额已归还）：FAIL:{ErrorCode 名}。 */
@@ -21,12 +23,42 @@ public class SeckillLuaScripts {
 
     /** 预扣：窗口判定 + 一人一单 + 库存扣减 + 受理标记。 */
     public final DefaultRedisScript<Long> reserve;
+    /** 消费者认领：PENDING/PROCESSING -> PROCESSING，ORDER/FAIL 拒绝处理。 */
+    public final DefaultRedisScript<Long> claim;
+    /** 瞬时失败后交还处理权：PROCESSING -> PENDING。 */
+    public final DefaultRedisScript<Long> resetPending;
     /** 预扣补偿：归还名额并把结果改成失败原因，靠已购标记保证恰好一次。 */
     public final DefaultRedisScript<Long> compensate;
 
     public SeckillLuaScripts() {
         reserve = scriptAt("lua/seckill_reserve.lua");
+        claim = scriptAt("lua/seckill_claim.lua");
+        resetPending = scriptAt("lua/seckill_reset_pending.lua");
         compensate = scriptAt("lua/seckill_compensate.lua");
+    }
+
+    public static String pending(long nowMillis) {
+        return RESULT_PENDING_PREFIX + nowMillis;
+    }
+
+    public static boolean isPending(String state) {
+        return state != null && state.startsWith(RESULT_PENDING_PREFIX);
+    }
+
+    public static boolean isProcessing(String state) {
+        return state != null && state.startsWith(RESULT_PROCESSING_PREFIX);
+    }
+
+    public static long millisOf(String state) {
+        if (!isPending(state) && !isProcessing(state)) {
+            return 0L;
+        }
+        int colon = state.indexOf(':');
+        try {
+            return Long.parseLong(state.substring(colon + 1));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
     }
 
     public static String activityKey(long activityId) {

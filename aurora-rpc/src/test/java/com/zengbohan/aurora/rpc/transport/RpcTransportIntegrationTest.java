@@ -339,6 +339,26 @@ class RpcTransportIntegrationTest {
     }
 
     @Test
+    void badHandshakeGetsAControlUnauthorizedFrame() throws Exception {
+        // 协议级：密钥错误不是静默断连，客户端能拿到可归类的 UNAUTHORIZED
+        try (java.net.Socket raw = new java.net.Socket("127.0.0.1", server.port())) {
+            raw.setSoTimeout(2000);
+            RpcFrame handshake = RpcFrame.request(0L, MessageType.CONTROL, (byte) 1,
+                    "H:wrong-secret".getBytes(StandardCharsets.UTF_8));
+            raw.getOutputStream().write(ProtocolCodec.encode(handshake));
+            raw.getOutputStream().flush();
+
+            byte[] resp = new byte[128];
+            int read = raw.getInputStream().read(resp);
+            assertThat(read).isGreaterThanOrEqualTo(ProtocolCodec.HEADER_LENGTH);
+            RpcFrame response = ProtocolCodec.decode(java.util.Arrays.copyOf(resp, read));
+            assertThat(response).isNotNull();
+            assertThat(response.type()).isEqualTo(MessageType.CONTROL);
+            assertThat(response.status()).isEqualTo(StatusCodes.UNAUTHORIZED);
+        }
+    }
+
+    @Test
     void concurrentCallsPairResponsesByRequestId() throws Exception {
         RpcServer echoing = new RpcServer(SECRET, body -> {
             // 加一点抖动，制造乱序返回

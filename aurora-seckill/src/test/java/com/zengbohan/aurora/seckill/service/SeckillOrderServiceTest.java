@@ -2,8 +2,6 @@ package com.zengbohan.aurora.seckill.service;
 
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.common.idempotent.Idempotent;
-import com.zengbohan.aurora.common.idempotent.Strategy;
 import com.zengbohan.aurora.seckill.dto.SeckillBuyView;
 import com.zengbohan.aurora.seckill.entity.SeckillActivity;
 import com.zengbohan.aurora.seckill.entity.SeckillOrder;
@@ -23,6 +21,7 @@ import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -153,7 +152,8 @@ class SeckillOrderServiceTest {
     void mqModePublishesAndReturnsQueuedWithoutTouchingDb() {
         // 削峰的要点：请求路径只碰 Redis，DB 读写在消费者侧按吞吐发生
         stubReserve(SeckillOrderService.RESERVE_OK);
-        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(true);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID)))
+                .thenReturn(SeckillEventPublisher.DispatchResult.ACCEPTED);
 
         assertThat(service("mq").buy(ACTIVITY_ID, USER_ID))
                 .isEqualTo(new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null));
@@ -162,10 +162,11 @@ class SeckillOrderServiceTest {
     }
 
     @Test
-    void mqModePublishFailureCompensatesAndFails() {
-        // 投递不出去就不能把名额留着：否则名额被吃掉、订单又永远不会生成
+    void mqModeNotConfiguredCompensatesAndFails() {
+        // 没有 MQ 模板是确定失败：一个字节也没发出去，立即归还名额
         stubReserve(SeckillOrderService.RESERVE_OK);
-        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(false);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID)))
+                .thenReturn(SeckillEventPublisher.DispatchResult.NOT_CONFIGURED);
 
         assertThatThrownBy(() -> service("mq").buy(ACTIVITY_ID, USER_ID))
                 .isInstanceOf(BusinessException.class)
@@ -174,13 +175,27 @@ class SeckillOrderServiceTest {
         verifyCompensated(ErrorCode.SYSTEM_ERROR);
     }
 
+    @Test
+    void mqModeUnknownSendLeavesPendingForReconcile() {
+        // 超时不等于没发出去：不能补偿，结果保持 PENDING，由对账任务确认
+        stubReserve(SeckillOrderService.RESERVE_OK);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID)))
+                .thenReturn(SeckillEventPublisher.DispatchResult.UNKNOWN);
+
+        assertThat(service("mq").buy(ACTIVITY_ID, USER_ID))
+                .isEqualTo(new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null));
+        verify(redis, never()).execute(eq(scripts.compensate), anyList(), any(), any());
+    }
+
     // ---------- 异步落单（消费者） ----------
 
     @Test
     void materializePlacesOrderAndRecordsResult() {
+        stubClaim(1L);
         SeckillActivity activity = activity();
         when(activityService.require(ACTIVITY_ID)).thenReturn(activity);
-        when(orderWriter.place(activity, USER_ID)).thenReturn(99L);
+        when(orderWriter.placeOnce(MESSAGE_ID, activity, USER_ID))
+                .thenReturn(new SeckillOrderWriter.PlaceOutcome(false, 99L));
 
         service("mq").materialize(MESSAGE_ID, ACTIVITY_ID, USER_ID);
 
@@ -192,8 +207,9 @@ class SeckillOrderServiceTest {
     @Test
     void materializePermanentRejectionCompensatesAndDoesNotRethrow() {
         // DB 库存已尽属永久失败：补偿后正常返回，不触发重投递
+        stubClaim(1L);
         when(activityService.require(ACTIVITY_ID)).thenReturn(activity());
-        when(orderWriter.place(any(SeckillActivity.class), eq(USER_ID)))
+        when(orderWriter.placeOnce(any(), any(SeckillActivity.class), eq(USER_ID)))
                 .thenThrow(new BusinessException(ErrorCode.SECKILL_SOLD_OUT, "DB 库存已尽"));
 
         service("mq").materialize(MESSAGE_ID, ACTIVITY_ID, USER_ID);
@@ -204,12 +220,13 @@ class SeckillOrderServiceTest {
     @Test
     void materializeDuplicateOrderRecordsExistingOrderAndNeverCompensates() {
         // 唯一键冲突说明该用户已有订单：名额正被那张订单占用，归还就等于同一份库存卖两次
+        stubClaim(1L);
         SeckillOrder existing = new SeckillOrder();
         existing.setId(55L);
         existing.setActivityId(ACTIVITY_ID);
         when(activityService.require(ACTIVITY_ID)).thenReturn(activity());
-        when(orderWriter.place(any(SeckillActivity.class), eq(USER_ID)))
-                .thenThrow(new DuplicateKeyException("uk_seckill_order_user"));
+        when(orderWriter.placeOnce(any(), any(SeckillActivity.class), eq(USER_ID)))
+                .thenReturn(new SeckillOrderWriter.PlaceOutcome(true, 0L));
         when(orderMapper.selectOne(any())).thenReturn(existing);
 
         service("mq").materialize(MESSAGE_ID, ACTIVITY_ID, USER_ID);
@@ -221,37 +238,71 @@ class SeckillOrderServiceTest {
 
     @Test
     void materializeTransientFailurePropagatesWithoutCompensation() {
-        // 瞬时失败（DB 不可用）必须抛出：切面据此清掉去重守卫，重投递才能重新处理
+        // 瞬时失败（DB 不可用）必须抛出：结果退回 PENDING，重投递才能重新处理
+        stubClaim(1L);
         when(activityService.require(ACTIVITY_ID)).thenReturn(activity());
-        when(orderWriter.place(any(SeckillActivity.class), eq(USER_ID)))
+        when(orderWriter.placeOnce(any(), any(SeckillActivity.class), eq(USER_ID)))
                 .thenThrow(new DataAccessResourceFailureException("db down"));
 
         assertThatThrownBy(() -> service("mq").materialize(MESSAGE_ID, ACTIVITY_ID, USER_ID))
                 .isInstanceOf(DataAccessResourceFailureException.class);
         verify(redis, never()).execute(eq(scripts.compensate), anyList(), any(), any());
+        verify(redis).execute(eq(scripts.resetPending), anyList(), eq(USER_FIELD), any());
     }
 
     @Test
-    void materializeDeclaresDbDedupKeyedByMessageId() throws Exception {
-        // 去重守卫是"看不见的"：注解被改掉不会编译失败，只会静默失去幂等。把声明钉住
-        // （SpEL 求值本身由 aurora-common 的 IdempotentAspectTest 覆盖）
-        Method method = SeckillOrderService.class.getMethod(
-                "materialize", String.class, long.class, long.class);
-        Idempotent idempotent = method.getAnnotation(Idempotent.class);
+    void materializeSkipsWhenClaimIsDenied() {
+        // 结果已是 ORDER/FAIL，或根本没有预扣记录：不能再写订单
+        stubClaim(0L);
 
-        assertThat(idempotent).isNotNull();
-        assertThat(idempotent.strategy()).isEqualTo(Strategy.DB_DEDUP);
-        assertThat(idempotent.bizType()).isEqualTo(SeckillOrderService.BIZ_TYPE);
-        assertThat(idempotent.key())
-                .as("去重键必须跟着单次发送的 messageId，否则用户失败后重抢会被挡掉")
-                .isEqualTo("#messageId");
+        service("mq").materialize(MESSAGE_ID, ACTIVITY_ID, USER_ID);
+
+        verifyNoInteractions(activityService, orderWriter, orderMapper);
+    }
+
+    // ---------- 对账 ----------
+
+    @Test
+    void reconcileCompensatesStalePendingWithoutOrder() {
+        long old = System.currentTimeMillis() - 10 * 60_000;
+        when(hash.entries(SeckillLuaScripts.resultKey(ACTIVITY_ID)))
+                .thenReturn(Map.of(USER_FIELD, SeckillLuaScripts.pending(old)));
+        when(orderMapper.selectOne(any())).thenReturn(null);
+        doReturn(1L).when(redis).execute(eq(scripts.compensate), anyList(), eq(USER_FIELD), any());
+
+        assertThat(service("mq").reconcile(activity(), 120_000L, 300_000L)).isEqualTo(1);
+        verifyCompensated(ErrorCode.SYSTEM_ERROR);
+    }
+
+    @Test
+    void reconcileRecordsOrderWhenMessageActuallyLanded() {
+        long old = System.currentTimeMillis() - 10 * 60_000;
+        when(hash.entries(SeckillLuaScripts.resultKey(ACTIVITY_ID)))
+                .thenReturn(Map.of(USER_FIELD, SeckillLuaScripts.pending(old)));
+        SeckillOrder order = new SeckillOrder();
+        order.setId(88L);
+        when(orderMapper.selectOne(any())).thenReturn(order);
+
+        assertThat(service("mq").reconcile(activity(), 120_000L, 300_000L)).isEqualTo(1);
+        verify(hash).put(SeckillLuaScripts.resultKey(ACTIVITY_ID), USER_FIELD,
+                SeckillLuaScripts.RESULT_ORDER_PREFIX + 88L);
+        verify(redis, never()).execute(eq(scripts.compensate), anyList(), any(), any());
+    }
+
+    @Test
+    void reconcileLeavesFreshPendingAlone() {
+        when(hash.entries(SeckillLuaScripts.resultKey(ACTIVITY_ID)))
+                .thenReturn(Map.of(USER_FIELD, SeckillLuaScripts.pending(System.currentTimeMillis())));
+
+        assertThat(service("mq").reconcile(activity(), 120_000L, 300_000L)).isZero();
+        verifyNoInteractions(orderMapper);
     }
 
     // ---------- 结果查询 ----------
 
     @Test
     void mineReturnsQueuedWhilePending() {
-        stubResultState(SeckillLuaScripts.RESULT_PENDING);
+        stubResultState(SeckillLuaScripts.pending(System.currentTimeMillis()));
 
         assertThat(service("mq").mine(ACTIVITY_ID, USER_ID))
                 .isEqualTo(new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null));
@@ -312,7 +363,8 @@ class SeckillOrderServiceTest {
     @Test
     void rateLimitIsKeyedPerActivityWithConfiguredQuota() {
         stubReserve(SeckillOrderService.RESERVE_OK);
-        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(true);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID)))
+                .thenReturn(SeckillEventPublisher.DispatchResult.ACCEPTED);
 
         service("mq").buy(ACTIVITY_ID, USER_ID);
 
@@ -325,7 +377,8 @@ class SeckillOrderServiceTest {
     void disabledRateLimitSkipsTheLimiter() {
         rateLimitProperties.setEnabled(false);
         stubReserve(SeckillOrderService.RESERVE_OK);
-        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(true);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID)))
+                .thenReturn(SeckillEventPublisher.DispatchResult.ACCEPTED);
 
         service("mq").buy(ACTIVITY_ID, USER_ID);
 
@@ -337,7 +390,8 @@ class SeckillOrderServiceTest {
         // 配额/窗口非正数属运维配置失误：放行并告警，不能变成业务的永久 429
         rateLimitProperties.setPerActivityLimit(0);
         stubReserve(SeckillOrderService.RESERVE_OK);
-        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID))).thenReturn(true);
+        when(publisher.sendOrderRequest(any(), eq(ACTIVITY_ID), eq(USER_ID)))
+                .thenReturn(SeckillEventPublisher.DispatchResult.ACCEPTED);
 
         assertThat(service("mq").buy(ACTIVITY_ID, USER_ID))
                 .isEqualTo(new SeckillBuyView(SeckillBuyView.STATUS_QUEUED, null));
@@ -366,6 +420,10 @@ class SeckillOrderServiceTest {
 
     private void stubResultState(String state) {
         when(hash.get(SeckillLuaScripts.resultKey(ACTIVITY_ID), USER_FIELD)).thenReturn(state);
+    }
+
+    private void stubClaim(Long result) {
+        doReturn(result).when(redis).execute(eq(scripts.claim), anyList(), eq(USER_FIELD), any());
     }
 
     private void verifyCompensated(ErrorCode reason) {

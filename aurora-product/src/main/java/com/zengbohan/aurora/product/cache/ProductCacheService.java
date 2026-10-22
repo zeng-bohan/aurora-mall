@@ -82,7 +82,7 @@ public class ProductCacheService {
     }
 
     private CacheWrapper<Sku> readWrapper(String key) {
-        String json = store.get(key);
+        String json = safeGet(key);
         if (json == null) {
             return null;
         }
@@ -96,13 +96,20 @@ public class ProductCacheService {
     }
 
     private Sku coldLoad(String key, long id, Function<Long, Sku> dbLoader) {
-        if (store.setIfAbsent(MUTEX_PREFIX + id, "1", Duration.ofSeconds(10))) {
+        Boolean leader = safeSetIfAbsent(MUTEX_PREFIX + id, "1", Duration.ofSeconds(10));
+        if (leader == null) {
+            // Redis 不可用：缓存降级为直读 DB，不能把整个商品详情打成 500
+            Sku sku = dbLoader.apply(id);
+            writeWrapper(key, sku);
+            return skuOrThrow(sku);
+        }
+        if (leader) {
             try {
                 Sku sku = dbLoader.apply(id);
                 writeWrapper(key, sku);
                 return skuOrThrow(sku);
             } finally {
-                store.delete(MUTEX_PREFIX + id);
+                safeDelete(MUTEX_PREFIX + id);
             }
         }
         // 没抢到互斥锁：先轮询胜出者的写入，再做判断
@@ -129,32 +136,45 @@ public class ProductCacheService {
     }
 
     private Sku refreshIfAllowed(String key, long id, CacheWrapper<Sku> wrapper, Function<Long, Sku> dbLoader) {
-        if (store.setIfAbsent(MUTEX_PREFIX + id, "1", Duration.ofSeconds(10))) {
-            rebuildExecutor.execute(() -> {
-                try {
-                    writeWrapper(key, dbLoader.apply(id));
-                } catch (Exception e) {
-                    log.error("async cache rebuild failed for {}", key, e);
-                } finally {
-                    store.delete(MUTEX_PREFIX + id);
-                }
-            });
+        Boolean leader = safeSetIfAbsent(MUTEX_PREFIX + id, "1", Duration.ofSeconds(10));
+        if (Boolean.TRUE.equals(leader)) {
+            try {
+                rebuildExecutor.execute(() -> {
+                    try {
+                        writeWrapper(key, dbLoader.apply(id));
+                    } catch (Exception e) {
+                        log.error("async cache rebuild failed for {}", key, e);
+                    } finally {
+                        safeDelete(MUTEX_PREFIX + id);
+                    }
+                });
+            } catch (RuntimeException e) {
+                // 线程池满/已关闭：释放互斥锁，下一次读取再试；本次继续返回旧值
+                log.warn("cache rebuild rejected for {}: {}", key, e.toString());
+                safeDelete(MUTEX_PREFIX + id);
+            }
         }
         // 逻辑过期契约：单个重建者刷新期间照常返回旧值
         return wrapper.getData();
     }
 
     private void writeWrapper(String key, Sku sku) {
-        if (sku == null) {
-            store.put(key, json(new CacheWrapper<>(null, clock.instant().plus(NULL_TTL))), NULL_TTL.plus(NULL_TTL));
-            return;
+        try {
+            if (sku == null) {
+                store.put(key, json(new CacheWrapper<>(null, clock.instant().plus(NULL_TTL))),
+                        NULL_TTL.plus(NULL_TTL));
+                return;
+            }
+            Duration logical = LOGICAL_TTL;
+            CacheWrapper<Sku> wrapper = new CacheWrapper<>(sku, clock.instant().plus(logical));
+            // 物理 TTL 长于逻辑过期加上抖动，让重建过程不出现空档
+            Duration physical = Duration.ofSeconds(physicalTtlSeconds)
+                    .plusSeconds(ThreadLocalRandom.current().nextLong(0, 3600));
+            store.put(key, json(wrapper), physical);
+        } catch (RuntimeException e) {
+            // 写缓存失败不影响本次读；下次读取继续走 DB
+            log.warn("cache write failed for {}: {}", key, e.toString());
         }
-        Duration logical = LOGICAL_TTL;
-        CacheWrapper<Sku> wrapper = new CacheWrapper<>(sku, clock.instant().plus(logical));
-        // 物理 TTL 长于逻辑过期加上抖动，让重建过程无缝衔接
-        Duration physical = Duration.ofSeconds(physicalTtlSeconds)
-                .plusSeconds(ThreadLocalRandom.current().nextLong(0, 3600));
-        store.put(key, json(wrapper), physical);
     }
 
     private Sku skuOrThrow(Sku sku) {
@@ -165,7 +185,7 @@ public class ProductCacheService {
     }
 
     public void evict(long id) {
-        store.delete(KEY_PREFIX + id);
+        safeDelete(KEY_PREFIX + id);
     }
 
     public void bloomPut(long id) {
@@ -182,6 +202,33 @@ public class ProductCacheService {
                 log.error("delayed double delete failed for {}", id, e);
             }
         }, DOUBLE_DELETE_DELAY.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    private String safeGet(String key) {
+        try {
+            return store.get(key);
+        } catch (RuntimeException e) {
+            log.warn("cache read failed for {}: {}", key, e.toString());
+            return null;
+        }
+    }
+
+    /** true=抢到锁，false=别人持有，null=缓存不可用（调用方应直接回源 DB）。 */
+    private Boolean safeSetIfAbsent(String key, String value, Duration ttl) {
+        try {
+            return store.setIfAbsent(key, value, ttl);
+        } catch (RuntimeException e) {
+            log.warn("cache mutex unavailable for {}: {}", key, e.toString());
+            return null;
+        }
+    }
+
+    private void safeDelete(String key) {
+        try {
+            store.delete(key);
+        } catch (RuntimeException e) {
+            log.warn("cache delete failed for {}: {}", key, e.toString());
+        }
     }
 
     private String json(Object value) {

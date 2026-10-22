@@ -100,7 +100,7 @@ class SeckillLuaIntegrationTest {
         preheat(now - 1_000, now + 60_000, 3);
 
         assertThat(reserve(1L)).isEqualTo(1L);
-        assertThat(result(1L)).as("受理结果与扣减同脚本写入").isEqualTo(SeckillLuaScripts.RESULT_PENDING);
+        assertThat(result(1L)).as("受理结果与扣减同脚本写入").startsWith(SeckillLuaScripts.RESULT_PENDING_PREFIX);
         assertThat(reserve(1L)).as("同一用户再次抢购被拒").isEqualTo(5L);
         assertThat(reserve(2L)).as("另一用户可以抢").isEqualTo(1L);
         assertThat(stock()).isEqualTo("1");
@@ -136,6 +136,44 @@ class SeckillLuaIntegrationTest {
         assertThat(result(1L)).as("重复补偿不改写首次失败原因")
                 .isEqualTo(SeckillLuaScripts.RESULT_FAIL_PREFIX + reason);
         assertThat(reserve(1L)).as("归还后该用户可以重新抢").isEqualTo(1L);
+    }
+
+    @Test
+    void claimPreventsLateMessageFromWritingAfterCompensation() {
+        long now = System.currentTimeMillis();
+        preheat(now - 1_000, now + 60_000, 1);
+        assertThat(reserve(1L)).isEqualTo(1L);
+
+        assertThat(claim(1L)).as("PENDING 可以被消费者认领").isEqualTo(1L);
+        assertThat(result(1L)).startsWith(SeckillLuaScripts.RESULT_PROCESSING_PREFIX);
+        assertThat(compensate(1L, ErrorCode.SYSTEM_ERROR.name())).as("认领后可补偿").isEqualTo(1L);
+        assertThat(stock()).isEqualTo("1");
+        assertThat(claim(1L)).as("补偿后迟到的消息不得再写订单").isEqualTo(0L);
+    }
+
+    @Test
+    void compensationNeverTouchesAnOrderedResult() {
+        long now = System.currentTimeMillis();
+        preheat(now - 1_000, now + 60_000, 2);
+        assertThat(reserve(1L)).isEqualTo(1L);
+        redis.opsForHash().put(SeckillLuaScripts.resultKey(activityId), "1",
+                SeckillLuaScripts.RESULT_ORDER_PREFIX + 99L);
+
+        assertThat(compensate(1L, ErrorCode.SYSTEM_ERROR.name())).as("已成交不能归还名额").isEqualTo(0L);
+        assertThat(stock()).as("库存保持被订单占用的状态").isEqualTo("1");
+        assertThat(claim(1L)).as("已成交的消息不再处理").isEqualTo(0L);
+    }
+
+    @Test
+    void resetPendingAllowsRedeliveryAfterTransientFailure() {
+        long now = System.currentTimeMillis();
+        preheat(now - 1_000, now + 60_000, 1);
+        assertThat(reserve(1L)).isEqualTo(1L);
+        assertThat(claim(1L)).isEqualTo(1L);
+        assertThat(redis.execute(scripts.resetPending, SeckillLuaScripts.keys(activityId),
+                "1", String.valueOf(System.currentTimeMillis()))).isEqualTo(1L);
+        assertThat(result(1L)).startsWith(SeckillLuaScripts.RESULT_PENDING_PREFIX);
+        assertThat(claim(1L)).as("重投递可以再次认领").isEqualTo(1L);
     }
 
     @Test
@@ -206,6 +244,11 @@ class SeckillLuaIntegrationTest {
         fields.put("totalStock", String.valueOf(stock));
         fields.put("stock", String.valueOf(stock));
         redis.opsForHash().putAll(SeckillLuaScripts.activityKey(activityId), fields);
+    }
+
+    private long claim(long userId) {
+        return redis.execute(scripts.claim, SeckillLuaScripts.keys(activityId),
+                String.valueOf(userId), String.valueOf(System.currentTimeMillis()));
     }
 
     private long reserve(long userId) {

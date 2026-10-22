@@ -1,15 +1,43 @@
 <script setup lang="ts">
-import { onMounted } from 'vue'
+import { computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 
+import AppFooter from '@/components/AppFooter.vue'
 import AppHeader from '@/components/AppHeader.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
 
+const route = useRoute()
 const auth = useAuthStore()
 const cart = useCartStore()
 
-// 刷新页面后令牌还在，但角色与购物车都得重新装载一遍。
-// 这里不 await 到阻塞渲染：加载失败不该让整页白屏，各页面自己也会兜。
+const storefrontRoutes = new Set([
+  'products',
+  'product-detail',
+  'seckill',
+  'seckill-detail',
+  'login',
+  'register'
+])
+
+const noFooterRoutes = new Set(['login', 'register', 'forbidden', 'not-found'])
+
+const isAdmin = computed(() => route.path.startsWith('/admin'))
+const isStorefront = computed(() => storefrontRoutes.has(String(route.name)))
+const showFooter = computed(
+  () => !isAdmin.value && !noFooterRoutes.has(String(route.name))
+)
+
+watch(
+  () => auth.isLoggedIn,
+  (loggedIn) => {
+    // 会话过期与主动登出走同一条路径，本地购物车都必须清掉
+    if (!loggedIn) {
+      cart.reset()
+    }
+  }
+)
+
 onMounted(() => {
   if (!auth.isLoggedIn) {
     return
@@ -20,22 +48,12 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="aurora-shell">
+  <RouterView v-if="isAdmin" />
+  <div v-else class="app-shell" :class="isStorefront ? 'storefront' : 'app-chrome'">
     <AppHeader />
-    <main class="aurora-main">
+    <main :class="isStorefront ? 'store-main' : 'app-main'">
       <RouterView />
     </main>
+    <AppFooter v-if="showFooter" />
   </div>
 </template>
-
-<style scoped>
-.aurora-shell {
-  display: flex;
-  flex-direction: column;
-  min-height: 100%;
-}
-
-.aurora-main {
-  flex: 1;
-}
-</style>

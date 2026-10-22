@@ -53,9 +53,49 @@ class ProductCacheServiceTest {
         return s;
     }
 
+    /** Redis 整体不可用：所有操作抛异常，验证缓存层不会把故障放大成商品 500。 */
+    private static final class FailingCacheStore implements CacheStore {
+        @Override
+        public String get(String key) {
+            throw new IllegalStateException("redis down");
+        }
+
+        @Override
+        public void put(String key, String value, Duration ttl) {
+            throw new IllegalStateException("redis down");
+        }
+
+        @Override
+        public void delete(String key) {
+            throw new IllegalStateException("redis down");
+        }
+
+        @Override
+        public boolean setIfAbsent(String key, String value, Duration ttl) {
+            throw new IllegalStateException("redis down");
+        }
+    }
+
     private Sku notFound(Long id) {
         dbCalls.incrementAndGet();
         return null;
+    }
+
+    @Test
+    void redisFailureDegradesToDatabaseInsteadOf500() {
+        ProductCacheService degraded = new ProductCacheService(new FailingCacheStore(),
+                new VolatileBloomFilterHolder(new StringBloomFilter(1_000, 0.01)),
+                new com.fasterxml.jackson.databind.ObjectMapper().findAndRegisterModules(),
+                clock, Runnable::run, scheduler, 86_400);
+        degraded.bloomPut(1L);
+
+        Sku sku = degraded.getById(1L, this::loadSku);
+
+        assertThat(sku.getTitle()).isEqualTo("sku-1");
+        assertThat(dbCalls.get()).isEqualTo(1);
+        // 删除缓存失败也不能影响管理端更新
+        degraded.evict(1L);
+        degraded.doubleDeleteAfterUpdate(1L, () -> { });
     }
 
     @Test
