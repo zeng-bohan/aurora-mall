@@ -225,7 +225,6 @@ onMounted(() => {
           <h1 class="display">{{ categoryName }}</h1>
           <p>为桌面、通勤和出行挑选耐用的科技工具。价格均为人民币含税价。</p>
         </div>
-        <span class="tag tag--accent">{{ total }} 件商品</span>
       </div>
     </div>
 

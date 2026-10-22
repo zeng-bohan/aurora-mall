@@ -29,12 +29,15 @@ public class SeckillLuaScripts {
     public final DefaultRedisScript<Long> resetPending;
     /** 预扣补偿：归还名额并把结果改成失败原因，靠已购标记保证恰好一次。 */
     public final DefaultRedisScript<Long> compensate;
+    /** 订单释放后同步活动库存到 Redis，按订单幂等。 */
+    public final DefaultRedisScript<Long> releaseStock;
 
     public SeckillLuaScripts() {
         reserve = scriptAt("lua/seckill_reserve.lua");
         claim = scriptAt("lua/seckill_claim.lua");
         resetPending = scriptAt("lua/seckill_reset_pending.lua");
         compensate = scriptAt("lua/seckill_compensate.lua");
+        releaseStock = scriptAt("lua/seckill_release_stock.lua");
     }
 
     public static String pending(long nowMillis) {
@@ -73,6 +76,10 @@ public class SeckillLuaScripts {
     // 抢购结果 hash（field = userId）：预扣写 PENDING，落单写 ORDER:{id}，补偿写 FAIL:{原因}。
     public static String resultKey(long activityId) {
         return "seckill:result:" + activityId;
+    }
+
+    public static String releaseGuardKey(long tradeId) {
+        return "seckill:release-guard:" + tradeId;
     }
 
     /** 两个脚本共用的键序：活动 hash、已购集合、结果 hash。 */

@@ -52,7 +52,7 @@ public class SeckillAdminController {
     @RequireAdmin
     @GetMapping
     public Result<List<SeckillActivityService.SeckillActivityView>> list() {
-        return Result.ok(activityService.listNotEndedViews());
+        return Result.ok(activityService.adminViews());
     }
 
     @RequireAdmin

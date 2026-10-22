@@ -14,8 +14,10 @@ import com.zengbohan.aurora.order.client.SeckillClient;
 import com.zengbohan.aurora.order.client.UserAdminClient;
 import com.zengbohan.aurora.order.dto.TradeDtos.ItemRequest;
 import com.zengbohan.aurora.order.dto.TradeDtos.PlaceTradeRequest;
+import com.zengbohan.aurora.order.dto.TradeDtos.RefundApplyRequest;
 import com.zengbohan.aurora.order.dto.TradeDtos.ShipRequest;
 import com.zengbohan.aurora.order.entity.TradeOrder;
+import com.zengbohan.aurora.order.entity.TradeOrderItem;
 import com.zengbohan.aurora.order.mapper.OrderIdempotencyMapper;
 import com.zengbohan.aurora.order.mapper.OrderRefundItemMapper;
 import com.zengbohan.aurora.order.mapper.OrderRefundMapper;
@@ -40,6 +42,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -61,6 +68,7 @@ class TradeServiceIntegrationTest {
 
     private static final long USER_ID = 1L;
     private static final long SKU_ID = 9_600_001L;
+    private static final long SKU_B = 9_600_002L;
     private static final long ADDRESS_ID = 9_700_001L;
     private static final long TRADE_ID = 7_000_001L;
     private static final String ITEM_TITLE = "Aurora Halo 桌面灯";
@@ -68,7 +76,7 @@ class TradeServiceIntegrationTest {
     @SpringBootConfiguration
     @EnableAutoConfiguration
     @MapperScan("com.zengbohan.aurora.order.mapper")
-    @Import({TradePricingService.class, CouponService.class})
+    @Import({TradePricingService.class, CouponService.class, RefundService.class})
     static class TestApplication {
 
         @Bean
@@ -92,6 +100,8 @@ class TradeServiceIntegrationTest {
 
     @Autowired
     private TradeService tradeService;
+    @Autowired
+    private RefundService refundService;
     @Autowired
     private TradeOrderMapper tradeMapper;
     @Autowired
@@ -123,6 +133,7 @@ class TradeServiceIntegrationTest {
         when(inventoryClient.reserve(any())).thenReturn(Result.ok());
         when(inventoryClient.confirm(any())).thenReturn(Result.ok());
         when(inventoryClient.release(any())).thenReturn(Result.ok());
+        when(inventoryClient.restore(any())).thenReturn(Result.ok());
         when(paymentClient.lateRefund(anyLong())).thenReturn(Result.ok());
         when(publisher.sendCloseTimeout(anyLong(), org.mockito.ArgumentMatchers.anyInt()))
                 .thenReturn(true);
@@ -152,6 +163,45 @@ class TradeServiceIntegrationTest {
                 "SELECT COUNT(*) FROM order_idempotency WHERE user_id = ? AND idem_key = 'idem-1'",
                 Integer.class, USER_ID)).isEqualTo(1);
         verify(inventoryClient, times(1)).reserve(any());
+    }
+
+    @Test
+    void replayStillReturnsTheOriginalTradeAfterCouponIsLockedAndSkuGoesOffShelf() {
+        jdbc.update("INSERT INTO coupon_template (id, title, threshold_amount, discount_amount, "
+                        + "total, claimed, claim_start_at, claim_end_at, valid_days) "
+                        + "VALUES (?, '测试满减', 100.00, 10.00, 10, 1, NOW() - INTERVAL 1 DAY, "
+                        + "NOW() + INTERVAL 1 DAY, 30)",
+                7_000_050L);
+        jdbc.update("INSERT INTO user_coupon (id, template_id, user_id, status, title, "
+                        + "threshold_amount, discount_amount, expire_at) "
+                        + "VALUES (?, ?, ?, 'UNUSED', '测试满减', 100.00, 10.00, NOW() + INTERVAL 1 DAY)",
+                7_000_051L, 7_000_050L, USER_ID);
+        PlaceTradeRequest withCoupon = new PlaceTradeRequest(
+                List.of(new ItemRequest(SKU_ID, 1)), ADDRESS_ID, 7_000_051L);
+
+        long first = tradeService.place(USER_ID, withCoupon, "idem-8");
+        when(productClient.batch(any())).thenReturn(Result.ok(List.of(offShelfSnapshot())));
+        long second = tradeService.place(USER_ID, withCoupon, "idem-8");
+
+        assertThat(second).isEqualTo(first);
+        assertThat(jdbc.queryForObject("SELECT status FROM user_coupon WHERE id = ?",
+                String.class, 7_000_051L)).isEqualTo("LOCKED");
+    }
+
+    @Test
+    void itemOrderDoesNotChangeTheIdempotencyFingerprint() {
+        when(productClient.batch(any())).thenReturn(Result.ok(List.of(
+                snapshot(SKU_ID, "AUR-HALO-01", 9_500_001L),
+                snapshot(SKU_B, "AUR-HALO-02", 9_500_002L))));
+        PlaceTradeRequest forward = new PlaceTradeRequest(List.of(
+                new ItemRequest(SKU_ID, 1), new ItemRequest(SKU_B, 1)), ADDRESS_ID, null);
+        PlaceTradeRequest reversed = new PlaceTradeRequest(List.of(
+                new ItemRequest(SKU_B, 1), new ItemRequest(SKU_ID, 1)), ADDRESS_ID, null);
+
+        long first = tradeService.place(USER_ID, forward, "idem-11");
+        long second = tradeService.place(USER_ID, reversed, "idem-11");
+
+        assertThat(second).isEqualTo(first);
     }
 
     @Test
@@ -237,14 +287,298 @@ class TradeServiceIntegrationTest {
                         assertThat(e.getMessage()).contains("待审批退款"));
     }
 
+
+    @Test
+    void closeFailureLeavesOrderClosedButReleasableForRetry() {
+        when(inventoryClient.release(any())).thenReturn(Result.fail(ErrorCode.SYSTEM_ERROR));
+        long tradeId = tradeService.place(USER_ID, request(ADDRESS_ID, 1), "idem-9");
+
+        assertThatThrownBy(() -> tradeService.closeIfPending(tradeId))
+                .isInstanceOfSatisfying(BusinessException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ErrorCode.SYSTEM_ERROR));
+        TradeOrder closed = tradeMapper.selectById(tradeId);
+        assertThat(closed.getStatus()).isEqualTo(TradeOrder.STATUS_CLOSED);
+        assertThat(closed.getStockReleased()).isZero();
+
+        when(inventoryClient.release(any())).thenReturn(Result.ok());
+        assertThat(tradeService.closeIfPending(tradeId)).isFalse();
+        assertThat(tradeMapper.selectById(tradeId).getStockReleased()).isEqualTo(1);
+    }
+
+    @Test
+    void closingUnpaidSeckillOrderReleasesActivityStock() {
+        when(productClient.snapshot(SKU_ID)).thenReturn(Result.ok(snapshot()));
+        when(addressClient.defaultAddress(USER_ID)).thenReturn(Result.ok(address()));
+        when(seckillClient.release(any())).thenReturn(Result.ok());
+        long tradeId = tradeService.placeSeckill(new com.zengbohan.aurora.order.dto.TradeDtos.PlaceSeckillRequest(
+                USER_ID, 9_911_001L, SKU_ID, new BigDecimal("149.00"), "seckill-test"));
+
+        assertThat(tradeService.closeIfPending(tradeId)).isTrue();
+
+        assertThat(tradeMapper.selectById(tradeId).getStatus()).isEqualTo(TradeOrder.STATUS_CLOSED);
+        verify(seckillClient).release(org.mockito.ArgumentMatchers.argThat(
+                request -> request.tradeId() == tradeId && request.activityId() == 9_911_001L
+                        && request.quantity() == 1 && "CLOSE".equals(request.reason())));
+    }
+
+    @Test
+    void partialRefundApprovalUpdatesItemsAndTradeOnlyOnce() {
+        when(productClient.batch(any())).thenReturn(Result.ok(List.of(
+                snapshot(SKU_ID, "AUR-HALO-01", 9_500_001L),
+                snapshot(SKU_B, "AUR-HALO-02", 9_500_002L))));
+        long tradeId = tradeService.place(USER_ID,
+                new PlaceTradeRequest(List.of(
+                        new ItemRequest(SKU_ID, 1), new ItemRequest(SKU_B, 1)),
+                        ADDRESS_ID, null), "idem-20");
+        tradeService.markPaid(tradeId, new BigDecimal("251.00"));
+        List<TradeOrderItem> items = tradeService.items(tradeId);
+        long refundId = refundService.apply(USER_ID, tradeId,
+                new RefundApplyRequest(List.of(items.get(0).getId()), "只退第一件")).refundId();
+        when(paymentClient.refund(anyLong(), any())).thenReturn(Result.ok(
+                new com.zengbohan.aurora.api.order.PaymentSummary(1L, tradeId, "A" + tradeId,
+                        new BigDecimal("119.50"), new BigDecimal("119.50"),
+                        com.zengbohan.aurora.api.order.PaymentSummary.STATUS_PARTIALLY_REFUNDED)));
+
+        refundService.approve(refundId, "admin");
+        refundService.approve(refundId, "admin");
+
+        TradeOrder trade = tradeMapper.selectById(tradeId);
+        assertThat(trade.getRefundedAmount()).isEqualByComparingTo("119.50");
+        assertThat(trade.getRefundStatus()).isEqualTo(TradeOrder.REFUND_PARTIAL);
+        assertThat(trade.getStatus()).isEqualTo(TradeOrder.STATUS_PAID);
+        List<TradeOrderItem> after = tradeService.items(tradeId);
+        assertThat(after.get(0).getStatus()).isEqualTo(TradeOrderItem.STATUS_REFUNDED);
+        assertThat(after.get(0).getRefundedAmount()).isEqualByComparingTo("119.50");
+        assertThat(after.get(1).getStatus()).isEqualTo(TradeOrderItem.STATUS_NORMAL);
+        verify(paymentClient, times(1)).refund(anyLong(), any());
+        verify(inventoryClient, times(1)).restore(any());
+    }
+
+    @Test
+    void fullRefundMarksTradeRefundedAndReturnsTheCoupon() {
+        seedCoupon();
+        long tradeId = tradeService.place(USER_ID,
+                new PlaceTradeRequest(List.of(new ItemRequest(SKU_ID, 1)), ADDRESS_ID, 7_000_051L),
+                "idem-21");
+        tradeService.markPaid(tradeId, new BigDecimal("121.50"));
+        long itemId = tradeService.items(tradeId).get(0).getId();
+        long refundId = refundService.apply(USER_ID, tradeId,
+                new RefundApplyRequest(List.of(itemId), "整单退款")).refundId();
+        when(paymentClient.refund(anyLong(), any())).thenReturn(Result.ok(
+                new com.zengbohan.aurora.api.order.PaymentSummary(1L, tradeId, "A" + tradeId,
+                        new BigDecimal("121.50"), new BigDecimal("121.50"),
+                        com.zengbohan.aurora.api.order.PaymentSummary.STATUS_REFUNDED)));
+
+        var view = refundService.approve(refundId, "admin");
+
+        assertThat(view.settled()).isTrue();
+        TradeOrder trade = tradeMapper.selectById(tradeId);
+        assertThat(trade.getStatus()).isEqualTo(TradeOrder.STATUS_REFUNDED);
+        assertThat(trade.getRefundStatus()).isEqualTo(TradeOrder.REFUND_FULL);
+        assertThat(trade.getRefundedAmount()).isEqualByComparingTo("121.50");
+        assertThat(jdbc.queryForObject("SELECT status FROM user_coupon WHERE id = ?",
+                String.class, 7_000_051L)).isEqualTo("UNUSED");
+        verify(paymentClient).refund(anyLong(), org.mockito.ArgumentMatchers.argThat(
+                request -> request.refundId() == refundId
+                        && request.amount().compareTo(new BigDecimal("121.50")) == 0));
+    }
+
+    @Test
+    void settlementFailureLeavesApprovedRefundRetryable() {
+        long tradeId = tradeService.place(USER_ID, request(ADDRESS_ID, 1), "idem-22");
+        tradeService.markPaid(tradeId, new BigDecimal("131.50"));
+        long itemId = tradeService.items(tradeId).get(0).getId();
+        long refundId = refundService.apply(USER_ID, tradeId,
+                new RefundApplyRequest(List.of(itemId), "结算失败测试")).refundId();
+        when(paymentClient.refund(anyLong(), any()))
+                .thenReturn(Result.fail(ErrorCode.SYSTEM_ERROR))
+                .thenReturn(Result.ok(new com.zengbohan.aurora.api.order.PaymentSummary(
+                        1L, tradeId, "A" + tradeId, new BigDecimal("131.50"),
+                        new BigDecimal("131.50"),
+                        com.zengbohan.aurora.api.order.PaymentSummary.STATUS_REFUNDED)));
+
+        assertThat(refundService.approve(refundId, "admin").settled()).isFalse();
+
+        refundService.settle(refundId);
+
+        assertThat(refundService.view(refundId).settled()).isTrue();
+        verify(paymentClient, times(2)).refund(anyLong(), any());
+        verify(inventoryClient, times(1)).restore(any());
+    }
+
+    @Test
+    void rejectedRefundRestoresItemsAndAllowsShipping() {
+        long tradeId = tradeService.place(USER_ID, request(ADDRESS_ID, 1), "idem-23");
+        tradeService.markPaid(tradeId, new BigDecimal("131.50"));
+        long itemId = tradeService.items(tradeId).get(0).getId();
+        long refundId = refundService.apply(USER_ID, tradeId,
+                new RefundApplyRequest(List.of(itemId), "申请后撤销")).refundId();
+        assertThatThrownBy(() -> tradeService.ship(tradeId,
+                new ShipRequest("顺丰速运", "SF-REJECT")))
+                .isInstanceOf(BusinessException.class);
+
+        var view = refundService.reject(refundId, "商品无需退款", "admin");
+
+        assertThat(view.status()).isEqualTo("REJECTED");
+        assertThat(tradeService.items(tradeId).get(0).getStatus())
+                .isEqualTo(TradeOrderItem.STATUS_NORMAL);
+        tradeService.ship(tradeId, new ShipRequest("顺丰速运", "SF-REJECT"));
+        assertThat(tradeMapper.selectById(tradeId).getStatus()).isEqualTo(TradeOrder.STATUS_SHIPPED);
+    }
+
+    @Test
+    void partialRefundWithCouponKeepsItemDiscountsEqualToOrderDiscount() {
+        seedCoupon();
+        when(productClient.batch(any())).thenReturn(Result.ok(List.of(
+                snapshot(SKU_ID, "AUR-HALO-01", 9_500_001L),
+                snapshot(SKU_B, "AUR-HALO-02", 9_500_002L))));
+        long tradeId = tradeService.place(USER_ID,
+                new PlaceTradeRequest(List.of(
+                        new ItemRequest(SKU_ID, 3), new ItemRequest(SKU_B, 1)),
+                        ADDRESS_ID, 7_000_051L), "idem-25");
+        tradeService.markPaid(tradeId, new BigDecimal("468.00"));
+        List<TradeOrderItem> items = tradeService.items(tradeId);
+        long refundId = refundService.apply(USER_ID, tradeId,
+                new RefundApplyRequest(List.of(items.get(1).getId()), "退掉第二件")).refundId();
+        when(paymentClient.refund(anyLong(), any())).thenReturn(Result.ok(
+                new com.zengbohan.aurora.api.order.PaymentSummary(1L, tradeId, "A" + tradeId,
+                        new BigDecimal("119.50"), new BigDecimal("119.50"),
+                        com.zengbohan.aurora.api.order.PaymentSummary.STATUS_PARTIALLY_REFUNDED)));
+
+        refundService.approve(refundId, "admin");
+
+        List<TradeOrderItem> after = tradeService.items(tradeId);
+        assertThat(after.get(1).getDiscountAmount()).isEqualByComparingTo("0.00");
+        assertThat(after.get(0).getDiscountAmount()).isEqualByComparingTo("10.00");
+        assertThat(after.stream().map(TradeOrderItem::getDiscountAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("10.00");
+        assertThat(tradeMapper.selectById(tradeId).getRefundedAmount())
+                .isEqualByComparingTo("119.50");
+    }
+
+    @Test
+    void refundForItemOfAnotherOrderIsRejected() {
+        long tradeId = tradeService.place(USER_ID, request(ADDRESS_ID, 1), "idem-24");
+        tradeService.markPaid(tradeId, new BigDecimal("131.50"));
+
+        assertThatThrownBy(() -> refundService.apply(USER_ID, tradeId,
+                new RefundApplyRequest(List.of(999_999_999L), "非法商品")))
+                .isInstanceOfSatisfying(BusinessException.class, e ->
+                        assertThat(e.getMessage()).contains("不属于该订单"));
+    }
+
+    private void seedCoupon() {
+        jdbc.update("INSERT INTO coupon_template (id, title, threshold_amount, discount_amount, "
+                        + "total, claimed, claim_start_at, claim_end_at, valid_days) "
+                        + "VALUES (?, '测试满减', 100.00, 10.00, 10, 1, NOW() - INTERVAL 1 DAY, "
+                        + "NOW() + INTERVAL 1 DAY, 30)",
+                7_000_050L);
+        jdbc.update("INSERT INTO user_coupon (id, template_id, user_id, status, title, "
+                        + "threshold_amount, discount_amount, expire_at) "
+                        + "VALUES (?, ?, ?, 'UNUSED', '测试满减', 100.00, 10.00, NOW() + INTERVAL 1 DAY)",
+                7_000_051L, 7_000_050L, USER_ID);
+    }
+
+    @Test
+    void stateMachineRejectsSkippedAndRepeatedTransitions() {
+        long tradeId = tradeService.place(USER_ID, request(ADDRESS_ID, 1), "idem-26");
+
+        assertThatThrownBy(() -> tradeService.confirmReceipt(USER_ID, tradeId))
+                .isInstanceOf(BusinessException.class);
+        assertThatThrownBy(() -> tradeService.ship(tradeId,
+                new ShipRequest("顺丰速运", "SF-SKIP")))
+                .isInstanceOf(BusinessException.class);
+
+        tradeService.markPaid(tradeId, new BigDecimal("131.50"));
+        tradeService.ship(tradeId, new ShipRequest("顺丰速运", "SF-ONCE"));
+        assertThatThrownBy(() -> tradeService.ship(tradeId,
+                new ShipRequest("顺丰速运", "SF-TWICE")))
+                .isInstanceOf(BusinessException.class);
+
+        tradeService.confirmReceipt(USER_ID, tradeId);
+        assertThatThrownBy(() -> tradeService.confirmReceipt(USER_ID, tradeId))
+                .isInstanceOf(BusinessException.class);
+        assertThat(tradeService.closeIfPending(tradeId)).isFalse();
+        assertThat(tradeMapper.selectById(tradeId).getStatus())
+                .isEqualTo(TradeOrder.STATUS_COMPLETED);
+    }
+
+    @Test
+    void refundBeforePaymentIsRejected() {
+        long tradeId = tradeService.place(USER_ID, request(ADDRESS_ID, 1), "idem-27");
+        long itemId = tradeService.items(tradeId).get(0).getId();
+
+        assertThatThrownBy(() -> refundService.apply(USER_ID, tradeId,
+                new RefundApplyRequest(List.of(itemId), "未支付退款")))
+                .isInstanceOfSatisfying(BusinessException.class, e ->
+                        assertThat(e.getMessage()).contains("当前订单状态不支持退款"));
+    }
+
+    @Test
+    void concurrentRefundApplicationsOnlyCreateOnePendingRefund() throws Exception {        when(productClient.batch(any())).thenReturn(Result.ok(List.of(
+                snapshot(SKU_ID, "AUR-HALO-01", 9_500_001L),
+                snapshot(SKU_B, "AUR-HALO-02", 9_500_002L))));
+        long tradeId = tradeService.place(USER_ID,
+                new PlaceTradeRequest(List.of(
+                        new ItemRequest(SKU_ID, 1), new ItemRequest(SKU_B, 1)),
+                        ADDRESS_ID, null), "idem-10");
+        tradeService.markPaid(tradeId, new BigDecimal("251.00"));
+        List<TradeOrderItem> items = tradeService.items(tradeId);
+
+        CountDownLatch start = new CountDownLatch(1);
+        AtomicInteger succeeded = new AtomicInteger();
+        AtomicInteger rejected = new AtomicInteger();
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            for (TradeOrderItem item : items) {
+                pool.submit(() -> {
+                    try {
+                        start.await();
+                        refundService.apply(USER_ID, tradeId,
+                                new RefundApplyRequest(List.of(item.getId()), "并发退款测试"));
+                        succeeded.incrementAndGet();
+                    } catch (BusinessException e) {
+                        rejected.incrementAndGet();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                });
+            }
+            start.countDown();
+            pool.shutdown();
+            assertThat(pool.awaitTermination(15, TimeUnit.SECONDS)).isTrue();
+        } finally {
+            pool.shutdownNow();
+        }
+
+        assertThat(succeeded.get()).isEqualTo(1);
+        assertThat(rejected.get()).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM order_refund WHERE trade_id = ? AND status = 'PENDING'",
+                Integer.class, tradeId)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM trade_order_item WHERE trade_id = ? AND status = 'REFUNDING'",
+                Integer.class, tradeId)).isEqualTo(1);
+    }
+
     private static PlaceTradeRequest request(long addressId, int quantity) {
         return new PlaceTradeRequest(List.of(new ItemRequest(SKU_ID, quantity)), addressId, null);
     }
 
     private static ProductSnapshot snapshot() {
-        return new ProductSnapshot(SKU_ID, 9_500_001L, "AUR-HALO-01", ITEM_TITLE,
+        return snapshot(SKU_ID, "AUR-HALO-01", 9_500_001L);
+    }
+
+    private static ProductSnapshot snapshot(long skuId, String skuCode, long spuId) {
+        return new ProductSnapshot(skuId, spuId, skuCode, ITEM_TITLE,
                 "雾白 / 标准版", "/products/p01-1.webp", new BigDecimal("119.50"),
                 20, ProductSnapshot.STATUS_ON_SALE);
+    }
+
+    private static ProductSnapshot offShelfSnapshot() {
+        return new ProductSnapshot(SKU_ID, 9_500_001L, "AUR-HALO-01", ITEM_TITLE,
+                "雾白 / 标准版", "/products/p01-1.webp", new BigDecimal("119.50"),
+                20, ProductSnapshot.STATUS_OFF_SHELF);
     }
 
     private static AddressClient.AddressView address() {
@@ -253,6 +587,8 @@ class TradeServiceIntegrationTest {
     }
 
     private void clean() {
+        jdbc.update("DELETE FROM user_coupon WHERE id = 7000051");
+        jdbc.update("DELETE FROM coupon_template WHERE id = 7000050");
         jdbc.update("DELETE FROM trade_order_item WHERE trade_id BETWEEN 7000000 AND 7000100");
         jdbc.update("DELETE FROM order_refund_item WHERE refund_id BETWEEN 7000000 AND 7000100");
         jdbc.update("DELETE FROM order_refund WHERE trade_id BETWEEN 7000000 AND 7000100");

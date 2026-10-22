@@ -134,7 +134,7 @@ public class ProductAdminService {
         replaceSpuAttributes(spu.getId(), attributeIds);
         replaceSpuAttributeValues(spu.getId(), request.attributeValues(), attrMap);
         saveSkus(spu, request.skus(), attrMap);
-        cacheService.evict(spu.getId());
+        cacheService.evictAfterCommit(spu.getId());
         cacheService.bloomPut(spu.getId());
         return spu.getId();
     }
@@ -177,6 +177,7 @@ public class ProductAdminService {
         } catch (DuplicateKeyException e) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "分类标识已存在");
         }
+        evictCategorySpus(id);
     }
 
     public long createAttribute(SaveAttributeRequest request) {
@@ -210,6 +211,7 @@ public class ProductAdminService {
         } catch (DuplicateKeyException e) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "属性编码已存在");
         }
+        evictAttributeSpus(id);
     }
 
     public long addValue(long attributeId, SaveAttributeValueRequest request) {
@@ -249,6 +251,7 @@ public class ProductAdminService {
         } catch (DuplicateKeyException e) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "属性值已存在");
         }
+        evictValueSpus(valueId);
     }
 
     private void saveSkus(ProductSpu spu, List<SaveSkuRequest> skus, Map<Long, ProductAttribute> attrs) {
@@ -268,6 +271,16 @@ public class ProductAdminService {
         Set<String> codes = new HashSet<>();
         List<Long> orderedVariantIds = new ArrayList<>(variantAttributeIds);
         orderedVariantIds.sort(Long::compareTo);
+        Set<Long> retainedIds = skus.stream().map(SaveSkuRequest::id)
+                .filter(java.util.Objects::nonNull).collect(Collectors.toSet());
+        for (ProductSku existing : skuMapper.selectList(
+                new QueryWrapper<ProductSku>().eq("spu_id", spu.getId()))) {
+            if (!retainedIds.contains(existing.getId())) {
+                skuAttributeMapper.delete(new QueryWrapper<ProductSkuAttribute>()
+                        .eq("sku_id", existing.getId()));
+                skuMapper.deleteById(existing.getId());
+            }
+        }
 
         for (SaveSkuRequest request : skus) {
             Map<Long, Long> selections = request.attributes() == null
@@ -397,6 +410,37 @@ public class ProductAdminService {
                 .eq("attribute_value_id", valueId)
                 .inSql("spu_id", "SELECT id FROM product_spu WHERE status = 1"));
         return skuHits + spuHits > 0;
+    }
+
+    private void evictCategorySpus(long categoryId) {
+        evictSpus(spuMapper.selectList(new QueryWrapper<ProductSpu>()
+                        .eq("category_id", categoryId))
+                .stream().map(ProductSpu::getId).toList());
+    }
+
+    private void evictAttributeSpus(long attributeId) {
+        evictSpus(spuAttributeMapper.selectList(new QueryWrapper<ProductSpuAttribute>()
+                        .eq("attribute_id", attributeId))
+                .stream().map(ProductSpuAttribute::getSpuId).toList());
+    }
+
+    private void evictValueSpus(long valueId) {
+        Set<Long> spuIds = new HashSet<>();
+        List<Long> skuIds = skuAttributeMapper.selectList(new QueryWrapper<ProductSkuAttribute>()
+                        .eq("attribute_value_id", valueId))
+                .stream().map(ProductSkuAttribute::getSkuId).toList();
+        if (!skuIds.isEmpty()) {
+            spuIds.addAll(skuMapper.selectBatchIds(skuIds).stream()
+                    .map(ProductSku::getSpuId).toList());
+        }
+        spuIds.addAll(spuValueMapper.selectList(new QueryWrapper<ProductSpuAttributeValue>()
+                        .eq("attribute_value_id", valueId))
+                .stream().map(ProductSpuAttributeValue::getSpuId).toList());
+        evictSpus(spuIds);
+    }
+
+    private void evictSpus(java.util.Collection<Long> spuIds) {
+        spuIds.forEach(cacheService::evictWithDelayedSecondDelete);
     }
 
     private String composeSkuTitle(ProductSpu spu, Map<Long, Long> selections,

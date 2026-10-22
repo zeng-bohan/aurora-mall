@@ -50,8 +50,8 @@ import static org.mockito.Mockito.when;
 @ActiveProfiles("test")
 class SeckillOrderServiceIntegrationTest {
 
-    private static final long ACTIVITY_RUNNING = 9_930_001L;
-    private static final long ACTIVITY_NOT_STARTED = 9_930_002L;
+    private static final long ACTIVITY_RUNNING = 9_930_101L;
+    private static final long ACTIVITY_NOT_STARTED = 9_930_102L;
     private static final long SKU_ID = 9_900_045L;
 
     @SpringBootConfiguration
@@ -179,6 +179,27 @@ class SeckillOrderServiceIntegrationTest {
     }
 
     @Test
+    void releaseRepairsRedisWhenDbReleaseWasAlreadyCommitted() {
+        seedActivity(ACTIVITY_RUNNING, 2, LocalDateTime.now().minusMinutes(1),
+                LocalDateTime.now().plusHours(1));
+        preheatService.preheat(ACTIVITY_RUNNING);
+        long tradeId = orderService.buy(ACTIVITY_RUNNING, 402L).tradeId();
+        assertThat(redisStock(ACTIVITY_RUNNING)).isEqualTo(1);
+
+        // 模拟“DB 归还已提交、Redis 同步失败”：台账已写、预约已释放、DB 库存已加回。
+        jdbc.update("INSERT INTO seckill_release (trade_id, activity_id, quantity, reason) "
+                + "VALUES (?, ?, 1, 'REFUND')", tradeId, ACTIVITY_RUNNING);
+        jdbc.update("UPDATE seckill_stock SET available = available + 1 WHERE activity_id = ?",
+                ACTIVITY_RUNNING);
+        jdbc.update("UPDATE seckill_reservation SET status = 'RELEASED' WHERE trade_id = ?", tradeId);
+
+        assertThat(orderService.releaseForTrade(tradeId, ACTIVITY_RUNNING, 1, "REFUND")).isFalse();
+
+        assertThat(redisStock(ACTIVITY_RUNNING)).isEqualTo(2);
+        assertThat(dbStock(ACTIVITY_RUNNING)).isEqualTo(2);
+    }
+
+    @Test
     void concurrentBuyersNeverOversell() throws Exception {
         seedActivity(ACTIVITY_RUNNING, 2, LocalDateTime.now().minusMinutes(1),
                 LocalDateTime.now().plusHours(1));
@@ -244,6 +265,9 @@ class SeckillOrderServiceIntegrationTest {
                     SeckillLuaScripts.boughtKey(activityId),
                     SeckillLuaScripts.resultKey(activityId),
                     SeckillRateLimiter.activityKey(activityId)));
+        }
+        for (long tradeId = 9_940_001L; tradeId <= 9_940_050L; tradeId++) {
+            redis.delete(SeckillLuaScripts.releaseGuardKey(tradeId));
         }
     }
 

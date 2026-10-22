@@ -19,6 +19,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -34,16 +35,19 @@ public class PaymentService {
     private final PaymentEventPublisher publisher;
     private final ChannelSignatureVerifier signatureVerifier;
     private final ObjectMapper objectMapper;
+    private final TransactionTemplate transactionTemplate;
 
     public PaymentService(PaymentOrderMapper paymentMapper, PaymentRefundMapper refundMapper,
                           OrderClient orderClient, PaymentEventPublisher publisher,
-                          ChannelSignatureVerifier signatureVerifier, ObjectMapper objectMapper) {
+                          ChannelSignatureVerifier signatureVerifier, ObjectMapper objectMapper,
+                          TransactionTemplate transactionTemplate) {
         this.paymentMapper = paymentMapper;
         this.refundMapper = refundMapper;
         this.orderClient = orderClient;
         this.publisher = publisher;
         this.signatureVerifier = signatureVerifier;
         this.objectMapper = objectMapper;
+        this.transactionTemplate = transactionTemplate;
     }
 
     public PaymentOrder initiate(long userId, long tradeId) {
@@ -138,32 +142,55 @@ public class PaymentService {
     }
 
     public PaymentSummary internalRefund(long tradeId, long refundId, BigDecimal amount) {
+        if (amount == null || amount.signum() <= 0) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "退款金额必须大于 0");
+        }
+        PaymentRefund existing = refundMapper.selectById(refundId);
+        if (existing != null) {
+            return existingRefundSummary(tradeId, refundId, amount, existing);
+        }
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                if (paymentMapper.findByTradeId(tradeId) == null) {
+                    throw new BusinessException(ErrorCode.NOT_FOUND);
+                }
+                PaymentRefund refund = new PaymentRefund();
+                refund.setRefundId(refundId);
+                refund.setTradeId(tradeId);
+                refund.setAmount(amount);
+                refundMapper.insert(refund);
+                if (paymentMapper.applyRefund(tradeId, amount) == 0) {
+                    throw new BusinessException(ErrorCode.PARAM_ERROR,
+                            "支付单当前状态不可退款或可退金额不足");
+                }
+            });
+        } catch (DuplicateKeyException e) {
+            // 并发重试已在另一事务落账；本事务回滚，读已提交的退款记录后按幂等返回。
+            PaymentRefund committed = refundMapper.selectById(refundId);
+            if (committed == null) {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "退款记录写入冲突");
+            }
+            return existingRefundSummary(tradeId, refundId, amount, committed);
+        }
+        PaymentOrder current = paymentMapper.findByTradeId(tradeId);
+        if (current == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND);
+        }
+        return toSummary(current);
+    }
+
+    private PaymentSummary existingRefundSummary(long tradeId, long refundId, BigDecimal amount,
+                                                 PaymentRefund existing) {
+        if (existing.getTradeId() == null || existing.getTradeId() != tradeId
+                || existing.getAmount() == null || existing.getAmount().compareTo(amount) != 0) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR,
+                    "退款单 " + refundId + " 已绑定到其他订单或金额");
+        }
         PaymentOrder payment = paymentMapper.findByTradeId(tradeId);
         if (payment == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
-        PaymentRefund existing = refundMapper.selectById(refundId);
-        if (existing != null) {
-            return toSummary(paymentMapper.findByTradeId(tradeId));
-        }
-        if (amount == null || amount.signum() <= 0) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "退款金额必须大于 0");
-        }
-        PaymentRefund refund = new PaymentRefund();
-        refund.setRefundId(refundId);
-        refund.setTradeId(tradeId);
-        refund.setAmount(amount);
-        try {
-            refundMapper.insert(refund);
-        } catch (DuplicateKeyException e) {
-            return toSummary(paymentMapper.findByTradeId(tradeId));
-        }
-        if (paymentMapper.applyRefund(tradeId, amount) == 0) {
-            PaymentOrder current = paymentMapper.findByTradeId(tradeId);
-            throw new BusinessException(ErrorCode.PARAM_ERROR,
-                    "支付单当前状态不可退款或可退金额不足");
-        }
-        return toSummary(paymentMapper.findByTradeId(tradeId));
+        return toSummary(payment);
     }
 
     public PaymentSummary lateRefund(long tradeId) {

@@ -150,6 +150,21 @@ public class TradePricingService {
         return lines;
     }
 
+    /**
+     * 把一笔退款金额分摊到退款明细上。整单退款中的优惠与运费会让明细原价之和
+     * 大于实际退款额，明细必须按实际退款额落账，不能继续使用商品原价。
+     */
+    public List<BigDecimal> allocateRefundAmounts(List<BigDecimal> itemAmounts,
+                                                  BigDecimal refundAmount) {
+        List<Long> cents = itemAmounts.stream().map(this::toCents).toList();
+        long[] allocated = allocate(toCents(refundAmount), cents);
+        List<BigDecimal> result = new ArrayList<>(itemAmounts.size());
+        for (long value : allocated) {
+            result.add(fromCents(value));
+        }
+        return result;
+    }
+
     private static long[] allocate(long discountCents, List<Long> itemCents) {
         long[] result = new long[itemCents.size()];
         long total = itemCents.stream().mapToLong(Long::longValue).sum();

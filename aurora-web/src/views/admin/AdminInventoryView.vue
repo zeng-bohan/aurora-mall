@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { computed, onMounted, reactive, ref } from 'vue'
 
 import { adminCatalogApi, inventoryApi, type AdminSku } from '@/api/dtc'
@@ -13,6 +13,7 @@ const keyword = ref('')
 const loading = ref(true)
 const error = ref('')
 const saving = ref<number | null>(null)
+const syncing = ref(false)
 
 const rows = computed(() => {
   const value = keyword.value.trim().toLowerCase()
@@ -57,6 +58,26 @@ async function load(): Promise<void> {
   }
 }
 
+async function reconcile(): Promise<void> {
+  try {
+    await ElMessageBox.confirm(
+      '将用数据库可售库存覆盖 Redis 中的全部库存键。请在无抢购/下单进行时执行。',
+      '重建 Redis 库存',
+      { confirmButtonText: '重建', cancelButtonText: '取消', type: 'warning' },
+    )
+    syncing.value = true
+    const repaired = await inventoryApi.reconcile()
+    ElMessage.success(`Redis 库存已同步，修复 ${repaired} 个键`)
+    await load()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(describeError(e))
+    }
+  } finally {
+    syncing.value = false
+  }
+}
+
 async function save(sku: AdminSku): Promise<void> {
   const value = Number(inputs[sku.id])
   if (!Number.isInteger(value) || value < 0) {
@@ -89,6 +110,9 @@ onMounted(() => {
         <p>设置的是可售库存。预占中的数量不会计入可售，支付后转为真实扣减。</p>
       </div>
       <div class="admin-actions">
+        <button class="btn btn--line btn--sm" type="button" :disabled="syncing" @click="reconcile">
+          {{ syncing ? '同步中…' : '重建 Redis' }}
+        </button>
         <button class="btn btn--line btn--sm" type="button" @click="load">刷新</button>
       </div>
     </div>

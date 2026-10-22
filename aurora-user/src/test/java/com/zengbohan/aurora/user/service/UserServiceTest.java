@@ -41,6 +41,7 @@ class UserServiceTest {
         when(redis.hasKey(any())).thenReturn(false);
         when(redis.opsForValue()).thenReturn(redisValues);
         when(redisValues.get(any())).thenReturn(null);
+        when(redisValues.setIfAbsent(any(), any(), any())).thenReturn(true);
         userService = new UserService(userMapper, jwtCodec, redis, 1800, 604800);
     }
 
@@ -127,9 +128,9 @@ class UserServiceTest {
 
         userService.refresh(new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.refreshToken()));
 
-        // 旧 refresh 的 jti 被拉黑（一次一换）
+        // 旧 refresh 的 jti 由 SETNX 原子认领（一次一换）
         String usedJti = jwtCodec.decode(tokens.refreshToken()).jti();
-        org.mockito.Mockito.verify(redisValues).set(
+        org.mockito.Mockito.verify(redisValues).setIfAbsent(
                 eq(JwtCodec.BLACKLIST_KEY_PREFIX + usedJti), eq("1"), any());
     }
 
@@ -141,9 +142,10 @@ class UserServiceTest {
 
         userService.refresh(new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.refreshToken()));
 
-        // 第二次用同一张旧票：命中黑名单
-        when(redis.hasKey(JwtCodec.BLACKLIST_KEY_PREFIX
-                + jwtCodec.decode(tokens.refreshToken()).jti())).thenReturn(true);
+        // 第二次用同一张旧票：SETNX 已被第一次轮换占用
+        when(redisValues.setIfAbsent(eq(JwtCodec.BLACKLIST_KEY_PREFIX
+                + jwtCodec.decode(tokens.refreshToken()).jti()), eq("1"), any()))
+                .thenReturn(false);
         assertThatThrownBy(() -> userService.refresh(
                 new com.zengbohan.aurora.user.dto.RefreshRequest(tokens.refreshToken())))
                 .isInstanceOf(BusinessException.class);

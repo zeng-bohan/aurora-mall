@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import org.springframework.data.redis.core.ReactiveValueOperations;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
@@ -30,6 +31,7 @@ class GatewayJwtFilterTest {
     private static final String INTERNAL_SECRET = "internal-dev-secret-0123456789";
 
     private ReactiveStringRedisTemplate redis;
+    private ReactiveValueOperations<String, String> redisValues;
     private GatewayJwtFilter filter;
     private JwtCodec codec;
 
@@ -37,7 +39,10 @@ class GatewayJwtFilterTest {
     void setUp() {
         codec = new JwtCodec(SECRET, Clock.fixed(NOW, ZoneOffset.UTC));
         redis = mock(ReactiveStringRedisTemplate.class);
+        redisValues = mock(ReactiveValueOperations.class);
         when(redis.hasKey(anyString())).thenReturn(Mono.just(false));
+        when(redis.opsForValue()).thenReturn(redisValues);
+        when(redisValues.get(anyString())).thenReturn(Mono.empty());
         filter = new GatewayJwtFilter(codec, redis, INTERNAL_SECRET, new ObjectMapper());
     }
 
@@ -100,6 +105,20 @@ class GatewayJwtFilterTest {
     void revokedTokenIsUnauthorized() {
         when(redis.hasKey(JwtCodec.BLACKLIST_KEY_PREFIX + "revoked-jti")).thenReturn(Mono.just(true));
         assertThat(run(exchange("/api/cart", accessToken("revoked-jti")))).isEqualTo(401);
+    }
+
+    @Test
+    void tokenIssuedBeforeLogoutIsUnauthorized() {
+        when(redisValues.get(JwtCodec.SESSION_INVALID_BEFORE_PREFIX + "1"))
+                .thenReturn(Mono.just(String.valueOf(NOW.plusSeconds(1).getEpochSecond())));
+        assertThat(run(exchange("/api/cart", accessToken("before-logout")))).isEqualTo(401);
+    }
+
+    @Test
+    void tokenIssuedInTheSameSecondAsLogoutIsStillValid() {
+        when(redisValues.get(JwtCodec.SESSION_INVALID_BEFORE_PREFIX + "1"))
+                .thenReturn(Mono.just(String.valueOf(NOW.getEpochSecond())));
+        assertThat(run(exchange("/api/cart", accessToken("same-second")))).isEqualTo(200);
     }
 
     @Test

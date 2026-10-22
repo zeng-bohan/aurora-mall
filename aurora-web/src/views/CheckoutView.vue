@@ -17,7 +17,7 @@ import AddressDialog from '@/components/AddressDialog.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { useCartStore } from '@/stores/cart'
 import { describeError } from '@/utils/errors'
-import { formatYuan } from '@/utils/money'
+import { formatYuan, toCents } from '@/utils/money'
 
 const route = useRoute()
 const router = useRouter()
@@ -34,20 +34,25 @@ const error = ref('')
 const addressDialog = ref(false)
 const idempotencyKey = ref(newIdempotencyKey())
 
-const merchandise = computed(() =>
-  items.value.reduce((sum, item) => sum + item.price * item.quantity, 0),
+const merchandiseCents = computed(() =>
+  items.value.reduce((sum, item) => sum + toCents(item.price) * item.quantity, 0),
 )
+const merchandise = computed(() => merchandiseCents.value / 100)
 const selectedCoupon = computed(
   () => myCoupons.value.find((coupon) => coupon.id === selectedCouponId.value) ?? null,
 )
-const discount = computed(() => {
+const discountCents = computed(() => {
   if (!selectedCoupon.value) {
     return 0
   }
-  return merchandise.value >= selectedCoupon.value.thresholdAmount ? selectedCoupon.value.discountAmount : 0
+  return merchandiseCents.value >= toCents(selectedCoupon.value.thresholdAmount)
+    ? toCents(selectedCoupon.value.discountAmount)
+    : 0
 })
-const shipping = computed(() => (merchandise.value - discount.value >= 299 ? 0 : 12))
-const payable = computed(() => Math.max(0, merchandise.value - discount.value + shipping.value))
+const discount = computed(() => discountCents.value / 100)
+const shippingCents = computed(() => (merchandiseCents.value - discountCents.value >= toCents(299) ? 0 : toCents(12)))
+const shipping = computed(() => shippingCents.value / 100)
+const payable = computed(() => Math.max(0, (merchandiseCents.value - discountCents.value + shippingCents.value) / 100))
 const availableCoupons = computed(() =>
   myCoupons.value.filter(
     (coupon) => coupon.status === 'UNUSED' && new Date(coupon.expireAt).getTime() > Date.now(),
@@ -251,20 +256,20 @@ onMounted(() => {
               v-for="coupon in availableCoupons"
               :key="coupon.id"
               class="radio-line"
-              :style="{ opacity: merchandise >= coupon.thresholdAmount ? 1 : 0.45 }"
+              :style="{ opacity: merchandiseCents >= toCents(coupon.thresholdAmount) ? 1 : 0.45 }"
             >
               <input
                 v-model="selectedCouponId"
                 type="radio"
                 :value="coupon.id"
-                :disabled="merchandise < coupon.thresholdAmount"
+                :disabled="merchandiseCents < toCents(coupon.thresholdAmount)"
               />
               <strong>{{ coupon.title }}</strong>
               <span class="tiny">
                 满 {{ formatYuan(coupon.thresholdAmount) }} 可用 · 有效期至
                 {{ coupon.expireAt.slice(0, 10) }}
               </span>
-              <span v-if="merchandise < coupon.thresholdAmount" class="tag">未达门槛</span>
+              <span v-if="merchandiseCents < toCents(coupon.thresholdAmount)" class="tag">未达门槛</span>
             </label>
             <p v-if="!availableCoupons.length" class="hint">暂无可用优惠券，可在优惠券页面领取。</p>
           </section>

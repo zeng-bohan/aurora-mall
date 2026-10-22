@@ -23,7 +23,7 @@ AURORA 是一个消费电子品牌 DTC 电商项目：商城前台、独立运�
 | --- | --- |
 | ![退款审批](docs/screenshots/dtc-admin-refunds-1440.png) | ![秒杀](docs/screenshots/dtc-seckill-1440.png) |
 
-移动端截图在 [docs/screenshots](docs/screenshots)，文件名以 `-390` 结尾。
+不同视口的截图在 [docs/screenshots](docs/screenshots)，文件名以 `-1440`、`-1280`、`-390`、`-320` 结尾。
 
 ## 业务模型
 
@@ -32,7 +32,7 @@ AURORA 是一个消费电子品牌 DTC 电商项目：商城前台、独立运�
 商品使用全局 EAV：
 
 - `product_category`：7 个分类。
-- `product_attribute` / `product_attribute_value`：15 个属性、54 个值，带类型、单位、可筛选、变体、必填与展示标记。
+- `product_attribute` / `product_attribute_value`：15 个属性、53 个值，带类型、单位、可筛选、变体、必填与展示标记。
 - `product_spu` / `product_spu_attribute` / `product_spu_attribute_value`：SPU 与参数绑定。
 - `product_sku` / `product_sku_attribute`：SKU 与属性组合。组合键唯一，SKU 编码唯一。
 
@@ -42,7 +42,7 @@ AURORA 是一个消费电子品牌 DTC 电商项目：商城前台、独立运�
 2. 优惠券按商品金额占比分摊，余数用最大余数法补齐，分摊总额必须等于券面额。
 3. 券后金额满 299 元免运费，未满收 12 元。
 4. 部分退款只退所选商品的原始商品金额，不退运费；退款后剩余商品金额低于券门槛时，只允许整单退款。
-5. 整单退款退回剩余实付（含运费），并返还优惠券。
+5. 整单退款退回剩余实付（含运费），并返还优惠券；已退款商品不再承担优惠，剩余商品重新分摊整张券。
 6. 秒杀订单不使用优惠券、不收运费，只支持整单退款。
 
 状态流转：
@@ -62,7 +62,7 @@ AURORA 是一个消费电子品牌 DTC 电商项目：商城前台、独立运�
 Redis 批量 Lua 在同一个脚本里检查每个 SKU 的可售量、扣减库存、写父订单守卫。DB 侧另有 `product_stock` 与 `stock_reservation` 台账：预扣、确认、释放都按父订单幂等。退款回补按 `(refund_id, sku_id)` 幂等。Redis 键缺失时对账任务从 DB 重建，不覆盖有差异的现存键。
 
 支付竞态：
-支付回调先校验渠道签名，再比对金额。`markPaid` 是条件更新；关单与支付同时发生时，支付侧会重新查单，若订单已关闭就登记迟到退款，不发布支付成功事件。支付事件发送失败由 `payment_orders.event_published` 与重试任务补齐。
+支付回调先校验渠道签名，再比对金额。`markPaid` 是条件更新；关单与支付同时发生时，支付侧会重新查单，若订单已关闭就登记迟到退款，不发布支付成功事件。支付事件发送失败由 `payment_orders.event_published` 与重试任务补齐。退款台账与支付单金额在同一事务落账，部分退款不会被误记为整单退款。
 
 退款：
 申请时只锁商品为 `REFUNDING`；运营同意后写退款金额、商品状态和订单退款汇总，再调用支付退款、库存回补或秒杀库存归还。外部调用失败不回滚已同意的审批，`RefundSettlementJob` 会重试未结算记录。
@@ -201,10 +201,10 @@ npm run dev
 
 | 数据 | 内容 |
 | --- | --- |
-| 商品 | 18 SPU、45 SKU、7 分类、15 属性、54 属性值 |
+| 商品 | 18 SPU、45 SKU、7 分类、15 属性、53 属性值 |
 | 订单 | 37 笔历史订单：待支付、已关闭、待发货、已发货、已完成、部分退款、整单退款 |
 | 退款 | 3 笔待审批、1 笔已拒绝、5 笔已同意并结算 |
-| 秒杀 | 1 场进行中、1 场次日开始、1 场由浏览器流程创建 |
+| 秒杀 | 2 场进行中、1 场次日开始 |
 | 账号 | 1 个运营管理员、6 个顾客，均带默认地址 |
 | 图片 | 45 张统一风格的概念渲染图，位于 `aurora-web/public/products` |
 
@@ -214,19 +214,21 @@ npm run dev
 
 ```bash
 mvn -B clean verify
-cd aurora-web && npm run typecheck && npm run build
+cd aurora-web && npm run typecheck && npm run build && npm run smoke:ui
 ```
 
 关键测试：
 
 - `TradePricingServiceTest`：优惠分摊、运费门槛、部分退款、整单退款、券门槛、秒杀限制。
-- `TradeServiceIntegrationTest`：真实 MySQL 下的下单幂等、同键换参数、事务失败库存回补、超时关单、迟到支付、发货与确认收货。
-- `PaymentServiceTest`：回调签名、金额校验、关单竞态、退款幂等。
-- `StockServiceIntegrationTest`：真实 MySQL + Redis 下的批量预扣、库存不足回滚、释放、确认、退款回补与并发防超卖。
-- `SeckillOrderServiceIntegrationTest`：真实 MySQL + Redis 下的一人一单、售罄、未开始、退款归还与并发防超卖。
-- 前端脚本：`aurora-web/scripts/ui-*.mjs` 覆盖桌面购物、运营台、秒杀全流程和移动端布局检查。
+- `TradeServiceIntegrationTest`：真实 MySQL 下的下单幂等、券已核销后的重放、事务失败库存回补、超时关单、迟到支付、发货、确认收货、部分/整单退款与结算重试。
+- `PaymentServiceTest` / `PaymentRefundIntegrationTest`：回调签名、金额校验、关单竞态、退款幂等，以及真实 MySQL 下的部分退款状态与退款台账事务。
+- `StockServiceIntegrationTest`：真实 MySQL + Redis 下的批量预扣、台账缺失恢复、释放修复、确认、退款回补幂等、Redis 重建与并发防超卖。
+- `SeckillOrderServiceIntegrationTest`：真实 MySQL + Redis 下的一人一单、售罄、未开始、退款归还、Redis 库存修复与并发防超卖。
+- 前端脚本：`cd aurora-web && npm run smoke:ui` 在真实后端上检查商城、运营台、秒杀页面与退款弹窗，覆盖 1440/1280/390/320 视口、控制台错误、失败请求、图片加载和横向溢出。
 
 CI 在 Ubuntu 上启动 MySQL 8.4 与 Redis 7，导入同一组 SQL，运行全量测试；库存与秒杀测试出现跳过会让构建失败。
+
+演示数据可用 `docker/mysql/verify-demo.sql` 校验订单、支付、退款、明细优惠和库存台账的一致性。
 
 ## 已知限制
 
@@ -235,6 +237,9 @@ CI 在 Ubuntu 上启动 MySQL 8.4 与 Redis 7，导入同一组 SQL，运行全�
 - 只支持发货前退款；退款申请按订单串行处理，不支持同一订单并行审批多笔退款。
 - 商品筛选在 Java 侧完成，适合当前 45 个 SKU 的演示规模；目录扩大后应改为索引化查询或搜索引擎。
 - 秒杀对账按活动扫描，单机规模设计；没有分片和死信队列。
+- 定时任务和秒杀对账没有分布式锁，默认单实例运行；多实例会重复扫描（操作本身幂等，但会浪费资源）。
+- 网关限流按路由共享配额，不区分用户/IP；演示环境可接受，公网部署应加用户维度并给登录接口加独立规则。
+- 运营端的用户、SKU、库存和商品列表未分页，适合当前 45 个 SKU 的演示规模。
 - 布隆过滤器是进程内实现，多实例各自一份。
 - 下单幂等记录长期保留，没有清理任务。
 - `docs/m2`–`docs/m5` 的压测与对照报告记录的是 DTC 重构前的实验环境，代码路径和订单模型已经变化；结论只用于对照，不代表当前版本的容量。
@@ -245,6 +250,7 @@ CI 在 Ubuntu 上启动 MySQL 8.4 与 Redis 7，导入同一组 SQL，运行全�
 - [技术导览](docs/TECHNICAL_HIGHLIGHTS.md)：关键设计、代码位置、验证方式与边界。
 - [可靠性修复记录](docs/reliability-fixes.md)：失败场景、事务边界和修复证据。
 - [面试导览](docs/interview-guide.md)：按问题组织的代码路径。
+- [验收报告](docs/acceptance-report-2026-10-22.md)：两轮全量验收、修复记录、安全与一致性证据。
 - [压测与对照报告](docs/)：自研 RPC、Seata、秒杀压测与分库试点（历史环境）。
 
 ## 许可证

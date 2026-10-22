@@ -23,9 +23,11 @@ public interface PaymentOrderMapper extends BaseMapper<PaymentOrder> {
             + "WHERE trade_id = #{tradeId} AND status IN ('PAYING', 'PAID', 'PARTIALLY_REFUNDED')")
     int markRefundedLate(@Param("tradeId") long tradeId);
 
-    @Update("UPDATE payment_orders SET refunded_amount = refunded_amount + #{amount}, "
+    // MySQL 单表 UPDATE 按从左到右赋值：status 先读旧的 refunded_amount 判断，
+    // 再把本次金额累加进去，避免部分退款被误记为整单退款。
+    @Update("UPDATE payment_orders SET "
             + "status = IF(refunded_amount + #{amount} >= amount, 'REFUNDED', 'PARTIALLY_REFUNDED'), "
-            + "updated_at = NOW() "
+            + "refunded_amount = refunded_amount + #{amount}, updated_at = NOW() "
             + "WHERE trade_id = #{tradeId} AND status IN ('PAID', 'PARTIALLY_REFUNDED') "
             + "AND amount - refunded_amount >= #{amount}")
     int applyRefund(@Param("tradeId") long tradeId, @Param("amount") BigDecimal amount);

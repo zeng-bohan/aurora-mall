@@ -7,7 +7,7 @@ import EmptyState from '@/components/EmptyState.vue'
 import QuantityStepper from '@/components/QuantityStepper.vue'
 import { useCartStore } from '@/stores/cart'
 import { describeError } from '@/utils/errors'
-import { formatYuan } from '@/utils/money'
+import { formatYuan, toCents } from '@/utils/money'
 
 const router = useRouter()
 const cart = useCartStore()
@@ -22,7 +22,7 @@ const allSelected = computed(
   () => activeItems.value.length > 0 && activeItems.value.every((item) => selected.value.includes(item.skuId)),
 )
 const subtotal = computed(() =>
-  selectedItems.value.reduce((sum, item) => sum + item.price * item.quantity, 0),
+  selectedItems.value.reduce((sum, item) => sum + toCents(item.price) * item.quantity, 0) / 100,
 )
 const totalQuantity = computed(() =>
   selectedItems.value.reduce((sum, item) => sum + item.quantity, 0),

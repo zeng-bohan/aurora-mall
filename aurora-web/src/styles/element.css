@@ -72,8 +72,24 @@
 }
 
 .el-dialog {
+  max-width: calc(100vw - 24px);
   border-radius: 12px;
   background: var(--surface);
+}
+
+@media (max-width: 480px) {
+  .el-dialog {
+    width: calc(100vw - 24px) !important;
+    margin: 6vh auto 24px;
+  }
+
+  .el-dialog__body {
+    padding: 16px;
+  }
+
+  .el-message-box {
+    max-width: calc(100vw - 24px);
+  }
 }
 
 .el-dialog__title {

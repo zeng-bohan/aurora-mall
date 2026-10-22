@@ -134,6 +134,16 @@ public class TradeService {
     public long place(long userId, PlaceTradeRequest request, String idempotencyKey) {
         requireIdempotencyKey(idempotencyKey);
         Map<Long, Integer> quantities = mergeItems(request.items());
+        String requestHash = fingerprint("MALL|" + request.addressId() + "|"
+                + request.couponId() + "|" + quantities);
+
+        // 先按幂等键回放：重试时商品可能已下架、券可能已核销，
+        // 这些状态变化不应让同一笔下单重试失败。
+        OrderIdempotency existing = idempotencyMapper.find(userId, idempotencyKey);
+        if (existing != null) {
+            return replay(existing, requestHash);
+        }
+
         List<ProductSnapshot> snapshots = loadSnapshots(quantities.keySet());
         Map<Long, ProductSnapshot> snapshotMap = snapshots.stream()
                 .collect(Collectors.toMap(ProductSnapshot::id, Function.identity()));
@@ -158,13 +168,6 @@ public class TradeService {
         BigDecimal discount = coupon == null ? BigDecimal.ZERO
                 : couponService.discountFor(coupon, merchandise);
         TradePricingService.Quote quote = pricingService.quote(lines, discount);
-        String requestHash = fingerprint("MALL|" + request.addressId() + "|" + request.couponId()
-                + "|" + quantities + "|" + quote.payableAmount());
-
-        OrderIdempotency existing = idempotencyMapper.find(userId, idempotencyKey);
-        if (existing != null) {
-            return replay(existing, requestHash);
-        }
         AddressClient.AddressView address = loadAddress(userId, request.addressId());
         long tradeId = idGenerator.nextId();
         List<InventoryClient.StockItem> stockItems = quantities.entrySet().stream()
@@ -271,21 +274,26 @@ public class TradeService {
     }
 
     public void ship(long tradeId, ShipRequest request) {
-        TradeOrder trade = requireTrade(tradeId);
-        if (!TradeOrder.STATUS_PAID.equals(trade.getStatus())) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "只有已支付订单可以发货");
-        }
-        if (refundMapper.countPendingByTrade(tradeId) > 0) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "订单有待审批退款，处理后再发货");
-        }
-        long normalItems = itemMapper.selectCount(new QueryWrapper<TradeOrderItem>()
-                .eq("trade_id", tradeId).eq("status", TradeOrderItem.STATUS_NORMAL));
-        if (normalItems == 0) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "订单商品已全部退款，不能发货");
-        }
-        if (tradeMapper.markShipped(tradeId, request.carrier(), request.trackingNo()) == 0) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "订单状态已变化，请刷新后重试");
-        }
+        transactionTemplate.executeWithoutResult(status -> {
+            TradeOrder trade = tradeMapper.selectForUpdate(tradeId);
+            if (trade == null) {
+                throw new BusinessException(ErrorCode.NOT_FOUND);
+            }
+            if (!TradeOrder.STATUS_PAID.equals(trade.getStatus())) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "只有已支付订单可以发货");
+            }
+            if (refundMapper.countPendingByTrade(tradeId) > 0) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "订单有待审批退款，处理后再发货");
+            }
+            long normalItems = itemMapper.selectCount(new QueryWrapper<TradeOrderItem>()
+                    .eq("trade_id", tradeId).eq("status", TradeOrderItem.STATUS_NORMAL));
+            if (normalItems == 0) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "订单商品已全部退款，不能发货");
+            }
+            if (tradeMapper.markShipped(tradeId, request.carrier(), request.trackingNo()) == 0) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "订单状态已变化，请刷新后重试");
+            }
+        });
     }
 
     public void markPaid(long tradeId, BigDecimal amount) {
@@ -302,8 +310,15 @@ public class TradeService {
             return;
         }
         if (TradeOrder.STATUS_CREATED.equals(trade.getStatus())) {
-            if (tradeMapper.markPaid(tradeId, LocalDateTime.now()) > 0) {
-                couponService.markUsed(tradeId);
+            Boolean paid = transactionTemplate.execute(status -> {
+                if (tradeMapper.markPaid(tradeId, LocalDateTime.now()) > 0) {
+                    couponService.markUsed(tradeId);
+                    return true;
+                }
+                return false;
+            });
+            if (Boolean.TRUE.equals(paid)) {
+                trade = tradeMapper.selectById(tradeId);
             } else {
                 trade = tradeMapper.selectById(tradeId);
                 if (trade == null || TradeOrder.STATUS_CREATED.equals(trade.getStatus())) {
@@ -342,7 +357,10 @@ public class TradeService {
         if (TradeOrder.SOURCE_SECKILL.equals(trade.getSource())) {
             releaseSeckill(trade, "CLOSE");
         } else {
-            inventoryClient.release(new InventoryClient.StockBatchRequest(tradeId, stockItems(tradeId)));
+            List<InventoryClient.StockItem> items = stockItems(tradeId);
+            Result<Void> release = RemoteCall.invoke("库存", "关单释放 " + tradeId,
+                    () -> inventoryClient.release(new InventoryClient.StockBatchRequest(tradeId, items)));
+            RemoteCall.requireSuccess(release, "库存");
         }
         couponService.release(tradeId);
         tradeMapper.markStockReleased(tradeId);
@@ -637,7 +655,10 @@ public class TradeService {
     }
 
     private Map<Long, Integer> mergeItems(List<ItemRequest> items) {
-        Map<Long, Integer> merged = new LinkedHashMap<>();
+        if (items == null || items.isEmpty()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "订单至少包含一件商品");
+        }
+        Map<Long, Integer> merged = new java.util.TreeMap<>();
         for (ItemRequest item : items) {
             merged.merge(item.skuId(), item.quantity(), Integer::sum);
         }

@@ -5,6 +5,10 @@ USE aurora_order;
 DELETE ri FROM aurora_order.order_refund_item ri
 JOIN aurora_order.order_refund r ON r.id = ri.refund_id
 WHERE r.trade_id BETWEEN 3001 AND 3037;
+DELETE sr FROM aurora_inventory.stock_restore sr
+JOIN aurora_order.order_refund r ON r.id = sr.refund_id
+WHERE r.trade_id BETWEEN 3001 AND 3037;
+DELETE FROM aurora_inventory.stock_reservation WHERE trade_id BETWEEN 3001 AND 3037;
 DELETE FROM aurora_order.order_refund WHERE trade_id BETWEEN 3001 AND 3037;
 DELETE FROM aurora_payment.payment_refunds WHERE trade_id BETWEEN 3001 AND 3037;
 DELETE FROM aurora_payment.payment_orders WHERE trade_id BETWEEN 3001 AND 3037;

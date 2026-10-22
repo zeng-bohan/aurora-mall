@@ -56,6 +56,9 @@ public interface TradeOrderMapper extends BaseMapper<TradeOrder> {
     @Select("SELECT * FROM trade_order WHERE status = 'CLOSED' AND stock_released = 0 LIMIT 200")
     List<TradeOrder> findClosedUnreleased();
 
+    @Select("SELECT * FROM trade_order WHERE id = #{id} FOR UPDATE")
+    TradeOrder selectForUpdate(@Param("id") long id);
+
     @Select("SELECT * FROM trade_order WHERE source = 'SECKILL' AND user_id = #{userId} "
             + "AND seckill_activity_id = #{activityId} ORDER BY id DESC LIMIT 1")
     TradeOrder findSeckillTrade(@Param("userId") long userId, @Param("activityId") long activityId);

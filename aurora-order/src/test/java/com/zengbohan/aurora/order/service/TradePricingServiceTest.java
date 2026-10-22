@@ -144,6 +144,43 @@ class TradePricingServiceTest {
                 .containsExactly(new BigDecimal("25.00"), new BigDecimal("25.00"));
     }
 
+
+    @Test
+    void refundAllocationCapsDetailAmountsAtActualRefund() {
+        List<BigDecimal> allocated = pricing.allocateRefundAmounts(
+                List.of(new BigDecimal("100.00"), new BigDecimal("100.00")),
+                new BigDecimal("162.00"));
+
+        assertThat(allocated).containsExactly(new BigDecimal("81.00"), new BigDecimal("81.00"));
+        assertThat(allocated.stream().reduce(BigDecimal.ZERO, BigDecimal::add))
+                .isEqualByComparingTo("162.00");
+    }
+
+    @Test
+    void oneCentAmountsAndFreeShippingThresholdUseIntegerCents() {
+        TradePricingService.Quote oneCent = pricing.quote(
+                List.of(new TradePricingService.PricedLine(1L, new BigDecimal("0.01"), 1)),
+                null);
+        assertThat(oneCent.merchandiseAmount()).isEqualByComparingTo("0.01");
+        assertThat(oneCent.shippingFee()).isEqualByComparingTo("12.00");
+        assertThat(oneCent.payableAmount()).isEqualByComparingTo("12.01");
+
+        TradePricingService.Quote exact = pricing.quote(
+                List.of(new TradePricingService.PricedLine(1L, new BigDecimal("299.00"), 1)),
+                null);
+        TradePricingService.Quote below = pricing.quote(
+                List.of(new TradePricingService.PricedLine(1L, new BigDecimal("298.99"), 1)),
+                null);
+        assertThat(exact.shippingFee()).isEqualByComparingTo("0.00");
+        assertThat(below.shippingFee()).isEqualByComparingTo("12.00");
+
+        List<BigDecimal> oneCentRefund = pricing.allocateRefundAmounts(
+                List.of(new BigDecimal("0.01"), new BigDecimal("0.01"), new BigDecimal("0.01")),
+                new BigDecimal("0.01"));
+        assertThat(oneCentRefund.stream().reduce(BigDecimal.ZERO, BigDecimal::add))
+                .isEqualByComparingTo("0.01");
+    }
+
     private static TradeOrder trade(String payable, String refunded, String source, Long couponId) {
         TradeOrder trade = new TradeOrder();
         trade.setPayableAmount(new BigDecimal(payable));

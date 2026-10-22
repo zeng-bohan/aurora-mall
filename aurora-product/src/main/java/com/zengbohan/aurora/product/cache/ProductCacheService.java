@@ -9,6 +9,8 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -175,13 +177,35 @@ public class ProductCacheService {
         safeDelete(KEY_PREFIX + id);
     }
 
+    /** 事务内调用：提交后再删缓存，避免“删完缓存、事务尚未提交”期间旧数据被回填。 */
+    public void evictAfterCommit(long id) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    evictWithDelayedSecondDelete(id);
+                }
+            });
+        } else {
+            evictWithDelayedSecondDelete(id);
+        }
+    }
+
+    public void evictWithDelayedSecondDelete(long id) {
+        evict(id);
+        scheduleSecondEvict(id);
+    }
+
     public void bloomPut(long id) {
         bloomFilterHolder.get().put(String.valueOf(id));
     }
 
     public void doubleDeleteAfterUpdate(long id, Runnable dbUpdate) {
         dbUpdate.run();
-        evict(id);
+        evictWithDelayedSecondDelete(id);
+    }
+
+    private void scheduleSecondEvict(long id) {
         doubleDeleteScheduler.schedule(() -> {
             try {
                 evict(id);

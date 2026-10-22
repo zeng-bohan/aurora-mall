@@ -107,6 +107,14 @@ public class SeckillActivityService {
         return toView(require(id), now());
     }
 
+    /** 运营视图保留已结束活动，便于查看历史与库存结果。 */
+    public List<SeckillActivityView> adminViews() {
+        LocalDateTime now = now();
+        List<SeckillActivity> activities = new ArrayList<>(activityMapper.selectList(
+                new LambdaQueryWrapper<SeckillActivity>().orderByDesc(SeckillActivity::getStartAt)));
+        return activities.stream().map(a -> toView(a, now)).toList();
+    }
+
     public int availableStock(long activityId) {
         SeckillStock stock = stockMapper.selectById(activityId);
         return stock == null ? 0 : stock.getAvailable();

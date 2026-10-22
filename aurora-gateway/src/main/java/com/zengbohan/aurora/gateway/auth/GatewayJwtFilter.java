@@ -89,15 +89,33 @@ public class GatewayJwtFilter implements GlobalFilter, Ordered {
                     if (Boolean.TRUE.equals(revoked)) {
                         return unauthorized(exchange);
                     }
-                    // 原样转发 Authorization：登出需要原始 token 的 jti，
-                    // 下游的信任改由内部密钥头建立
-                    return chain.filter(exchange.mutate()
-                            .request(r -> r.headers(h -> {
-                                h.set(USER_ID_HEADER, claims.subject());
-                                h.set(USER_ROLE_HEADER, claims.role());
-                                h.set(INTERNAL_SECRET_HEADER, internalSecret);
-                            }))
-                            .build());
+                    // 登出会写 session-invalid-before；iat 更早的 access token
+                    // 即使没被逐条拉黑也必须失效，否则其他会话的旧票能继续用。
+                    return redis.opsForValue()
+                            .get(JwtCodec.SESSION_INVALID_BEFORE_PREFIX + claims.subject())
+                            .defaultIfEmpty("")
+                            .flatMap(invalidBefore -> {
+                                if (!invalidBefore.isBlank()) {
+                                    long threshold;
+                                    try {
+                                        threshold = Long.parseLong(invalidBefore);
+                                    } catch (NumberFormatException e) {
+                                        return unauthorized(exchange);
+                                    }
+                                    if (claims.issuedAt().getEpochSecond() < threshold) {
+                                        return unauthorized(exchange);
+                                    }
+                                }
+                                // 原样转发 Authorization：登出需要原始 token 的 jti，
+                                // 下游的信任改由内部密钥头建立
+                                return chain.filter(exchange.mutate()
+                                        .request(r -> r.headers(h -> {
+                                            h.set(USER_ID_HEADER, claims.subject());
+                                            h.set(USER_ROLE_HEADER, claims.role());
+                                            h.set(INTERNAL_SECRET_HEADER, internalSecret);
+                                        }))
+                                        .build());
+                            });
                 });
     }
 

@@ -19,8 +19,6 @@ public class LogoutService {
 
     private static final String BEARER = "Bearer ";
 
-    private static final String SESSION_INVALID_BEFORE_PREFIX = "aurora:jwt:session-invalid-before:";
-
     private final JwtCodec jwtCodec;
     private final StringRedisTemplate redis;
     private final long refreshTtlSeconds;
@@ -51,7 +49,7 @@ public class LogoutService {
                     Duration.ofSeconds(remaining));
         }
         // 会话级失效：一次登出作废该用户全部既有会话（refresh 不查黑名单但查这个时间戳）
-        redis.opsForValue().set(SESSION_INVALID_BEFORE_PREFIX + claims.subject(),
+        redis.opsForValue().set(JwtCodec.SESSION_INVALID_BEFORE_PREFIX + claims.subject(),
                 String.valueOf(jwtCodec.now().getEpochSecond()),
                 Duration.ofSeconds(refreshTtlSeconds));
     }

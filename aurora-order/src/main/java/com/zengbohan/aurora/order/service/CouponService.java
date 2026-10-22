@@ -201,8 +201,9 @@ public class CouponService {
                 && coupon.getExpireAt().isBefore(LocalDateTime.now())) {
             status = CouponStatus.EXPIRED.name();
         }
-        return new CouponView(coupon.getId(), coupon.getTitle(), coupon.getThresholdAmount(),
-                coupon.getDiscountAmount(), status, coupon.getExpireAt(), coupon.getTradeId());
+        return new CouponView(coupon.getId(), coupon.getTemplateId(), coupon.getTitle(),
+                coupon.getThresholdAmount(), coupon.getDiscountAmount(), status,
+                coupon.getExpireAt(), coupon.getTradeId());
     }
 
     public record CouponUse(long id, long templateId, long userId, String title,

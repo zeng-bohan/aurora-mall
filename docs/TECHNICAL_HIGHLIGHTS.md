@@ -31,8 +31,8 @@
 **代码**：`aurora-order/.../service/TradeService.java`、`TradePricingService.java`、`RefundService.java`；表结构见 `05-aurora_order.sql`。
 
 **验证**：
-- `TradePricingServiceTest`（8 例）：分摊总额、运费门槛、部分退款后保留券、低于门槛拒绝、整单退款、部分后退整单、秒杀限制、优惠重分摊。
-- `TradeServiceIntegrationTest`（7 例，真实 MySQL）：下单幂等、同键换内容、事务失败库存回补、关单、迟到支付、发货与确认收货、待审批退款阻止发货。
+- `TradePricingServiceTest`（9 例）：分摊总额、运费门槛、部分退款后保留券、低于门槛拒绝、整单退款、部分后退整单、秒杀限制、优惠重分摊、退款明细金额分摊。
+- `TradeServiceIntegrationTest`（20 例，真实 MySQL）：下单幂等与重放、同键换内容、事务失败库存回补、关单、迟到支付、发货与确认收货、待审批退款阻止发货、部分/整单退款、结算重试、明细优惠与退款金额一致性。
 - 浏览器流程：多商品结算、部分退款、运营审批、发货、确认收货。
 
 **边界**：退款申请按订单串行处理；同一订单不能并行审批多笔退款。退款金额只按商品原价，不重新计算已使用优惠的退回。
@@ -61,11 +61,11 @@
 - Redis 批量 Lua 一次检查所有 SKU 的可售量，任一不足就整批失败；全部满足才统一扣减，并写入父订单守卫，防止同一订单重复预扣。
 - DB 侧 `product_stock` 记录可售与已预占，`stock_reservation` 按 `(trade_id, sku_id)` 记录 `RESERVED / CONFIRMED / RELEASED`。
 - 支付成功确认预占；关单释放预占；退款按 `(refund_id, sku_id)` 写入 `stock_restore` 后回补可售库存。
-- Redis 键缺失时从 DB 重建；键存在但与 DB 有差异时只告警，不自动覆盖。
+- Redis 键缺失时从 DB 重建；键存在但与 DB 有差异时只告警，不自动覆盖。运营台“重建 Redis”与演示数据脚本可显式按 DB 覆盖；退款回补和订单释放都带 Redis 守卫，重试不会重复加减。
 
 **代码**：`aurora-inventory/.../stock/StockService.java`、`StockLuaScripts.java`、`lua/stock_batch_{reserve,release,restore}.lua`、`stock_set.lua`；表结构见 `04-aurora_inventory.sql`。
 
-**验证**：`StockServiceIntegrationTest`（5 例，真实 MySQL + Redis）覆盖批量预扣、第二个 SKU 不足时整批不扣、释放幂等、确认后退款回补、并发抢最后一件只成功一次。
+**验证**：`StockServiceIntegrationTest`（10 例，真实 MySQL + Redis）覆盖批量预扣、台账缺失恢复、第二个 SKU 不足时整批不扣、释放幂等、Redis 修复、确认后退款回补、回补幂等、Redis 重建、并发抢最后一件只成功一次。
 
 **边界**：对账只重建缺失键，不自动修复有差异的键；管理员改库存时用 DB 行锁加 Redis CAS，有在途变更就拒绝。
 
@@ -78,11 +78,11 @@
 - `markPaid` 是 `WHERE status='PAYING'` 的条件更新；更新后重新查单。
 - 如果订单已关闭，登记迟到退款（`markRefundedLate`），不发布支付成功事件。
 - 如果支付赢了关单，之后关单再执行时会再次查单，发现已支付就停止关单。
-- 退款按退款单号幂等：`payment_refunds` 先插入，重复请求直接返回；`applyRefund` 用 `amount - refunded_amount >= amount` 防止超退。
+- 退款按退款单号幂等：退款记录与支付单累加在同一事务落账，重复请求直接返回；`applyRefund` 用 `amount - refunded_amount >= amount` 防止超退，并正确区分部分/整单退款状态。
 
 **代码**：`aurora-payment/.../service/PaymentService.java`、`PaymentController.java`、`PaymentEventPublisher.java`；表结构见 `06-aurora_payment.sql`。
 
-**验证**：`PaymentServiceTest`（7 例）覆盖签名拒绝、正常回调只发布一次、关单退款、关单赢竞态、金额不符、退款幂等、迟到退款。
+**验证**：`PaymentServiceTest`（7 例）覆盖签名拒绝、正常回调只发布一次、关单退款、关单赢竞态、金额不符、退款幂等、迟到退款；`PaymentRefundIntegrationTest`（5 例，真实 MySQL）覆盖部分退款状态、失败退款回滚、重复/并发退款。
 
 **边界**：支付事件重试依赖 `event_published` 与重试任务；没有死信队列。渠道是模拟实现，不对接真实支付。
 
@@ -94,13 +94,13 @@
 - `seckill_reserve.lua` 原子完成时间窗、一人一单、库存扣减和 `PENDING` 结果。
 - 异步落单由 MQ 消费，结果状态机为 `PENDING → PROCESSING → ORDER / FAIL`；认领、补偿、重置都用 Lua。
 - 落单统一调用订单服务创建父订单，不另建一套订单表。
-- 关单或整单退款时，按父订单幂等归还活动库存（`seckill_release`），并同步增加 Redis 活动余量。
+- 关单或整单退款时，按父订单幂等归还活动库存（`seckill_release`），Redis 活动余量用订单级守卫同步，失败会抛出让关单/结算重试。
 - 发送结果未知时保留 `PENDING`，由 `SeckillReconcileJob` 查单确认或归还名额。
 
 **代码**：`aurora-seckill/.../service/SeckillOrderService.java`、`SeckillActivityService.java`、`SeckillPreheatService.java`、`lua/seckill_{reserve,claim,reset_pending,compensate}.lua`。
 
 **验证**：
-- `SeckillOrderServiceIntegrationTest`（5 例，真实 MySQL + Redis）：同步落单与二次抢购拒绝、售罄、未开始、退款归还、5 人抢 2 件只成功 2 人。
+- `SeckillOrderServiceIntegrationTest`（6 例，真实 MySQL + Redis）：同步落单与二次抢购拒绝、售罄、未开始、退款归还、Redis 库存修复、5 人抢 2 件只成功 2 人；`SeckillMaterializeIntegrationTest`（2 例）覆盖 MQ 重复投递与落单失败补偿。
 - 浏览器全流程：运营创建并预热 → 用户抢购 → 支付 → 整单退款 → 运营审批 → 活动库存回到 5/5。
 
 **边界**：对账按活动扫描，单机规模；限流是活动维度；没有分布式锁，靠 Redis Lua 的原子性。
@@ -130,7 +130,7 @@
 
 **代码**：`aurora-web/src/styles/`、`src/views/`、`src/components/`、`src/api/dtc.ts`。
 
-**验证**：`npm run typecheck && npm run build`；`scripts/ui-storefront.mjs`、`ui-admin.mjs`、`ui-seckill-flow.mjs`、`ui-mobile.mjs` 在 Chrome 中跑真实流程并检查控制台错误与横向溢出。
+**验证**：`npm run typecheck && npm run build && npm run smoke:ui`；`scripts/ui-smoke.mjs` 在 Chrome 中检查 93 个页面/视口组合的控制台错误、失败请求、图片加载和横向溢出，并打开退款弹窗与审批详情。
 
 **边界**：商品图是概念渲染；没有真实支付、物流或评价系统。
 
@@ -139,6 +139,6 @@
 - 纯单元测试：定价、签名、状态机、缓存、限流、ID 生成。
 - 真实 MySQL 测试：订单幂等与关单、支付退款、库存预约、秒杀预约。
 - 真实 Redis 测试：库存与秒杀 Lua 的原子性、并发防超卖。
-- 浏览器测试：商城购物、运营审批、秒杀全流程、桌面与 390px 布局。
+- 浏览器测试：`npm run smoke:ui` 覆盖商城、运营台、秒杀页面与 1440/1280/390/320 布局；完整交易闭环在验收过程中用 Playwright 实际操作。
 
 CI 启动 MySQL 8.4 与 Redis 7，导入与本地相同的建表 SQL，运行 `mvn -B clean verify`；库存和秒杀报告出现 skipped 会让构建失败。

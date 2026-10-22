@@ -79,6 +79,8 @@ async function logout(): Promise<void> {
             :key="item.to"
             class="admin-nav__link"
             :to="item.to"
+            :title="item.label"
+            :aria-label="item.label"
           >
             <el-icon class="admin-nav__icon"><component :is="item.icon" /></el-icon>
             <span>{{ item.label }}</span>

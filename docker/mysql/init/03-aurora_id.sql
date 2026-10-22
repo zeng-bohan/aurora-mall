@@ -8,4 +8,4 @@ CREATE TABLE IF NOT EXISTS leaf_alloc (
     updated_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE = InnoDB;
 
-INSERT IGNORE INTO leaf_alloc (biz_tag, max_id, step) VALUES ('order', 0, 1000);
+INSERT IGNORE INTO leaf_alloc (biz_tag, max_id, step) VALUES ('order', 100000, 1000);

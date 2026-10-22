@@ -21,4 +21,7 @@ public interface TradeOrderItemMapper extends BaseMapper<TradeOrderItem> {
 
     @Update("UPDATE trade_order_item SET discount_amount = #{discount} WHERE id = #{id}")
     int updateDiscount(@Param("id") long id, @Param("discount") BigDecimal discount);
+
+    @Update("UPDATE trade_order_item SET discount_amount = 0.00 WHERE id = #{id}")
+    int clearDiscount(@Param("id") long id);
 }

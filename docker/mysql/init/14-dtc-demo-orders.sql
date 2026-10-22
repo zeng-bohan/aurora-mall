@@ -5,6 +5,12 @@
 SET NAMES utf8mb4;
 USE aurora_order;
 
+-- 演示订单使用 3001–3037 的固定号段。号段生成器必须从更高的位置开始，
+-- 否则真实订单发到第 3001 个号时会与演示数据主键冲突。
+UPDATE aurora_id.leaf_alloc
+SET max_id = GREATEST(max_id, 100000)
+WHERE biz_tag = 'order';
+
 CREATE TEMPORARY TABLE demo_order_spec (
     id              BIGINT PRIMARY KEY,
     user_id         BIGINT      NOT NULL,
@@ -178,6 +184,14 @@ JOIN aurora_product.product_sku k ON k.id = i.sku_id
 JOIN aurora_product.product_spu p ON p.id = k.spu_id
 WHERE NOT EXISTS (SELECT 1 FROM trade_order_item x WHERE x.id = i.id);
 
+-- 历史订单的库存预约台账：这些订单已经发货/完成，当前 available 已是售后库存，
+-- 所以只补 CONFIRMED 台账，不重复扣减 available。待审批退款批准时才能正确回补。
+INSERT IGNORE INTO aurora_inventory.stock_reservation (trade_id, sku_id, quantity, status)
+SELECT i.trade_id, i.sku_id, i.quantity, 'CONFIRMED'
+FROM demo_item_spec i
+JOIN demo_order_spec s ON s.id = i.trade_id
+WHERE s.status IN ('PAID', 'SHIPPED', 'COMPLETED', 'REFUNDED');
+
 CREATE TEMPORARY TABLE demo_refund_spec (
     id            BIGINT PRIMARY KEY,
     trade_id      BIGINT NOT NULL,
@@ -225,6 +239,13 @@ SELECT 4006, 30362, 39, 1, 179.00 UNION ALL
 SELECT 4007, 30311, 30, 1, 1099.00 UNION ALL
 SELECT 4008, 30321, 18, 1, 599.00 UNION ALL
 SELECT 4009, 30371, 45, 1, 459.00;
+
+-- 已结算的历史退款在库存台账中标记为已回补，重复结算不会再加一次。
+INSERT IGNORE INTO aurora_inventory.stock_restore (refund_id, sku_id, quantity)
+SELECT ri.refund_id, ri.sku_id, ri.quantity
+FROM aurora_order.order_refund_item ri
+JOIN demo_refund_spec r ON r.id = ri.refund_id
+WHERE r.status = 'APPROVED';
 
 -- 支付单跟随订单状态：待支付 / 已关闭仍是 PAYING，退款后进入部分或整单退款。
 INSERT IGNORE INTO aurora_payment.payment_orders (

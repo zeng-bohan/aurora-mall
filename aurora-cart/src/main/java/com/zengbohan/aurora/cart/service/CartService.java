@@ -74,5 +74,8 @@ public class CartService {
         if (snapshot == null) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "商品不存在");
         }
+        if (snapshot.status() == null || snapshot.status() != ProductSnapshot.STATUS_ON_SALE) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "商品已下架");
+        }
     }
 }

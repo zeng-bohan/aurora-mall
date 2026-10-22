@@ -46,7 +46,9 @@ class PaymentServiceTest {
         publisher = mock(PaymentEventPublisher.class);
         verifier = new ChannelSignatureVerifier("test-channel-secret-0123456789");
         service = new PaymentService(paymentMapper, refundMapper, orderClient, publisher,
-                verifier, new ObjectMapper());
+                verifier, new ObjectMapper(),
+                new org.springframework.transaction.support.TransactionTemplate(
+                        mock(org.springframework.transaction.PlatformTransactionManager.class)));
     }
 
     @Test

@@ -18,8 +18,8 @@ const loading = ref(false)
 
 async function submit(): Promise<void> {
   error.value = ''
-  if (username.value.trim().length < 3) {
-    error.value = '用户名至少 3 个字符'
+  if (username.value.trim().length < 4) {
+    error.value = '用户名至少 4 个字符'
     return
   }
   if (password.value.length < 8) {
@@ -72,7 +72,7 @@ async function submit(): Promise<void> {
         <form class="auth-form" @submit.prevent="submit">
           <label class="field">
             <span class="field__label">用户名</span>
-            <input v-model="username" class="input" autocomplete="username" placeholder="至少 3 个字符" />
+            <input v-model="username" class="input" autocomplete="username" placeholder="至少 4 个字符" />
           </label>
           <label class="field">
             <span class="field__label">昵称（可选）</span>

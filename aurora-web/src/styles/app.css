@@ -231,10 +231,12 @@
 
 .admin-stack {
   display: grid;
+  min-width: 0;
   gap: 16px;
 }
 
 .admin-card {
+  min-width: 0;
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -256,6 +258,7 @@
 }
 
 .admin-card__body {
+  min-width: 0;
   padding: 18px 20px;
 }
 
@@ -279,6 +282,7 @@
 }
 
 .table-wrap {
+  max-width: 100%;
   overflow-x: auto;
 }
 

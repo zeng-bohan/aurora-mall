@@ -27,8 +27,6 @@ public class UserService {
 
     static final String ROLE_USER = "USER";
 
-    private static final String SESSION_INVALID_BEFORE_PREFIX = "aurora:jwt:session-invalid-before:";
-
     private final UserMapper userMapper;
     private final JwtCodec jwtCodec;
     private final StringRedisTemplate redis;
@@ -98,13 +96,19 @@ public class UserService {
         if (!JwtCodec.TYP_REFRESH.equals(claims.typ())) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
-        // 已用过的 refresh（轮换后旧票立即作废）
-        if (Boolean.TRUE.equals(redis.hasKey(JwtCodec.BLACKLIST_KEY_PREFIX + claims.jti()))) {
+        long remaining = claims.expiresAt().getEpochSecond() - jwtCodec.now().getEpochSecond();
+        if (remaining <= 0) {
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+        }
+        // 轮换用 SETNX 原子认领：并发用同一 refresh 只能有一个成功。
+        Boolean claimed = redis.opsForValue().setIfAbsent(
+                JwtCodec.BLACKLIST_KEY_PREFIX + claims.jti(), "1", Duration.ofSeconds(remaining));
+        if (!Boolean.TRUE.equals(claimed)) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
         // 登出后的会话级失效：iat 早于失效时间戳的一切旧 token 拒绝
         String invalidBefore = redis.opsForValue()
-                .get(SESSION_INVALID_BEFORE_PREFIX + claims.subject());
+                .get(JwtCodec.SESSION_INVALID_BEFORE_PREFIX + claims.subject());
         if (invalidBefore != null
                 && claims.issuedAt().getEpochSecond() < Long.parseLong(invalidBefore)) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
@@ -112,12 +116,6 @@ public class UserService {
         User user = userMapper.selectById(Long.valueOf(claims.subject()));
         if (user == null || user.getStatus() == User.STATUS_DISABLED) {
             throw new BusinessException(ErrorCode.UNAUTHORIZED);
-        }
-        // 轮换：旧 refresh 拉黑（剩余寿命），一次一换
-        long remaining = claims.expiresAt().getEpochSecond() - jwtCodec.now().getEpochSecond();
-        if (remaining > 0) {
-            redis.opsForValue().set(JwtCodec.BLACKLIST_KEY_PREFIX + claims.jti(), "1",
-                    Duration.ofSeconds(remaining));
         }
         return issueTokens(user);
     }

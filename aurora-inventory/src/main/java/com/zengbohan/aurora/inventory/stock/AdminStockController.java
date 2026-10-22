@@ -5,6 +5,7 @@ import com.zengbohan.aurora.common.web.RequireAdmin;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -40,5 +41,10 @@ public class AdminStockController {
     public Result<List<StockDtos.StockView>> list(@RequestParam(required = false) List<Long> skuIds) {
         return Result.ok(skuIds == null || skuIds.isEmpty()
                 ? stockService.allStocks() : stockService.stocks(skuIds));
+    }
+
+    @PostMapping("/reconcile")
+    public Result<Integer> reconcile() {
+        return Result.ok(stockService.rebuildRedisStock());
     }
 }

@@ -167,27 +167,41 @@ public class SeckillOrderService {
 
     public boolean releaseForTrade(long tradeId, long activityId, int quantity, String reason) {
         int quantitySafe = Math.max(quantity, 1);
-        Boolean[] released = {false};
+        boolean[] newlyReleased = {false};
+        boolean[] releaseRecorded = {false};
         transactionTemplate.executeWithoutResult(status -> {
             if (releaseMapper.insertIfAbsent(tradeId, activityId, quantitySafe, reason) == 1) {
                 if (stockMapper.restore(activityId, quantitySafe) == 0) {
                     throw new BusinessException(ErrorCode.NOT_FOUND, "秒杀活动库存不存在");
                 }
                 reservationMapper.markReleasedByTrade(tradeId);
-                released[0] = true;
+                newlyReleased[0] = true;
+                releaseRecorded[0] = true;
+            } else {
+                releaseRecorded[0] = releaseMapper.exists(tradeId) > 0;
             }
         });
-        if (Boolean.TRUE.equals(released[0])) {
-            try {
-                String key = SeckillLuaScripts.activityKey(activityId);
-                if (Boolean.TRUE.equals(redis.hasKey(key))) {
-                    redis.opsForHash().increment(key, SeckillPreheatService.FIELD_STOCK, quantitySafe);
-                }
-            } catch (RuntimeException e) {
-                log.warn("seckill redis stock restore failed for trade {}", tradeId, e);
-            }
+        if (!releaseRecorded[0]) {
+            return false;
         }
-        return Boolean.TRUE.equals(released[0]);
+        // DB 已记归还；Redis 同步用订单级守卫保证恰好一次。失败时抛出让订单关单/
+        // 退款结算重试，下一次会继续补偿而不是把差额留在 Redis。
+        Long applied;
+        try {
+            applied = redis.execute(scripts.releaseStock,
+                    java.util.List.of(SeckillLuaScripts.activityKey(activityId),
+                            SeckillLuaScripts.releaseGuardKey(tradeId)),
+                    String.valueOf(tradeId), String.valueOf(quantitySafe), "2592000");
+        } catch (RuntimeException e) {
+            log.error("seckill redis stock restore failed for trade {}", tradeId, e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                    "秒杀库存 Redis 同步失败，等待重试");
+        }
+        if (applied == null || (applied != 1L && applied != 0L && applied != -3L)) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                    "秒杀库存 Redis 同步失败，等待重试");
+        }
+        return newlyReleased[0];
     }
 
     private SeckillBuyView placeSync(long activityId, long userId) {

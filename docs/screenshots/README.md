@@ -2,22 +2,31 @@
 
 截图来自本机 Chrome，使用真实后端与演示数据库。商品图为概念渲染，支付与物流为模拟流程。
 
+除特别标注外，商城与运营台页面均保存 1440 × 900、1280 × 800、390 × 844、320 × 700 四个视口。文件名中的数字是视口宽度。
+
 ## 商城
 
 | 文件 | 页面 |
 | --- | --- |
-| `dtc-home-1440.png` / `dtc-home-390.png` | 首页，桌面 / 移动 |
-| `dtc-products-1440.png` / `dtc-products-390.png` | 商品目录 |
+| `dtc-home-*.png` | 首页 |
+| `dtc-products-*.png` | 商品目录 |
 | `dtc-products-filter-390.png` | 移动端筛选面板 |
-| `dtc-product-detail-1440.png` / `dtc-product-detail-390.png` | 商品详情与 SKU 选择 |
-| `dtc-cart-1440.png` / `dtc-cart-390.png` | 购物车 |
-| `dtc-checkout-1440.png` | 多商品结算 |
-| `dtc-orders-1440.png` / `dtc-orders-390.png` | 订单列表 |
-| `dtc-order-detail-1440.png` / `dtc-order-detail-390.png` | 订单详情与物流 |
-| `dtc-order-refund-pending-1440.png` | 退款进度 |
-| `dtc-refund-dialog.png` | 部分退款申请 |
-| `dtc-seckill-1440.png` / `dtc-seckill-390.png` | 秒杀列表 |
-| `dtc-seckill-detail-1440.png` / `dtc-seckill-detail-390.png` | 秒杀详情 |
+| `dtc-product-detail-*.png` | 商品详情与 SKU 选择 |
+| `dtc-cart-*.png` | 购物车 |
+| `dtc-checkout-1440.png` | 多商品结算与优惠券 |
+| `dtc-orders-*.png` | 订单列表 |
+| `dtc-order-detail-*.png` | 已发货订单与模拟物流 |
+| `dtc-order-detail-paid-1440.png` | 已支付待发货 |
+| `dtc-order-shipped-1440.png` | 已发货 |
+| `dtc-order-completed-1440.png` | 已完成 |
+| `dtc-order-refund-pending-1440.png` | 待审批退款 |
+| `dtc-refund-dialog.png` | 部分退款申请弹窗 |
+| `dtc-coupons-*.png` | 优惠券领取与账户券 |
+| `dtc-addresses-*.png` | 地址簿 |
+| `dtc-address-dialog-320.png` / `dtc-address-dialog-390.png` | 移动端新增地址弹窗 |
+| `dtc-profile-*.png` | 个人中心 |
+| `dtc-seckill-*.png` | 秒杀列表 |
+| `dtc-seckill-detail-*.png` | 秒杀详情 |
 | `dtc-seckill-result-1440.png` | 中签结果 |
 | `dtc-seckill-order-1440.png` / `dtc-seckill-order-paid-1440.png` | 秒杀订单与支付 |
 | `dtc-seckill-refund-1440.png` | 秒杀整单退款 |
@@ -26,18 +35,17 @@
 
 | 文件 | 页面 |
 | --- | --- |
-| `dtc-admin-dashboard-1440.png` | 概览，指标来自真实 SQL |
-| `dtc-admin-orders-1440.png` | 订单管理 |
-| `dtc-admin-refunds-1440.png` | 退款审批 |
-| `dtc-admin-refund-approved-1440.png` | 退款审批结果 |
-| `dtc-admin-products-1440.png` | 商品管理 |
-| `dtc-admin-product-edit-1440.png` | SPU / SKU 编辑 |
-| `dtc-admin-catalog-1440.png` | 分类与属性 |
-| `dtc-admin-inventory-1440.png` | 库存 |
-| `dtc-admin-coupons-1440.png` | 优惠券 |
-| `dtc-admin-seckill-1440.png` | 秒杀活动与预热 |
-| `dtc-admin-seckill-before-1440.png` | 秒杀活动创建前 |
-| `dtc-admin-users-1440.png` | 用户 |
+| `dtc-admin-dashboard-*.png` | 概览，指标来自真实 SQL |
+| `dtc-admin-orders-*.png` | 订单管理 |
+| `dtc-admin-refunds-*.png` | 退款审批 |
+| `dtc-admin-refund-approved-1440.png` | 已同意退款的详情 |
+| `dtc-admin-products-*.png` | 商品管理 |
+| `dtc-admin-product-edit-*.png` | SPU / SKU 编辑 |
+| `dtc-admin-catalog-*.png` | 分类与属性 |
+| `dtc-admin-inventory-*.png` | 库存与 Redis 重建 |
+| `dtc-admin-coupons-*.png` | 优惠券 |
+| `dtc-admin-seckill-*.png` | 秒杀活动与预热 |
+| `dtc-admin-users-*.png` | 用户 |
 
 ## 可观测性
 

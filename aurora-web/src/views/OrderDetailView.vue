@@ -66,6 +66,21 @@ async function load(): Promise<void> {
   }
 }
 
+async function waitForPaid(id: number): Promise<boolean> {
+  for (let i = 0; i < 8; i += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 250))
+    try {
+      const current = await tradeApi.detail(id)
+      if (current.status !== 'CREATED') {
+        return true
+      }
+    } catch {
+      // 状态查询失败时继续重试，最终由 load() 展示真实状态
+    }
+  }
+  return false
+}
+
 async function pay(): Promise<void> {
   if (!trade.value) {
     return
@@ -74,7 +89,11 @@ async function pay(): Promise<void> {
   try {
     await paymentApi.initiate(trade.value.id)
     await paymentApi.mockPay(trade.value.id)
-    ElMessage.success('支付完成')
+    if (await waitForPaid(trade.value.id)) {
+      ElMessage.success('支付完成')
+    } else {
+      ElMessage.info('支付已受理，订单状态同步中，请稍后刷新')
+    }
     await load()
   } catch (e) {
     ElMessage.error(describeError(e))

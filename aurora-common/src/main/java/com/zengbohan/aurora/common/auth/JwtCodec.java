@@ -23,6 +23,8 @@ public class JwtCodec {
     public static final String TYP_REFRESH = "refresh";
     // 已撤销 token 黑名单共用的 redis key 前缀（网关负责查询，user 负责写入）。
     public static final String BLACKLIST_KEY_PREFIX = "aurora:jwt:blacklist:";
+    // 会话级失效时间戳：登出时写入，iat 早于它的 access/refresh token 全部拒绝。
+    public static final String SESSION_INVALID_BEFORE_PREFIX = "aurora:jwt:session-invalid-before:";
 
     private static final Base64.Encoder B64 = Base64.getUrlEncoder().withoutPadding();
     private static final Base64.Decoder B64D = Base64.getUrlDecoder();

@@ -68,6 +68,9 @@ class StockServiceIntegrationTest {
         for (long tradeId = TRADE_BASE + 1; tradeId <= TRADE_BASE + 20; tradeId++) {
             redis.delete(StockLuaScripts.guardKey(tradeId));
         }
+        for (long refundId = REFUND_BASE + 1; refundId <= REFUND_BASE + 10; refundId++) {
+            redis.delete(StockLuaScripts.restoreGuardKey(refundId));
+        }
     }
 
     @AfterEach
@@ -153,6 +156,92 @@ class StockServiceIntegrationTest {
         assertThat(jdbc.queryForObject(
                 "SELECT COUNT(*) FROM stock_restore WHERE refund_id = ?", Integer.class,
                 REFUND_BASE + 1)).isEqualTo(1);
+    }
+
+    @Test
+    void reserveRebuildsMissingLedgerWhenRedisGuardSurvived() {
+        seedStock(SKU_A, 10);
+        stockService.reserve(TRADE_BASE + 5, List.of(item(SKU_A, 3)));
+
+        // 模拟“Redis 已扣减、DB 台账事务回滚”：删掉台账并把 reserved 归零，Redis 保持 7。
+        jdbc.update("DELETE FROM stock_reservation WHERE trade_id = ?", TRADE_BASE + 5);
+        jdbc.update("UPDATE product_stock SET reserved = 0 WHERE sku_id = ?", SKU_A);
+
+        stockService.reserve(TRADE_BASE + 5, List.of(item(SKU_A, 3)));
+
+        assertThat(redisStock(SKU_A)).isEqualTo(7);
+        assertThat(jdbc.queryForObject(
+                "SELECT reserved FROM product_stock WHERE sku_id = ?", Integer.class, SKU_A))
+                .isEqualTo(3);
+        assertThat(reservationMapper.find(TRADE_BASE + 5, SKU_A).getStatus())
+                .isEqualTo("RESERVED");
+    }
+
+    @Test
+    void releaseRepairsRedisWhenLedgerWasAlreadyMarkedReleased() {
+        seedStock(SKU_A, 10);
+        stockService.reserve(TRADE_BASE + 6, List.of(item(SKU_A, 4)));
+
+        // 模拟“DB 释放已提交、Redis 释放失败”：台账 RELEASED，Redis 仍扣着。
+        jdbc.update("UPDATE stock_reservation SET status = 'RELEASED' "
+                + "WHERE trade_id = ? AND sku_id = ?", TRADE_BASE + 6, SKU_A);
+        jdbc.update("UPDATE product_stock SET reserved = 0 WHERE sku_id = ?", SKU_A);
+        assertThat(redisStock(SKU_A)).isEqualTo(6);
+
+        stockService.release(TRADE_BASE + 6, List.of(item(SKU_A, 4)));
+        stockService.release(TRADE_BASE + 6, List.of(item(SKU_A, 4)));
+
+        assertThat(redisStock(SKU_A)).isEqualTo(10);
+        assertThat(jdbc.queryForObject(
+                "SELECT reserved FROM product_stock WHERE sku_id = ?", Integer.class, SKU_A))
+                .isZero();
+    }
+
+    @Test
+    void restoreRepairsRedisAfterDbCommittedButRedisIncrementWasLost() {
+        seedStock(SKU_A, 10);
+        stockService.reserve(TRADE_BASE + 7, List.of(item(SKU_A, 2)));
+        stockService.confirm(TRADE_BASE + 7, List.of(item(SKU_A, 2)));
+        assertThat(redisStock(SKU_A)).isEqualTo(8);
+
+        // 模拟“DB 回补已提交、Redis 增量丢失”：DB 已是 10，Redis 仍是 8。
+        jdbc.update("INSERT INTO stock_restore (refund_id, sku_id, quantity) VALUES (?, ?, 2)",
+                REFUND_BASE + 2, SKU_A);
+        jdbc.update("UPDATE product_stock SET available = available + 2 WHERE sku_id = ?", SKU_A);
+
+        stockService.restore(REFUND_BASE + 2, TRADE_BASE + 7, List.of(item(SKU_A, 2)));
+        stockService.restore(REFUND_BASE + 2, TRADE_BASE + 7, List.of(item(SKU_A, 2)));
+
+        assertThat(redisStock(SKU_A)).isEqualTo(10);
+        assertThat(jdbc.queryForObject(
+                "SELECT available FROM product_stock WHERE sku_id = ?", Integer.class, SKU_A))
+                .isEqualTo(10);
+    }
+
+    @Test
+    void restoreRebuildsMissingRedisKeyFromDbWithoutDoubleCounting() {
+        seedStock(SKU_A, 10);
+        stockService.reserve(TRADE_BASE + 8, List.of(item(SKU_A, 2)));
+        stockService.confirm(TRADE_BASE + 8, List.of(item(SKU_A, 2)));
+
+        redis.delete(StockLuaScripts.key(SKU_A));
+        stockService.restore(REFUND_BASE + 3, TRADE_BASE + 8, List.of(item(SKU_A, 2)));
+
+        assertThat(redisStock(SKU_A)).isEqualTo(10);
+    }
+
+    @Test
+    void rebuildRedisStockRepairsDivergentSellableValue() {
+        seedStock(SKU_A, 10);
+        jdbc.update("UPDATE product_stock SET reserved = 2 WHERE sku_id = ?", SKU_A);
+        redis.opsForValue().set(StockLuaScripts.key(SKU_A), "3");
+
+        int repaired = stockService.rebuildRedisStock(List.of(SKU_A));
+
+        assertThat(repaired).isEqualTo(1);
+        assertThat(redisStock(SKU_A)).isEqualTo(8);
+        stockService.rebuildRedisStock(List.of(SKU_A));
+        assertThat(redisStock(SKU_A)).isEqualTo(8);
     }
 
     @Test

@@ -325,6 +325,7 @@ export interface CouponTemplate {
 
 export interface UserCoupon {
   id: number
+  templateId: number
   title: string
   thresholdAmount: number
   discountAmount: number
@@ -614,6 +615,7 @@ export const inventoryApi = {
     })),
   setStock: (skuId: number, quantity: number) =>
     unwrap(http.put<Result<void>>(`/inventory/admin/stocks/${skuId}`, { quantity })),
+  reconcile: () => unwrap(http.post<Result<number>>('/inventory/admin/stocks/reconcile')),
 }
 
 export const seckillApi = {

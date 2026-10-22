@@ -232,7 +232,8 @@ public class ProductQueryService {
         if (includeOffShelf) {
             return loadDetail(id, true);
         }
-        return cacheService.get(id, SpuDetail.class, () -> loadDetail(id, false));
+        SpuDetail cached = cacheService.get(id, SpuDetail.class, () -> loadDetail(id, false));
+        return withFreshStock(cached);
     }
 
     public List<SpuCard> related(long id, int limit) {
@@ -265,13 +266,15 @@ public class ProductQueryService {
         Map<Long, ProductAttributeValue> values = valueMapper.selectList(null).stream()
                 .collect(Collectors.toMap(ProductAttributeValue::getId, Function.identity()));
         Map<Long, Integer> stock = stockMap(skus.stream().map(ProductSku::getId).toList());
-        return skus.stream().filter(sku -> yes(sku.getStatus())).map(sku -> {
+        return skus.stream().map(sku -> {
             ProductSpu spu = spus.get(sku.getSpuId());
             String attributesText = attributesText(skuAttrs.getOrDefault(sku.getId(), List.of()),
                     attrs, values);
+            int status = spu != null && yes(spu.getStatus()) && yes(sku.getStatus())
+                    ? ProductSnapshot.STATUS_ON_SALE : ProductSnapshot.STATUS_OFF_SHELF;
             return new ProductSnapshot(sku.getId(), sku.getSpuId(), sku.getSkuCode(),
                     sku.getTitle(), attributesText, sku.getImageUrl(), sku.getPrice(),
-                    stock.get(sku.getId()), sku.getStatus());
+                    stock.get(sku.getId()), status);
         }).toList();
     }
 
@@ -313,8 +316,21 @@ public class ProductQueryService {
         return batch.get(0);
     }
 
-    private SpuDetail loadDetail(long id, boolean includeOffShelf) {
-        ProductSpu spu = spuMapper.selectById(id);
+    private SpuDetail withFreshStock(SpuDetail detail) {
+        if (detail.skus().isEmpty()) {
+            return detail;
+        }
+        Map<Long, Integer> stock = stockMap(detail.skus().stream().map(SkuView::id).toList());
+        List<SkuView> fresh = detail.skus().stream()
+                .map(sku -> new SkuView(sku.id(), sku.skuCode(), sku.title(), sku.price(),
+                        sku.status(), sku.imageUrl(), stock.get(sku.id()), sku.attributes()))
+                .toList();
+        return new SpuDetail(detail.id(), detail.categoryId(), detail.categoryName(),
+                detail.brand(), detail.title(), detail.subtitle(), detail.description(),
+                detail.status(), detail.attributes(), fresh, detail.specs(), detail.related());
+    }
+
+    private SpuDetail loadDetail(long id, boolean includeOffShelf) {        ProductSpu spu = spuMapper.selectById(id);
         if (spu == null || (!includeOffShelf && !yes(spu.getStatus()))) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }

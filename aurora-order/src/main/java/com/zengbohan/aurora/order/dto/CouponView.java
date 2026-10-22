@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
  * 按 expireAt 推导的派生状态，不会出现在库里。
  */
 public record CouponView(long id,
+                         long templateId,
                          String title,
                          BigDecimal thresholdAmount,
                          BigDecimal discountAmount,

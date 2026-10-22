@@ -29,3 +29,16 @@ WHERE k.id = 1;
 INSERT IGNORE INTO seckill_stock (activity_id, total, available)
 SELECT 9930001, 30, 30
 WHERE EXISTS (SELECT 1 FROM seckill_activity WHERE id = 9930001);
+
+INSERT IGNORE INTO seckill_activity (
+    id, title, spu_id, sku_id, product_title, product_image, original_price,
+    seckill_price, total_stock, per_user_limit, start_at, end_at)
+SELECT 9930003, 'Quiet 降噪耳机 · 秋日限定', k.spu_id, k.id, k.title, k.image_url, k.price,
+       699.00, 5, 1,
+       DATE_SUB(NOW(), INTERVAL 2 HOUR), DATE_ADD(NOW(), INTERVAL 4 HOUR)
+FROM aurora_product.product_sku k
+WHERE k.id = 28;
+
+INSERT IGNORE INTO seckill_stock (activity_id, total, available)
+SELECT 9930003, 5, 5
+WHERE EXISTS (SELECT 1 FROM seckill_activity WHERE id = 9930003);

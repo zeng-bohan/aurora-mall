@@ -90,14 +90,34 @@ public class RefundService {
         if (refundMapper.countPendingByTrade(tradeId) > 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "该订单已有待审批的退款申请");
         }
-        List<TradeOrderItem> items = tradeService.items(tradeId);
-        TradePricingService.RefundCalculation calc = pricingService.calculateRefund(
-                trade, items, request.itemIds(), couponService.thresholdOf(trade.getUserCouponId()));
-        if (!calc.allowed()) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, calc.message());
-        }
         long[] refundId = new long[1];
+        BigDecimal[] refundAmount = new BigDecimal[1];
         transactionTemplate.executeWithoutResult(status -> {
+            // 锁住父订单后重新读取明细并计算金额：避免与上一笔审批并发时
+            // 用过期快照算出超过剩余实付的退款额。
+            TradeOrder locked = tradeMapper.selectForUpdate(tradeId);
+            if (locked == null || !TradeOrder.STATUS_PAID.equals(locked.getStatus())) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "当前订单状态不支持退款");
+            }
+            if (refundMapper.countPendingByTrade(tradeId) > 0) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "该订单已有待审批的退款申请");
+            }
+            List<TradeOrderItem> items = itemMapper.selectList(new QueryWrapper<TradeOrderItem>()
+                    .eq("trade_id", tradeId).orderByAsc("id"));
+            TradePricingService.RefundCalculation calc = pricingService.calculateRefund(
+                    locked, items, request.itemIds(), couponService.thresholdOf(locked.getUserCouponId()));
+            if (!calc.allowed()) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, calc.message());
+            }
+            List<TradeOrderItem> selected = request.itemIds().stream()
+                    .map(itemId -> items.stream()
+                            .filter(item -> item.getId().equals(itemId))
+                            .findFirst()
+                            .orElseThrow(() -> new BusinessException(ErrorCode.PARAM_ERROR,
+                                    "退款商品不属于该订单")))
+                    .toList();
+            List<BigDecimal> refundAmounts = pricingService.allocateRefundAmounts(
+                    selected.stream().map(TradeOrderItem::getItemAmount).toList(), calc.amount());
             OrderRefund refund = new OrderRefund();
             refund.setRefundNo("R" + tradeId + "-" + UUID.randomUUID().toString().substring(0, 8));
             refund.setTradeId(tradeId);
@@ -108,22 +128,22 @@ public class RefundService {
             refund.setSettled(0);
             refundMapper.insert(refund);
             refundId[0] = refund.getId();
-            for (Long itemId : request.itemIds()) {
-                TradeOrderItem item = items.stream()
-                        .filter(i -> i.getId().equals(itemId)).findFirst().orElseThrow();
-                if (itemMapper.markRefunding(itemId) == 0) {
+            refundAmount[0] = calc.amount();
+            for (int i = 0; i < selected.size(); i++) {
+                TradeOrderItem item = selected.get(i);
+                if (itemMapper.markRefunding(item.getId()) == 0) {
                     throw new BusinessException(ErrorCode.PARAM_ERROR, "所选商品状态已变化，请刷新后重试");
                 }
                 OrderRefundItem refundItem = new OrderRefundItem();
                 refundItem.setRefundId(refund.getId());
-                refundItem.setOrderItemId(itemId);
+                refundItem.setOrderItemId(item.getId());
                 refundItem.setSkuId(item.getSkuId());
                 refundItem.setQuantity(item.getQuantity());
-                refundItem.setAmount(item.getItemAmount());
+                refundItem.setAmount(refundAmounts.get(i));
                 refundItemMapper.insert(refundItem);
             }
         });
-        return new RefundApplyResult(refundId[0], calc.amount(), OrderRefund.STATUS_PENDING);
+        return new RefundApplyResult(refundId[0], refundAmount[0], OrderRefund.STATUS_PENDING);
     }
 
     public RefundView approve(long refundId, String reviewer) {
@@ -144,6 +164,9 @@ public class RefundService {
                 if (itemMapper.markRefunded(refundItem.getOrderItemId(), refundItem.getAmount()) == 0) {
                     throw new BusinessException(ErrorCode.PARAM_ERROR, "退款商品状态已变化");
                 }
+                // 已退款商品不再承担订单优惠；剩余商品重新分摊整张券，
+                // 保证明细优惠之和仍等于父订单优惠。
+                itemMapper.clearDiscount(refundItem.getOrderItemId());
             }
             BigDecimal newRefunded = trade.getRefundedAmount().add(refund.getAmount());
             long remaining = itemMapper.selectCount(new QueryWrapper<TradeOrderItem>()

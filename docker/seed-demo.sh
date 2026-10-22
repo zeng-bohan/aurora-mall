@@ -42,7 +42,13 @@ else
   if [[ -z "$TOKEN" ]]; then
     warn "运营账号登录失败，跳过预热"
   else
-    for id in 9930001 9930002; do
+    if curl -sf -X POST "$GATEWAY/api/inventory/admin/stocks/reconcile" \
+      -H "Authorization: Bearer $TOKEN" >/dev/null; then
+      ok "库存 Redis 已按 DB 台账重建"
+    else
+      warn "库存 Redis 重建失败（服务未就绪时可在运营台库存页点击“重建 Redis”）"
+    fi
+    for id in 9930001 9930002 9930003; do
       if curl -sf -X POST "$GATEWAY/api/seckill/admin/activities/$id/preheat" \
         -H "Authorization: Bearer $TOKEN" >/dev/null; then
         ok "活动 $id 已预热"

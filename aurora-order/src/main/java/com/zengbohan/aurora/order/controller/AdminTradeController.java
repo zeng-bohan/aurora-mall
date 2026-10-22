@@ -12,6 +12,7 @@ import com.zengbohan.aurora.order.dto.TradeDtos.TradeView;
 import com.zengbohan.aurora.order.service.RefundService;
 import com.zengbohan.aurora.order.service.TradeService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -81,7 +82,7 @@ public class AdminTradeController {
 
     @PostMapping("/refunds/{id}/reject")
     public Result<RefundView> reject(@PathVariable long id,
-                                     @RequestBody RejectRequest request,
+                                     @Valid @RequestBody RejectRequest request,
                                      @RequestHeader(value = "X-User-Id", required = false) String admin) {
         return Result.ok(refundService.reject(id, request.reason(),
                 admin == null ? "admin" : admin));
@@ -92,6 +93,6 @@ public class AdminTradeController {
         return Result.ok(tradeService.adminUsers());
     }
 
-    public record RejectRequest(String reason) {
+    public record RejectRequest(@NotBlank String reason) {
     }
 }

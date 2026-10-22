@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { couponApi, type CouponTemplate, type UserCoupon } from '@/api/dtc'
 import EmptyState from '@/components/EmptyState.vue'
@@ -13,6 +13,7 @@ const templates = ref<CouponTemplate[]>([])
 const mine = ref<UserCoupon[]>([])
 const loading = ref(true)
 const claiming = ref<number | null>(null)
+const claimedTemplateIds = computed(() => new Set(mine.value.map((coupon) => coupon.templateId)))
 
 async function load(): Promise<void> {
   loading.value = true
@@ -80,10 +81,10 @@ onMounted(() => {
                 <button
                   class="btn btn--primary btn--sm"
                   type="button"
-                  :disabled="claiming === template.id"
+                  :disabled="claiming === template.id || claimedTemplateIds.has(template.id)"
                   @click="claim(template)"
                 >
-                  {{ claiming === template.id ? '领取中…' : '领取' }}
+                  {{ claiming === template.id ? '领取中…' : claimedTemplateIds.has(template.id) ? '已领取' : '领取' }}
                 </button>
               </div>
             </article>
