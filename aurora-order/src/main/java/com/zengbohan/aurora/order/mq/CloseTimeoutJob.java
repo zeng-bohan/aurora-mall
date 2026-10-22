@@ -1,9 +1,9 @@
 package com.zengbohan.aurora.order.mq;
 
-import com.zengbohan.aurora.order.entity.Order;
-import com.zengbohan.aurora.order.mapper.OrderMapper;
-import com.zengbohan.aurora.order.service.CouponService;
-import com.zengbohan.aurora.order.service.OrderService;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import com.zengbohan.aurora.order.entity.TradeOrder;
+import com.zengbohan.aurora.order.mapper.TradeOrderMapper;
+import com.zengbohan.aurora.order.service.TradeService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -11,43 +11,35 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
-// 延迟消息的扫描兜底：关闭已超期的 CREATED 订单。
 @Component
+@ConditionalOnProperty(name = "aurora.background-jobs.enabled", havingValue = "true", matchIfMissing = true)
 public class CloseTimeoutJob {
 
     private static final Logger log = LoggerFactory.getLogger(CloseTimeoutJob.class);
 
-    private final OrderMapper orderMapper;
-    private final OrderService orderService;
-    private final CouponService couponService;
+    private final TradeOrderMapper tradeMapper;
+    private final TradeService tradeService;
 
-    public CloseTimeoutJob(OrderMapper orderMapper, OrderService orderService, CouponService couponService) {
-        this.orderMapper = orderMapper;
-        this.orderService = orderService;
-        this.couponService = couponService;
+    public CloseTimeoutJob(TradeOrderMapper tradeMapper, TradeService tradeService) {
+        this.tradeMapper = tradeMapper;
+        this.tradeService = tradeService;
     }
 
     @Scheduled(fixedDelayString = "${aurora.order.close-scan-interval-ms:60000}", initialDelay = 75_000)
     public void closeOverdue() {
-        LocalDateTime deadline = LocalDateTime.now().minusSeconds(orderService.closeTimeoutSeconds());
-        for (Order overdue : orderMapper.findTimedOut(deadline)) {
+        LocalDateTime deadline = LocalDateTime.now().minusSeconds(tradeService.closeTimeoutSeconds());
+        for (TradeOrder overdue : tradeMapper.findTimedOut(deadline)) {
             try {
-                orderService.closeIfPending(overdue.getId());
-                // 关单的兜底路径也要回券（M5 S5），与延迟消息那条路径行为一致
-                couponService.releaseForOrder(overdue.getId());
+                tradeService.closeIfPending(overdue.getId());
             } catch (RuntimeException e) {
-                // 毒丸隔离：一条失败不能饿死本轮后续记录（下轮还会重扫到它）
-                log.error("timed-out close failed for order {}", overdue.getId(), e);
+                log.error("timed-out close failed for trade {}", overdue.getId(), e);
             }
         }
-        // 补偿扫描：此前库存释放失败的已关闭订单
-        for (Order stranded : orderMapper.findUnreleasedClosed()) {
+        for (TradeOrder stranded : tradeMapper.findClosedUnreleased()) {
             try {
-                orderService.closeIfPending(stranded.getId());
-                // 补偿扫描：库存释放曾经失败过，同一轮也把券的回退重试一次（守卫保证幂等）
-                couponService.releaseForOrder(stranded.getId());
+                tradeService.closeIfPending(stranded.getId());
             } catch (RuntimeException e) {
-                log.error("compensating release failed for order {}", stranded.getId(), e);
+                log.error("compensating stock release failed for trade {}", stranded.getId(), e);
             }
         }
     }

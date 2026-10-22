@@ -10,12 +10,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 
-/**
- * 本地消息兜底：宽限期后仍处于 pending 的 tx_message
- * 会以普通消息重发（消费端幂等），随后
- * 标记为已发送。覆盖生产者刚提交就崩溃
- * 以及 broker 确认丢失的情况。
- */
 @Component
 @ConditionalOnProperty(name = "rocketmq.name-server")
 public class TxMessageRetryJob {
@@ -38,7 +32,6 @@ public class TxMessageRetryJob {
                 publisher.resend(message.getTopic(), message.getTag(), message.getPayload(), message.getBizKey());
                 txMessageMapper.markSent(message.getId());
             } catch (RuntimeException e) {
-                // 毒丸隔离：一条重发失败不能饿死本轮后续消息
                 log.error("tx_message resend failed for id {}", message.getId(), e);
             }
         }

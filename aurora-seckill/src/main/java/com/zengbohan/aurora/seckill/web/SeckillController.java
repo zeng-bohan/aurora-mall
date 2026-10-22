@@ -38,15 +38,14 @@ public class SeckillController {
         return Result.ok(activityService.viewOf(id));
     }
 
-    // 抢购：先过 Redis 预扣闸门，抢到名额才落单。
-    // 默认模式（mq）返回 {status: QUEUED}，客户端用下面的查询接口轮询结果；
-    // sync 模式（对照基线）直接返回 {status: PLACED, orderId}。
+    // 抢购：先过 Redis 预扣闸门，中签后通过订单服务创建统一父订单。
+    // mq 模式返回 QUEUED，客户端轮询；sync 模式直接返回 PLACED + tradeId。
     @PostMapping("/{id}/orders")
     public Result<SeckillBuyView> buy(@PathVariable long id, @RequestHeader("X-User-Id") long userId) {
         return Result.ok(orderService.buy(id, userId));
     }
 
-    // 抢购结果查询：排队中返回 QUEUED，已落单返回 PLACED + orderId，失败按业务码返回
+    // 抢购结果查询：排队中返回 QUEUED，已落单返回 PLACED + tradeId。
     @GetMapping("/{id}/orders/mine")
     public Result<SeckillBuyView> myOrder(@PathVariable long id, @RequestHeader("X-User-Id") long userId) {
         return Result.ok(orderService.mine(id, userId));

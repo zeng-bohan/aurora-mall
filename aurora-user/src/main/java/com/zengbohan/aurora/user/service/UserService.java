@@ -9,6 +9,7 @@ import com.zengbohan.aurora.user.dto.LoginRequest;
 import com.zengbohan.aurora.user.dto.RefreshRequest;
 import com.zengbohan.aurora.user.dto.RegisterRequest;
 import com.zengbohan.aurora.user.dto.TokenResponse;
+import com.zengbohan.aurora.user.dto.AddressDtos.UserView;
 import com.zengbohan.aurora.user.entity.User;
 import com.zengbohan.aurora.user.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -119,6 +120,24 @@ public class UserService {
                     Duration.ofSeconds(remaining));
         }
         return issueTokens(user);
+    }
+
+    public UserView view(long id) {
+        User user = userMapper.selectById(id);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND);
+        }
+        return toView(user);
+    }
+
+    public java.util.List<UserView> listUsers() {
+        return userMapper.selectList(new LambdaQueryWrapper<User>().orderByAsc(User::getId))
+                .stream().map(UserService::toView).toList();
+    }
+
+    private static UserView toView(User user) {
+        return new UserView(user.getId(), user.getUsername(), user.getNickname(), user.getRole(),
+                user.getStatus(), user.getCreatedAt());
     }
 
     private TokenResponse issueTokens(User user) {

@@ -21,7 +21,7 @@ public class UserCoupon {
     private Long templateId;
     private Long userId;
     private String status;
-    private Long orderId;
+    private Long tradeId;
     private String title;
     private BigDecimal thresholdAmount;
     private BigDecimal discountAmount;
@@ -61,12 +61,12 @@ public class UserCoupon {
         this.status = status;
     }
 
-    public Long getOrderId() {
-        return orderId;
+    public Long getTradeId() {
+        return tradeId;
     }
 
-    public void setOrderId(Long orderId) {
-        this.orderId = orderId;
+    public void setTradeId(Long tradeId) {
+        this.tradeId = tradeId;
     }
 
     public String getTitle() {

@@ -1,5 +1,7 @@
 # M5 压测报告：秒杀抢购在「活动限流关闭 / 打开」下的对照
 
+> 历史报告：实验发生在 DTC 重构前，订单模型与代码路径已经变化。数据只用于方案对照，不代表当前版本容量。
+
 日期：2026-10-09 · 状态：已完成（M5 S3 交付物） · 关联：[m4-load-test.md](m4-load-test.md)（压测方法与机器基线同源）、[smoke-seckill.sh](../docker/smoke-seckill.sh)（功能语义的小规模验收缝）
 
 本报告的每个数字都可用 `docker/jmeter/aurora-seckill.jmx` 原样重放（命令见文末「复现」节）。

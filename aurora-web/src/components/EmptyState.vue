@@ -1,14 +1,11 @@
 <script setup lang="ts">
-defineProps<{
-  title: string
-  hint?: string
-}>()
+defineProps<{ title: string; description?: string }>()
 </script>
 
 <template>
-  <div class="empty-state">
-    <h2>{{ title }}</h2>
-    <p v-if="hint">{{ hint }}</p>
+  <div class="empty">
+    <div class="empty__title">{{ title }}</div>
+    <p v-if="description">{{ description }}</p>
     <slot />
   </div>
 </template>

@@ -13,5 +13,5 @@ public record CouponView(long id,
                          BigDecimal discountAmount,
                          String status,
                          LocalDateTime expireAt,
-                         Long orderId) {
+                         Long tradeId) {
 }

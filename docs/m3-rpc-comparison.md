@@ -1,5 +1,7 @@
 # M3 对照实验：OpenFeign vs 手写 RPC（aurora-rpc）
 
+> 历史报告：实验发生在 DTC 重构前，订单模型与代码路径已经变化。数据只用于方案对照，不代表当前版本容量。
+
 日期：2026-09-30 · 状态：已完成（M3 交付物） · 关联：[Spec #22](https://github.com/zeng-bohan/aurora-mall/issues/22)
 
 ## 对照的问题

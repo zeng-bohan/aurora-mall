@@ -30,7 +30,7 @@ class CartServiceTest {
     private CartService service;
 
     private static final ProductSnapshot MUG =
-            new ProductSnapshot(1L, "Aurora Mug", new BigDecimal("29.90"), 100, 1);
+            new ProductSnapshot(1L, 10L, "SKU-MUG", "Aurora Mug", "雾白", "/products/mug.webp", new BigDecimal("29.90"), 100, 1);
 
     // 假端口：可编程返回与故障。
     private static final class FakeProductPort implements ProductPort {
@@ -111,7 +111,7 @@ class CartServiceTest {
 
     @Test
     void viewSkipsLinesWhoseProductDisappeared() {
-        productPort.catalog.put(555L, new ProductSnapshot(555L, "Gone", BigDecimal.ONE, 0, 1));
+        productPort.catalog.put(555L, new ProductSnapshot(555L, 55L, "SKU-GONE", "Gone", "", "/products/gone.webp", BigDecimal.ONE, 0, 1));
         service.add(7L, new CartItemRequest(1L, 4));
         service.add(7L, new CartItemRequest(555L, 1));
         productPort.catalog.remove(555L); // 商品下架：batch 不再返回该 id

@@ -13,3 +13,7 @@ spring:
 aurora:
   internal:
     secret: test-only-internal-secret-not-real
+  # 测试不启动秒杀对账任务
+  seckill:
+    reconcile:
+      enabled: false

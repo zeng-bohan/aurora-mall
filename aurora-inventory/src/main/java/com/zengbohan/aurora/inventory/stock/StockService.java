@@ -2,26 +2,30 @@ package com.zengbohan.aurora.inventory.stock;
 
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.common.idempotent.DedupStore;
 import com.zengbohan.aurora.inventory.entity.ProductStock;
+import com.zengbohan.aurora.inventory.entity.StockReservation;
 import com.zengbohan.aurora.inventory.mapper.ProductStockMapper;
+import com.zengbohan.aurora.inventory.mapper.StockReservationMapper;
+import com.zengbohan.aurora.inventory.mapper.StockRestoreMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
-/**
- * 双层库存：Redis 存可售数量（预占事件异步落库），MySQL 是账本。
- * 对账任务用 DB 视图（available - reserved）重建缺失的 key。
- */
 @Service
 public class StockService {
 
     private static final Logger log = LoggerFactory.getLogger(StockService.class);
+
+    private static final long OK = 1L;
     private static final long MISSING_KEY = -1L;
     private static final long INSUFFICIENT = -2L;
     private static final long ALREADY_RESERVED = -3L;
@@ -29,273 +33,288 @@ public class StockService {
     private final StringRedisTemplate redis;
     private final StockLuaScripts scripts;
     private final ProductStockMapper stockMapper;
-    private final DedupStore dedupStore;
+    private final StockReservationMapper reservationMapper;
+    private final StockRestoreMapper restoreMapper;
     private final TransactionTemplate transactionTemplate;
 
     public StockService(StringRedisTemplate redis, StockLuaScripts scripts,
-                        ProductStockMapper stockMapper, DedupStore dedupStore,
-                        TransactionTemplate transactionTemplate) {
+                        ProductStockMapper stockMapper, StockReservationMapper reservationMapper,
+                        StockRestoreMapper restoreMapper, TransactionTemplate transactionTemplate) {
         this.redis = redis;
         this.scripts = scripts;
         this.stockMapper = stockMapper;
-        this.dedupStore = dedupStore;
+        this.reservationMapper = reservationMapper;
+        this.restoreMapper = restoreMapper;
         this.transactionTemplate = transactionTemplate;
     }
 
-    public void setStock(long skuId, int quantity) {
-        if (quantity < 0) {
+    public void reserve(long tradeId, List<StockDtos.StockItem> items) {
+        List<StockDtos.StockItem> normalized = normalize(items);
+        if (!reservationMapper.findByTrade(tradeId).isEmpty()) {
+            log.info("reserve skipped: trade {} already has reservations", tradeId);
+            return;
+        }
+        ensureStockKeys(normalized);
+        long result = executeReserve(tradeId, normalized);
+        if (result == MISSING_KEY) {
+            ensureStockKeys(normalized);
+            result = executeReserve(tradeId, normalized);
+        }
+        if (result == ALREADY_RESERVED) {
+            if (!reservationMapper.findByTrade(tradeId).isEmpty()) {
+                return;
+            }
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                    "库存预占状态不一致，请稍后重试");
+        }
+        if (result == INSUFFICIENT) {
+            throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
+        }
+        if (result != OK) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务异常");
+        }
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                for (StockDtos.StockItem item : normalized) {
+                    if (reservationMapper.insertIfAbsent(tradeId, item.skuId(), item.quantity()) == 1) {
+                        if (stockMapper.incrementReserved(item.skuId(), item.quantity()) == 0) {
+                            throw new BusinessException(ErrorCode.NOT_FOUND, "SKU " + item.skuId() + " 未开通库存");
+                        }
+                    }
+                }
+            });
+        } catch (RuntimeException e) {
+            releaseRedis(tradeId, normalized);
+            throw e;
+        }
+    }
+
+    public void release(long tradeId, List<StockDtos.StockItem> ignored) {
+        List<StockReservation> reservations = reservationMapper.findByTrade(tradeId);
+        List<StockReservation> reserved = reservations.stream()
+                .filter(r -> "RESERVED".equals(r.getStatus())).toList();
+        if (reserved.isEmpty()) {
+            return;
+        }
+        List<StockDtos.StockItem> items = reserved.stream()
+                .map(r -> new StockDtos.StockItem(r.getSkuId(), r.getQuantity())).toList();
+        try {
+            ensureStockKeys(items);
+            releaseRedis(tradeId, items);
+        } catch (RuntimeException e) {
+            log.error("redis release failed for trade {}; reconcile will repair keys", tradeId, e);
+        }
+        transactionTemplate.executeWithoutResult(status -> {
+            for (StockReservation row : reserved) {
+                if (reservationMapper.markReleased(tradeId, row.getSkuId()) == 1) {
+                    if (stockMapper.decrementReserved(row.getSkuId(), row.getQuantity()) == 0) {
+                        throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                                "库存台账释放失败，请稍后重试");
+                    }
+                }
+            }
+        });
+    }
+
+    public void confirm(long tradeId, List<StockDtos.StockItem> ignored) {
+        List<StockReservation> reservations = reservationMapper.findByTrade(tradeId);
+        for (StockReservation row : reservations) {
+            if (!"RESERVED".equals(row.getStatus())) {
+                continue;
+            }
+            transactionTemplate.executeWithoutResult(status -> {
+                if (stockMapper.confirmReservation(row.getSkuId(), row.getQuantity()) == 0) {
+                    throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                            "库存确认失败：预占数量不足");
+                }
+                reservationMapper.markConfirmed(tradeId, row.getSkuId());
+            });
+        }
+    }
+
+    public void restore(long refundId, long tradeId, List<StockDtos.StockItem> items) {
+        List<StockDtos.StockItem> normalized = normalize(items);
+        ensureStockKeys(normalized);
+        List<StockDtos.StockItem> restored = new ArrayList<>();
+        transactionTemplate.executeWithoutResult(status -> {
+            for (StockDtos.StockItem item : normalized) {
+                if (restoreMapper.insertIfAbsent(refundId, item.skuId(), item.quantity()) == 0) {
+                    continue;
+                }
+                StockReservation reservation = reservationMapper.find(tradeId, item.skuId());
+                if (reservation != null && "RESERVED".equals(reservation.getStatus())) {
+                    if (stockMapper.confirmReservation(item.skuId(), item.quantity()) == 0) {
+                        throw new BusinessException(ErrorCode.SYSTEM_ERROR,
+                                "退款回补失败：预占数量不足");
+                    }
+                    reservationMapper.markConfirmed(tradeId, item.skuId());
+                } else if (reservation != null && "RELEASED".equals(reservation.getStatus())) {
+                    log.warn("refund {} targets released reservation ({}, {})",
+                            refundId, tradeId, item.skuId());
+                    continue;
+                }
+                if (stockMapper.restoreAvailable(item.skuId(), item.quantity()) == 0) {
+                    throw new BusinessException(ErrorCode.NOT_FOUND, "SKU " + item.skuId() + " 未开通库存");
+                }
+                restored.add(item);
+            }
+        });
+        if (restored.isEmpty()) {
+            return;
+        }
+        List<String> keys = restored.stream()
+                .map(item -> StockLuaScripts.key(item.skuId())).toList();
+        Object[] args = restored.stream().map(item -> String.valueOf(item.quantity())).toArray();
+        Long result = redis.execute(scripts.restore, keys, args);
+        if (result == null || result != OK) {
+            log.warn("refund {} restored in db but redis keys unavailable; reconcile will repair", refundId);
+        }
+    }
+
+    public void setStock(long skuId, int sellable) {
+        if (sellable < 0) {
             throw new BusinessException(ErrorCode.PARAM_ERROR, "库存数量不能为负");
         }
-        // DB 行锁 + Redis CAS 一起用：
-        // 1) 行锁串行化同一 SKU 的并发改库存；
-        // 2) 只有 Redis 当前值等于 DB 的 available - reserved 时才覆盖 Redis。
-        // 两者不等说明有预扣/释放仍在途，直接覆盖会把在途数量重新放回可售；
-        // 此时抛错回滚 DB，让管理员稍后重试，而不是留下一个只能靠对账发现的偏差。
         transactionTemplate.executeWithoutResult(status -> {
             ProductStock row = stockMapper.selectForUpdate(skuId);
             String expected;
             if (row == null) {
                 ProductStock created = new ProductStock();
                 created.setSkuId(skuId);
-                created.setAvailable(quantity);
+                created.setAvailable(sellable);
                 created.setReserved(0);
                 stockMapper.insert(created);
                 expected = "";
             } else {
                 expected = String.valueOf(row.getAvailable() - row.getReserved());
-                stockMapper.resetAvailable(skuId, quantity);
+                stockMapper.setSellable(skuId, sellable);
             }
             Long applied = redis.execute(scripts.setIfUnchanged,
-                    List.of(StockLuaScripts.key(skuId)), expected, String.valueOf(quantity));
-            if (applied == null || applied != 1L) {
+                    List.of(StockLuaScripts.key(skuId)), expected, String.valueOf(sellable));
+            if (applied == null || applied != OK) {
                 throw new BusinessException(ErrorCode.SYSTEM_ERROR,
                         "库存有在途变更，本次设置未生效，请稍后重试");
             }
         });
     }
 
-    /**
-     * 按订单幂等的预扣：同一 orderId 的重试/重投递/响应丢失后的重放都不会重复扣减
-     * （守卫由脚本原子创建，失败路径回滚守卫，后续合法重试照常进行）。
-     */
-    public void reserve(long orderId, long skuId, int quantity) {
-        if (quantity < 1) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "预扣数量必须大于 0");
+    public List<StockDtos.StockView> stocks(List<Long> skuIds) {
+        if (skuIds == null || skuIds.isEmpty()) {
+            return List.of();
         }
-        Long result = reserveOnce(orderId, skuId, quantity);
-        if (result != null && result == MISSING_KEY) {
-            rebuildKeyFromDb(skuId);
-            result = reserveOnce(orderId, skuId, quantity);
+        List<Long> distinct = skuIds.stream().distinct().toList();
+        Map<Long, ProductStock> rows = stockMapper.selectBatchIds(distinct).stream()
+                .collect(Collectors.toMap(ProductStock::getSkuId, Function.identity()));
+        List<StockDtos.StockView> views = new ArrayList<>(distinct.size());
+        for (Long skuId : distinct) {
+            ProductStock row = rows.get(skuId);
+            views.add(new StockDtos.StockView(skuId,
+                    row == null ? null : row.getAvailable() - row.getReserved()));
         }
-        if (result != null && result == ALREADY_RESERVED) {
-            // 幂等重放：本次没有扣减，也不算失败
-            log.info("reserve for order {} skipped (already reserved)", orderId);
-            return;
-        }
-        // 二次仍 MISS（SETNX 竞态等极端情况）绝不能静默当作预扣成功——
-        // redis 实际没扣而订单继续走，超卖从这里开始
-        if (result == null || result == MISSING_KEY) {
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "库存服务异常");
-        }
-        if (result == INSUFFICIENT) {
-            throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
-        }
+        return views;
     }
 
-    private Long reserveOnce(long orderId, long skuId, int quantity) {
-        return redis.execute(scripts.reserve,
-                List.of(StockLuaScripts.key(skuId), StockLuaScripts.reserveGuardKey(orderId)),
-                String.valueOf(quantity), StockLuaScripts.RESERVE_GUARD_TTL_SECONDS);
+    public List<StockDtos.StockView> allStocks() {
+        return stockMapper.selectList(null).stream()
+                .map(row -> new StockDtos.StockView(row.getSkuId(),
+                        row.getAvailable() - row.getReserved()))
+                .toList();
     }
 
-    /**
-     * 当前可售数量：{@code available - reserved}（DB 是账本，Redis 只是加速层，
-     * 所以读账本而不是读缓存）。管理端用它显示真实可售量——商品表里的
-     * {@code stock} 是另一个字段，两者不是一个东西。
-     *
-     * @return 该 SKU 还没有库存记录时返回 null，表示"未开通"而不是"卖完了"
-     */
-    public Integer sellableStock(long skuId) {
+    public StockDtos.StockView stock(long skuId) {
         ProductStock row = stockMapper.selectById(skuId);
-        return row == null ? null : row.getAvailable() - row.getReserved();
+        return new StockDtos.StockView(skuId,
+                row == null ? null : row.getAvailable() - row.getReserved());
     }
 
-    /**
-     * 预扣补偿：order 侧发起预扣但结果未知（超时/断连/空响应）时的安全回补。
-     * <p>
-     * 与 {@link #rollback(long, long, int)} 的安全前提不同：本方法只在「该订单确实预扣过」
-     * （预扣守卫存在）时才把 redis 卖量加回去——对从未落地的预扣回补会放大可售库存。
-     * 释放标记与关单路径共用，两条路径之间同样不会重复回补；DB 侧不参与，因为结果未知时
-     * 订单行没有建立，也就没有 stock-reserved 事件落账。
-     *
-     * @return true 表示本次确实补回了预扣
-     */
-    public boolean compensateReserve(long orderId, long skuId, int quantity) {
-        if (quantity < 1) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "补偿数量必须大于 0");
-        }
-        Long result = redis.execute(scripts.compensateReserve,
-                List.of(StockLuaScripts.reserveGuardKey(orderId), StockLuaScripts.key(skuId),
-                        StockLuaScripts.releasedMarkerKey(orderId)),
-                String.valueOf(quantity), StockLuaScripts.RELEASE_MARKER_TTL_SECONDS);
-        boolean compensated = result != null && result == 1L;
-        if (compensated) {
-            log.warn("compensated an unknown-outcome reserve for order {} (sku {} x{})",
-                    orderId, skuId, quantity);
-        }
-        return compensated;
-    }
-
-    /**
-     * 订单取消路径：Redis 可售数量回升，同时释放 DB 预占，两层无需等待
-     * 对账任务即可自行收敛。
-     * <p>
-     * 双侧各自按 orderId 幂等：redis 用 SETNX 标记（恰好一次 INCRBY，挡住
-     * MQ close listener 与超时扫描并发、以及"INCRBY 后、标记落库前崩溃"的
-     * 重入窗口）；DB 用 dedup + 守卫式释放同一事务（崩溃回滚 dedup 行，
-     * 重投递可重入）。任一侧缺失由重入补齐，两侧都不会多加。
-     */
-    public void rollback(long orderId, long skuId, int quantity) {
-        if (quantity < 1) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "回滚数量必须大于 0");
-        }
-        // redis 侧：marker 保证恰好一次 INCRBY
-        redis.execute(scripts.rollback,
-                List.of(StockLuaScripts.releasedMarkerKey(orderId), StockLuaScripts.key(skuId)),
-                String.valueOf(quantity), StockLuaScripts.RELEASE_MARKER_TTL_SECONDS);
-        // db 侧：dedup + 守卫式释放同一事务（崩溃回滚 dedup 行，重投递可重入）
-        transactionTemplate.executeWithoutResult(status -> {
-            if (!dedupStore.tryInsert("stock-release", String.valueOf(orderId))) {
-                return;
-            }
-            if (stockMapper.decrementReserved(skuId, quantity) == 0) {
-                log.warn("rollback: db reserved release skipped for sku {} x{} (event not yet applied?)",
-                        skuId, quantity);
-            }
-        });
-    }
-
-    /**
-     * 把一条 stock-reserved 事件应用到 DB 账本。去重插入与原子更新在同一事务：
-     * 两者之间崩溃会回滚去重行，因此重投递的消息一定会被处理，不会丢失。
-     * reserved 计数走原子 SQL 更新——消费者之间不存在读-改-写竞态。
-     *
-     * @return 首次应用返回 true；重投递（被去重）返回 false
-     */
-    @Transactional
-    public boolean applyReservedEvent(String messageId, long orderId, long skuId, int quantity) {
-        if (!dedupStore.tryInsert("stock-reserved", messageId)) {
-            return false;
-        }
-        if (stockMapper.incrementReserved(skuId, quantity) == 0) {
-            throw new BusinessException(ErrorCode.NOT_FOUND);
-        }
-        // 关单已赢竞态：release 的 decrement 因预扣未落库记账而落空，唯一对冲点
-        // 在这里——本事件到达后补扣，reserved 恰好归零。exists 探测必须在
-        // incrementReserved 之后（双方都先对 sku 行加写锁，后提交方的探测必见
-        // 先提交方）。
-        if (dedupStore.exists("stock-release", String.valueOf(orderId))) {
-            int undone = stockMapper.decrementReserved(skuId, quantity);
-            log.warn("stock-reserved for released order {} neutralized (compensated reserved back to 0, undone={})",
-                    orderId, undone);
-        }
-        return true;
-    }
-
-    /**
-     * AT 对比路径：只做 DB 预占（不用 redis、不用 MQ）。这条带守卫的 UPDATE
-     * 就是 seata 在全局事务失败时通过 undo_log 回滚的分支数据。
-     */
-    public void reserveDb(long skuId, int quantity) {
-        if (quantity < 1) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "预扣数量必须大于 0");
-        }
-        if (stockMapper.reserveDbGuarded(skuId, quantity) == 0) {
-            throw new BusinessException(ErrorCode.INVENTORY_INSUFFICIENT);
-        }
-    }
-
-    /** AT 关单：只释放 DB 预占（从未触碰 redis）。
-     *  同样按 orderId 去重——关单补偿重入不能双扣 reserved。 */
-    public void releaseDb(long orderId, long skuId, int quantity) {
-        if (quantity < 1) {
-            throw new BusinessException(ErrorCode.PARAM_ERROR, "释放数量必须大于 0");
-        }
-        transactionTemplate.executeWithoutResult(status -> {
-            if (!dedupStore.tryInsert("stock-release-db", String.valueOf(orderId))) {
-                return;
-            }
-            if (stockMapper.decrementReserved(skuId, quantity) == 0) {
-                log.warn("releaseDb: nothing to release for sku {} x{}", skuId, quantity);
-            }
-        });
-    }
-
-    /**
-     * 支付确认后的账本迁移：available 与 reserved 同时减去 quantity，去重方式
-     * 与预占路径一致（同一事务内）。预占尚未落账时抛异常触发重试（reserved
-     * 事件可能仍在途）；去重行随异常回滚，重试会重新处理。
-     */
-    @Transactional
-    public boolean applyPaidEvent(String messageId, long orderId, long skuId, int quantity) {
-        if (!dedupStore.tryInsert("order-paid", messageId)) {
-            return false;
-        }
-        // 关单赢竞态且预扣已被中和：reserved 已是 0，confirmPayment 永久失败。
-        // 这类消息标记已处理直接消费，不能进入无限重投/DLQ（钱在支付侧走退款闭环）。
-        if (dedupStore.exists("stock-release", String.valueOf(orderId))) {
-            log.warn("order-paid for released order {} consumed without stock deduction", orderId);
-            return true;
-        }
-        if (stockMapper.confirmPayment(skuId, quantity) == 0) {
-            throw new IllegalStateException(
-                    "reserved not applied yet for sku " + skuId + " x" + quantity + "; will retry");
-        }
-        return true;
-    }
-
-    public ProductStock dbStock(long skuId) {
-        return stockMapper.selectById(skuId);
-    }
-
-    private void rebuildKeyFromDb(long skuId) {
-        ProductStock row = stockMapper.selectById(skuId);
-        if (row == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND);
-        }
-        long sellable = row.getAvailable() - row.getReserved();
-        // SETNX：只填补缺失的 key。此处若用无条件 SET，会覆盖在
-        // lua 未命中与本次写入之间落下的预占。
-        redis.opsForValue().setIfAbsent(StockLuaScripts.key(skuId), String.valueOf(sellable));
-        log.info("rebuilt stock key for sku {} from db (sellable {})", skuId, sellable);
-    }
-
-    /** redis 与 DB 视图的差异日志；缺失的 key 会被重建。
-     *  值格式错误只告警并跳过——单个坏 key 不能中断整轮扫描
-     *  （与 cart store 相同的防御式解析）。 */
     public void reconcile() {
         for (ProductStock row : stockMapper.selectList(null)) {
             String key = StockLuaScripts.key(row.getSkuId());
-            String redisValue = redis.opsForValue().get(key);
-            long dbSellable = row.getAvailable() - row.getReserved();
-            if (redisValue == null) {
-                redis.opsForValue().setIfAbsent(key, String.valueOf(dbSellable));
-                log.warn("reconcile: rebuilt missing key {} from db", key);
-                continue;
-            }
-            long redisStock;
+            long sellable = row.getAvailable() - row.getReserved();
             try {
-                redisStock = Long.parseLong(redisValue);
-            } catch (NumberFormatException e) {
-                log.warn("reconcile: sku {} has malformed redis value '{}', skipping", row.getSkuId(), redisValue);
-                continue;
-            }
-            if (redisStock != dbSellable) {
-                // 在途 reserved 事件窗口是有界的且编排已可收敛；此处只告警不修复，
-                // 漂移持续（跨多个 reconcile 周期）即为真实丢失/错账信号。
-                log.warn("reconcile: sku {} redis={} db-sellable={} (bounded by in-flight reserved events unless persistent)",
-                        row.getSkuId(), redisStock, dbSellable);
+                String value = redis.opsForValue().get(key);
+                if (value == null) {
+                    redis.opsForValue().setIfAbsent(key, String.valueOf(sellable));
+                    log.warn("reconcile: rebuilt missing key {} from db", key);
+                    continue;
+                }
+                long redisStock;
+                try {
+                    redisStock = Long.parseLong(value);
+                } catch (NumberFormatException e) {
+                    log.warn("reconcile: malformed redis value '{}' for {}", value, key);
+                    continue;
+                }
+                if (redisStock != sellable) {
+                    log.warn("reconcile: sku {} redis={} db-sellable={}", row.getSkuId(),
+                            redisStock, sellable);
+                }
+            } catch (RuntimeException e) {
+                log.warn("reconcile: redis unavailable for {}: {}", key, e.toString());
+                return;
             }
         }
+    }
+
+    private long executeReserve(long tradeId, List<StockDtos.StockItem> items) {
+        List<String> keys = new ArrayList<>(items.size() + 1);
+        for (StockDtos.StockItem item : items) {
+            keys.add(StockLuaScripts.key(item.skuId()));
+        }
+        keys.add(StockLuaScripts.guardKey(tradeId));
+        List<String> args = new ArrayList<>(items.size() + 2);
+        args.add(StockLuaScripts.RESERVE_GUARD_TTL_SECONDS);
+        args.add(String.valueOf(tradeId));
+        for (StockDtos.StockItem item : items) {
+            args.add(String.valueOf(item.quantity()));
+        }
+        Long result = redis.execute(scripts.reserve, keys, args.toArray());
+        return result == null ? MISSING_KEY : result;
+    }
+
+    private void releaseRedis(long tradeId, List<StockDtos.StockItem> items) {
+        List<String> keys = new ArrayList<>(items.size() + 1);
+        for (StockDtos.StockItem item : items) {
+            keys.add(StockLuaScripts.key(item.skuId()));
+        }
+        keys.add(StockLuaScripts.guardKey(tradeId));
+        Object[] args = items.stream().map(item -> String.valueOf(item.quantity())).toArray();
+        Long result = redis.execute(scripts.release, keys, args);
+        if (result == null || (result != OK && result != ALREADY_RESERVED)) {
+            log.warn("redis release for trade {} returned {}", tradeId, result);
+        }
+    }
+
+    private void ensureStockKeys(List<StockDtos.StockItem> items) {
+        if (items.isEmpty()) {
+            return;
+        }
+        List<Long> skuIds = items.stream().map(StockDtos.StockItem::skuId).toList();
+        Map<Long, ProductStock> rows = stockMapper.selectBatchIds(skuIds).stream()
+                .collect(Collectors.toMap(ProductStock::getSkuId, Function.identity()));
+        for (Long skuId : skuIds) {
+            ProductStock row = rows.get(skuId);
+            if (row == null) {
+                throw new BusinessException(ErrorCode.NOT_FOUND, "SKU " + skuId + " 未开通库存");
+            }
+            long sellable = row.getAvailable() - row.getReserved();
+            redis.opsForValue().setIfAbsent(StockLuaScripts.key(skuId), String.valueOf(sellable));
+        }
+    }
+
+    private static List<StockDtos.StockItem> normalize(List<StockDtos.StockItem> items) {
+        if (items == null || items.isEmpty()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "库存明细不能为空");
+        }
+        Map<Long, Integer> merged = new LinkedHashMap<>();
+        for (StockDtos.StockItem item : items) {
+            if (item.quantity() == null || item.quantity() < 1) {
+                throw new BusinessException(ErrorCode.PARAM_ERROR, "库存数量必须大于 0");
+            }
+            merged.merge(item.skuId(), item.quantity(), Integer::sum);
+        }
+        return merged.entrySet().stream()
+                .map(entry -> new StockDtos.StockItem(entry.getKey(), entry.getValue()))
+                .toList();
     }
 }

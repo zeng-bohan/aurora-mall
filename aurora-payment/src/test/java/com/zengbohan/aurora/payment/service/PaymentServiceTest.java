@@ -1,26 +1,29 @@
 package com.zengbohan.aurora.payment.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zengbohan.aurora.api.order.PaymentSummary;
+import com.zengbohan.aurora.api.order.TradeSummary;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
 import com.zengbohan.aurora.common.result.Result;
-import com.zengbohan.aurora.api.order.OrderSummary;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier;
 import com.zengbohan.aurora.payment.client.OrderClient;
 import com.zengbohan.aurora.payment.entity.PaymentOrder;
+import com.zengbohan.aurora.payment.entity.PaymentRefund;
 import com.zengbohan.aurora.payment.mapper.PaymentOrderMapper;
+import com.zengbohan.aurora.payment.mapper.PaymentRefundMapper;
 import com.zengbohan.aurora.payment.mq.PaymentEventPublisher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.dao.DuplicateKeyException;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,241 +31,143 @@ import static org.mockito.Mockito.when;
 
 class PaymentServiceTest {
 
-    private PaymentOrderMapper mapper;
+    private PaymentOrderMapper paymentMapper;
+    private PaymentRefundMapper refundMapper;
     private OrderClient orderClient;
     private PaymentEventPublisher publisher;
+    private ChannelSignatureVerifier verifier;
     private PaymentService service;
-    private com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier verifier;
-    private static final String CHANNEL_SECRET = "test-channel-secret";
-
-    private static final OrderSummary CREATED_ORDER =
-            new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 0);
 
     @BeforeEach
     void setUp() {
-        mapper = mock(PaymentOrderMapper.class);
+        paymentMapper = mock(PaymentOrderMapper.class);
+        refundMapper = mock(PaymentRefundMapper.class);
         orderClient = mock(OrderClient.class);
         publisher = mock(PaymentEventPublisher.class);
-        verifier = new com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier(CHANNEL_SECRET);
-        service = new PaymentService(mapper, orderClient, publisher, new ObjectMapper(), verifier);
-        when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
+        verifier = new ChannelSignatureVerifier("test-channel-secret-0123456789");
+        service = new PaymentService(paymentMapper, refundMapper, orderClient, publisher,
+                verifier, new ObjectMapper());
     }
 
     @Test
-    void lateCallbackForClosedOrderAutoRefundsAndSkipsEvent() {
-        // 关单赢了竞态（status=2 CLOSED）后回调才到：mock 通道语义=自动退款
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0)).thenReturn(payment(2));
-        when(orderClient.byId(1001L)).thenReturn(Result.ok(
-                new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
-
-        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80"));
-
-        org.mockito.Mockito.verify(mapper).markRefunded(1001L);
-        org.mockito.Mockito.verify(publisher, org.mockito.Mockito.never())
-                .sendOrderPaid(org.mockito.Mockito.anyString(), org.mockito.Mockito.anyString());
-        org.assertj.core.api.Assertions.assertThat(result.getStatus())
-                .isEqualTo(PaymentOrder.STATUS_REFUNDED);
-    }
-
-    @Test
-    void wrongChannelSignatureIsRejectedWith401() {
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
-        when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
-
-        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"),
-                verifier.sign(1001L, "39.80") + "tampered"))
+    void callbackWithBadSignatureIsRejectedBeforeAnyWrite() {
+        assertThatThrownBy(() -> service.handleMockCallback(11L, new BigDecimal("100.00"), "bad"))
                 .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.UNAUTHORIZED.getCode());
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.UNAUTHORIZED);
+
+        verify(paymentMapper, never()).markPaid(anyLong(), any());
+        verify(publisher, never()).sendPaid(anyString(), anyString());
     }
 
     @Test
-    void missingChannelSignatureIsRejectedWith401() {
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
+    void callbackMarksPaidAndPublishesOnlyForOwnedAmount() {
+        PaymentOrder paying = payment(11L, "PAYING", "100.00");
+        PaymentOrder paid = payment(11L, "PAID", "100.00");
+        when(paymentMapper.findByTradeId(11L)).thenReturn(paying, paid, paid);
+        when(paymentMapper.markPaid(anyLong(), any(LocalDateTime.class))).thenReturn(1);
+        when(orderClient.byId(11L)).thenReturn(Result.ok(trade(11L, TradeSummary.STATUS_CREATED)));
+        when(paymentMapper.markEventPublished(11L)).thenReturn(1);
 
-        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"), null))
+        PaymentOrder result = service.handleMockCallback(11L, new BigDecimal("100.00"),
+                verifier.sign(11L, "100.00"));
+
+        assertThat(result.getStatus()).isEqualTo("PAID");
+        verify(paymentMapper).markPaid(anyLong(), any(LocalDateTime.class));
+        verify(publisher).sendPaid(anyString(), anyString());
+    }
+
+    @Test
+    void callbackForClosedTradeMarksRefundedAndNeverPublishes() {
+        PaymentOrder paying = payment(12L, "PAYING", "100.00");
+        PaymentOrder refunded = payment(12L, "REFUNDED", "100.00");
+        when(paymentMapper.findByTradeId(12L)).thenReturn(paying, refunded);
+        when(paymentMapper.markRefundedLate(12L)).thenReturn(1);
+        when(orderClient.byId(12L)).thenReturn(Result.ok(trade(12L, TradeSummary.STATUS_CLOSED)));
+
+        PaymentOrder result = service.handleMockCallback(12L, new BigDecimal("100.00"),
+                verifier.sign(12L, "100.00"));
+
+        assertThat(result.getStatus()).isEqualTo("REFUNDED");
+        verify(paymentMapper).markRefundedLate(12L);
+        verify(publisher, never()).sendPaid(anyString(), anyString());
+    }
+
+    @Test
+    void closeWinningTheRaceAfterMarkPaidAutoRefunds() {
+        PaymentOrder paying = payment(13L, "PAYING", "100.00");
+        PaymentOrder paid = payment(13L, "PAID", "100.00");
+        PaymentOrder refunded = payment(13L, "REFUNDED", "100.00");
+        when(paymentMapper.findByTradeId(13L)).thenReturn(paying, paid, refunded);
+        when(paymentMapper.markPaid(anyLong(), any(LocalDateTime.class))).thenReturn(1);
+        when(paymentMapper.markRefundedLate(13L)).thenReturn(1);
+        when(orderClient.byId(13L)).thenReturn(
+                Result.ok(trade(13L, TradeSummary.STATUS_CREATED)),
+                Result.ok(trade(13L, TradeSummary.STATUS_CLOSED)));
+
+        PaymentOrder result = service.handleMockCallback(13L, new BigDecimal("100.00"),
+                verifier.sign(13L, "100.00"));
+
+        assertThat(result.getStatus()).isEqualTo("REFUNDED");
+        verify(paymentMapper).markRefundedLate(13L);
+        verify(publisher, never()).sendPaid(anyString(), anyString());
+    }
+
+    @Test
+    void callbackAmountMismatchIsRejected() {
+        PaymentOrder paying = payment(14L, "PAYING", "100.00");
+        when(paymentMapper.findByTradeId(14L)).thenReturn(paying);
+
+        assertThatThrownBy(() -> service.handleMockCallback(14L, new BigDecimal("99.00"),
+                verifier.sign(14L, "99.00")))
                 .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.UNAUTHORIZED.getCode());
+                .hasFieldOrPropertyWithValue("errorCode", ErrorCode.PARAM_ERROR);
+        verify(paymentMapper, never()).markPaid(anyLong(), any());
     }
 
     @Test
-    void signatureCoversAmountTampering() {
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
+    void duplicateRefundRequestIsIdempotentByRefundId() {
+        PaymentOrder paid = payment(15L, "PAID", "200.00");
+        paid.setRefundedAmount(new BigDecimal("80.00"));
+        when(paymentMapper.findByTradeId(15L)).thenReturn(paid);
+        PaymentRefund existing = new PaymentRefund();
+        existing.setRefundId(901L);
+        existing.setTradeId(15L);
+        existing.setAmount(new BigDecimal("80.00"));
+        when(refundMapper.selectById(901L)).thenReturn(existing);
 
-        // 签名按 39.80 计算，回调却报 999.99：金额篡改必须被拒
-        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("999.99"),
-                verifier.sign(1001L, "39.80")))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.UNAUTHORIZED.getCode());
+        PaymentSummary summary = service.internalRefund(15L, 901L, new BigDecimal("80.00"));
+
+        assertThat(summary.refundedAmount()).isEqualByComparingTo("80.00");
+        verify(refundMapper, never()).insert(any(PaymentRefund.class));
+        verify(paymentMapper, never()).applyRefund(anyLong(), any());
     }
 
     @Test
-    void callbackAmountMustMatchStoredPaymentAmount() {
-        // 签名合法但金额不属于本单：签名只证明来自渠道，不证明属于本单
-        PaymentOrder mismatch = payment(0);
-        mismatch.setAmount(new BigDecimal("49.80"));
-        when(mapper.findByOrderId(1001L)).thenReturn(mismatch);
+    void lateRefundIsGuardedAndIdempotent() {
+        PaymentOrder refunded = payment(16L, "REFUNDED", "100.00");
+        when(paymentMapper.findByTradeId(16L)).thenReturn(refunded);
+        when(paymentMapper.markRefundedLate(16L)).thenReturn(0);
 
-        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"),
-                verifier.sign(1001L, "39.80")))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.PARAM_ERROR.getCode());
-        verify(mapper, never()).markPaid(1001L);
+        PaymentSummary summary = service.lateRefund(16L);
+
+        assertThat(summary.status()).isEqualTo("REFUNDED");
+        verify(paymentMapper).markRefundedLate(16L);
     }
 
-    @Test
-    void closeWinningRaceAfterMarkPaidRefundsInsteadOfPublishing() {
-        // markPaid 赢得竞态后复检发现订单已关：退款、不发 order-paid（审查一.2）
-        // 三次读取：方法开头 / markPaid 赢后复检 / 退款后回读
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0)).thenReturn(payment(1)).thenReturn(payment(2));
-        when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER))
-                .thenReturn(Result.ok(new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
-
-        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"),
-                verifier.sign(1001L, "39.80"));
-
-        org.mockito.Mockito.verify(mapper).markRefunded(1001L);
-        org.mockito.Mockito.verify(publisher, org.mockito.Mockito.never())
-                .sendOrderPaid(org.mockito.Mockito.anyString(), org.mockito.Mockito.anyString());
-        org.assertj.core.api.Assertions.assertThat(result.getStatus())
-                .isEqualTo(PaymentOrder.STATUS_REFUNDED);
+    private static PaymentOrder payment(long tradeId, String status, String amount) {
+        PaymentOrder payment = new PaymentOrder();
+        payment.setId(tradeId + 100);
+        payment.setTradeId(tradeId);
+        payment.setTradeNo("A" + tradeId);
+        payment.setUserId(7L);
+        payment.setAmount(new BigDecimal(amount));
+        payment.setRefundedAmount(BigDecimal.ZERO);
+        payment.setStatus(status);
+        return payment;
     }
 
-    @Test
-    void duplicateCallbackRereadsCurrentStateInsteadOfStaleSnapshot() {
-        // 并发回调：开头读到 PAYING、markPaid 输给别的回调——必须重读而不是用过期快照判 500
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0)).thenReturn(payment(1));
-        when(orderClient.byId(1001L)).thenReturn(Result.ok(CREATED_ORDER));
-
-        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"),
-                verifier.sign(1001L, "39.80"));
-
-        org.assertj.core.api.Assertions.assertThat(result.getStatus())
-                .isEqualTo(PaymentOrder.STATUS_PAID);
-    }
-
-    @Test
-    void byOrderIdRejectsOtherUsersUniformlyAsNotFound() {
-        // CREATED_ORDER 归属 user 1（见常量定义）
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
-
-        assertThatThrownBy(() -> service.byOrderId(999L, 1001L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
-    }
-
-    @Test
-    void byOrderIdReturnsPaymentForOwner() {
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(0));
-
-        assertThat(service.byOrderId(7L, 1001L).getStatus()).isZero();
-    }
-
-    private PaymentOrder payment(int status) {
-        PaymentOrder p = new PaymentOrder();
-        p.setOrderId(1001L);
-        p.setAmount(new BigDecimal("39.80"));
-        p.setStatus(status);
-        return p;
-    }
-
-    @Test
-    void initiateCreatesPaymentOrderWithOrderAmount() {
-        when(mapper.findByOrderId(1001L)).thenReturn(null);
-
-        PaymentOrder created = service.initiate(7L, 1001L);
-
-        ArgumentCaptor<PaymentOrder> captor = ArgumentCaptor.forClass(PaymentOrder.class);
-        verify(mapper).insert(captor.capture());
-        assertThat(captor.getValue().getAmount()).isEqualByComparingTo("39.80");
-        assertThat(captor.getValue().getStatus()).isEqualTo(PaymentOrder.STATUS_PAYING);
-        assertThat(created).isNotNull();
-    }
-
-    @Test
-    void initiateReturnsExistingPaymentOrderForReplay() {
-        PaymentOrder existing = payment(PaymentOrder.STATUS_PAYING);
-        when(mapper.findByOrderId(1001L)).thenReturn(existing);
-
-        PaymentOrder result = service.initiate(7L, 1001L);
-
-        assertThat(result).isSameAs(existing);
-        verify(mapper, never()).insert(any(PaymentOrder.class));
-    }
-
-    @Test
-    void initiateLosingTheUniqueIndexRaceReturnsTheWinner() {
-        when(mapper.findByOrderId(1001L)).thenReturn(null).thenReturn(payment(PaymentOrder.STATUS_PAYING));
-        when(mapper.insert(any(PaymentOrder.class)))
-                .thenThrow(new DuplicateKeyException("uk_payment_order"));
-
-        PaymentOrder result = service.initiate(7L, 1001L);
-
-        assertThat(result.getStatus()).isEqualTo(PaymentOrder.STATUS_PAYING);
-    }
-
-    @Test
-    void initiateRejectsNonCreatedOrder() {
-        when(mapper.findByOrderId(1001L)).thenReturn(null);
-        when(orderClient.byId(1001L)).thenReturn(Result.ok(
-                new OrderSummary(1001L, 7L, 1L, 2, new BigDecimal("39.80"), 2)));
-
-        assertThatThrownBy(() -> service.initiate(7L, 1001L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.PARAM_ERROR.getCode());
-    }
-
-    @Test
-    void initiateUnknownOrderIsNotFound() {
-        when(mapper.findByOrderId(1001L)).thenReturn(null);
-        when(orderClient.byId(1001L)).thenReturn(Result.fail(ErrorCode.NOT_FOUND));
-
-        assertThatThrownBy(() -> service.initiate(7L, 1001L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
-    }
-
-    @Test
-    void initiateForSomeoneElsesOrderIsNotFound() {
-        when(mapper.findByOrderId(1001L)).thenReturn(null);
-        when(orderClient.byId(1001L)).thenReturn(Result.ok(
-                new OrderSummary(1001L, 999L, 1L, 2, new BigDecimal("39.80"), 0)));
-
-        assertThatThrownBy(() -> service.initiate(7L, 1001L))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
-    }
-
-    @Test
-    void firstCallbackFlipsToPaidAndPublishes() {
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(PaymentOrder.STATUS_PAYING));
-        when(mapper.markPaid(1001L)).thenReturn(1);
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(PaymentOrder.STATUS_PAID));
-
-        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80"));
-
-        assertThat(result.getStatus()).isEqualTo(PaymentOrder.STATUS_PAID);
-        verify(publisher).sendOrderPaid(eq("1001"), anyString());
-    }
-
-    @Test
-    void duplicateCallbackRepublishesWithoutStateChange() {
-        when(mapper.findByOrderId(1001L)).thenReturn(payment(PaymentOrder.STATUS_PAID));
-        when(mapper.markPaid(1001L)).thenReturn(0);
-
-        PaymentOrder result = service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80"));
-
-        assertThat(result.getStatus()).isEqualTo(PaymentOrder.STATUS_PAID);
-        // 重放是发布丢失后的恢复通道
-        verify(publisher).sendOrderPaid(eq("1001"), anyString());
-    }
-
-    @Test
-    void callbackForUnknownOrderIsNotFound() {
-        when(mapper.findByOrderId(1001L)).thenReturn(null);
-
-        assertThatThrownBy(() -> service.handleMockCallback(1001L, new BigDecimal("39.80"), verifier.sign(1001L, "39.80")))
-                .isInstanceOf(BusinessException.class)
-                .hasFieldOrPropertyWithValue("errorCode.code", ErrorCode.NOT_FOUND.getCode());
-        verify(publisher, never()).sendOrderPaid(anyString(), anyString());
+    private static TradeSummary trade(long tradeId, String status) {
+        return new TradeSummary(tradeId, "A" + tradeId, 7L, "MALL", status,
+                new BigDecimal("100.00"), BigDecimal.ZERO, java.util.List.of());
     }
 }

@@ -1,69 +1,69 @@
-@font-face {
-  font-family: 'Rokkitt';
-  src: url('../assets/fonts/rokkitt-800-latin.woff2') format('woff2');
-  font-style: normal;
-  font-weight: 800;
-  font-display: swap;
-  unicode-range: U+0000-00FF, U+0131, U+2000-206F, U+20AC, U+2122, U+2212;
-}
-
-@font-face {
-  font-family: 'Literata';
-  src: url('../assets/fonts/literata-latin.woff2') format('woff2');
-  font-style: normal;
-  font-weight: 400 600;
-  font-display: swap;
-  unicode-range: U+0000-00FF, U+0131, U+2000-206F, U+20AC, U+2122, U+2212;
-}
-
 :root {
   color-scheme: light;
 
-  --ink: #071014;
-  --ink-2: #1b292f;
-  --ink-3: #425258;
-  --muted: #5f6b70;
+  --paper: #f7f4ee;
+  --paper-deep: #efe9df;
+  --surface: #fffdf9;
+  --surface-2: #f2ede5;
+  --surface-3: #ebe5db;
 
-  --paper: #ffffff;
-  --stone: #f2f3f1;
-  --stone-2: #e6e8e4;
-  --line: #d8d3c8;
-  --line-strong: #b8b1a4;
+  --ink: #141414;
+  --ink-2: #2d2c29;
+  --ink-3: #46433d;
+  --muted: #716c63;
+  --muted-2: #948d82;
 
-  --signal: #ff6a13;
-  --signal-deep: #b93f06;
-  --signal-soft: #ffe7d8;
+  --line: #ded7cb;
+  --line-strong: #c8bfae;
+  --line-soft: #ece6dc;
 
-  --positive: #1f6b45;
-  --positive-soft: #dff3e8;
-  --negative: #a9251c;
-  --negative-soft: #ffe4e1;
-  --warning: #8a4a0b;
-  --warning-soft: #fff1d6;
-  --info: #1d4f9c;
-  --info-soft: #e5edfb;
+  --accent: #d9662b;
+  --accent-deep: #b64d1a;
+  --accent-soft: #f4e2d5;
+  --accent-ink: #7a3410;
 
-  --focus: #0b63ce;
+  --success: #2f6b4f;
+  --success-soft: #e2efe8;
+  --danger: #a33a2b;
+  --danger-soft: #f6e3df;
+  --warning: #8a5a1f;
+  --warning-soft: #f5ead6;
+  --info: #315c8a;
+  --info-soft: #e5edf5;
 
-  --font-display: 'Rokkitt', 'Arial Narrow', Arial, sans-serif;
-  --font-text: 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, -apple-system, 'Segoe UI',
-    sans-serif;
-  --font-serif: 'Literata', 'Microsoft YaHei', 'Hiragino Sans GB', system-ui, sans-serif;
+  --focus: #1c62c9;
 
-  --max: 1240px;
-  --gutter: clamp(16px, 4vw, 48px);
-  --app-max: 1200px;
+  --font-sans: 'Inter', 'Avenir Next', 'SF Pro Text', 'Segoe UI', 'PingFang SC',
+    'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-display: 'Inter', 'Avenir Next', 'SF Pro Display', 'Segoe UI', 'PingFang SC',
+    'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  --font-mono: 'SFMono-Regular', 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
 
-  --step-1: 13px;
-  --step-2: 14px;
-  --step-3: 16px;
-  --step-4: 20px;
-  --step-5: clamp(24px, 2.6vw, 32px);
-  --step-6: clamp(36px, 5vw, 64px);
-  --step-7: clamp(64px, 10vw, 148px);
+  --max: 1280px;
+  --max-narrow: 880px;
+  --gutter: clamp(20px, 4.5vw, 56px);
 
-  --radius-app: 8px;
-  --radius-control: 6px;
-  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
-  --dur: 240ms;
+  --step-1: 12px;
+  --step-2: 13px;
+  --step-3: 15px;
+  --step-4: 17px;
+  --step-5: clamp(22px, 2.2vw, 28px);
+  --step-6: clamp(32px, 4.2vw, 52px);
+  --step-7: clamp(48px, 7vw, 92px);
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --shadow-soft: 0 18px 50px rgb(20 20 20 / 8%);
+  --shadow-lift: 0 24px 70px rgb(20 20 20 / 14%);
+  --shadow-line: 0 1px 0 rgb(20 20 20 / 6%);
+
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --dur: 260ms;
+  --dur-slow: 600ms;
+
+  --header-h: 66px;
+  --admin-sidebar: 236px;
 }

@@ -1,17 +1,15 @@
 package com.zengbohan.aurora.common.mq;
 
 /**
- * 交易域 MQ topic/tag 的唯一事实源：生产侧与消费侧 @RocketMQMessageListener
- * 都从这里静态导入——注解要求编译期常量，字面量只在本文件出现一次。
+ * 交易域与支付域 MQ topic/tag 的唯一事实源。
  */
 public final class TradeTopics {
 
     public static final String TOPIC_TRADE = "aurora-trade";
-    public static final String TAG_STOCK_RESERVED = "tag-stock-reserved";
     public static final String TAG_ORDER_CLOSE_TIMEOUT = "tag-order-close-timeout";
-    public static final String TAG_ORDER_PAID = "tag-order-paid";
-    // 迟到支付信号：订单已关但钱已收，payment 收到后自动退款。
-    public static final String TAG_PAYMENT_REFUND = "tag-payment-refund";
+
+    public static final String TOPIC_PAYMENT = "aurora-payment";
+    public static final String TAG_PAYMENT_PAID = "tag-payment-paid";
 
     private TradeTopics() {
     }

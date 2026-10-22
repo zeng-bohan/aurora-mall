@@ -76,8 +76,16 @@ jobs:
         run: |
           grep -R "Tests run:" aurora-seckill/target/surefire-reports/*.txt
           grep -R "Tests run:" aurora-inventory/target/surefire-reports/*.txt
+          grep -R "Tests run:" aurora-order/target/surefire-reports/*.txt
+          grep -R "Tests run:" aurora-payment/target/surefire-reports/*.txt
+          grep -q "SeckillOrderServiceIntegrationTest" aurora-seckill/target/surefire-reports/*.txt
+          grep -q "StockServiceIntegrationTest" aurora-inventory/target/surefire-reports/*.txt
+          grep -q "TradeServiceIntegrationTest" aurora-order/target/surefire-reports/*.txt
+          grep -q "PaymentServiceTest" aurora-payment/target/surefire-reports/*.txt
           ! grep -R "Skipped: [1-9]" aurora-seckill/target/surefire-reports/*.txt
           ! grep -R "Skipped: [1-9]" aurora-inventory/target/surefire-reports/*.txt
+          ! grep -R "Skipped: [1-9]" aurora-order/target/surefire-reports/*.txt
+          ! grep -R "Skipped: [1-9]" aurora-payment/target/surefire-reports/*.txt
 
       # 复用测试 job 的构建产物：docker-build 不再重复一次全量 package
       - name: Upload service jars

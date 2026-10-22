@@ -1,289 +1,369 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
-import { orderApi, paymentApi, productApi } from '@/api'
-import type { OrderView } from '@/api/order'
-import { ORDER_STATUS_LABEL, OrderStatus } from '@/api/order'
-import type { PaymentView } from '@/api/payment'
-import { PAYMENT_STATUS_LABEL, PaymentStatus } from '@/api/payment'
-import type { Sku } from '@/api/product'
-import OrderLifecycle from '@/components/OrderLifecycle.vue'
-import PageHead from '@/components/PageHead.vue'
-import ProductFigure from '@/components/ProductFigure.vue'
-import StatusPill from '@/components/StatusPill.vue'
+import { paymentApi, tradeApi, type PaymentSummary, type Trade } from '@/api/dtc'
+import RefundDialog from '@/components/RefundDialog.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
+import { formatDateTime } from '@/utils/datetime'
 import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
 
 const route = useRoute()
+const router = useRouter()
 
-const order = ref<OrderView | null>(null)
-const payment = ref<PaymentView | null>(null)
-const sku = ref<Sku | null>(null)
+const trade = ref<Trade | null>(null)
+const payment = ref<PaymentSummary | null>(null)
 const loading = ref(true)
-const paying = ref(false)
+const error = ref('')
+const refundOpen = ref(false)
+const actionLoading = ref(false)
+const initialNew = route.query.new === '1'
 
-const orderId = computed(() => Number(route.params.id))
+const statusTitle: Record<string, string> = {
+  CREATED: '等待支付',
+  PAID: '已支付，等待发货',
+  SHIPPED: '已发货，路上',
+  COMPLETED: '订单已完成',
+  CLOSED: '订单已关闭',
+  REFUNDED: '订单已退款',
+}
 
-const canPay = computed(
-  () =>
-    order.value !== null &&
-    order.value.status === OrderStatus.CREATED &&
-    payment.value?.status !== PaymentStatus.PAID
-)
+const statusCopy: Record<string, string> = {
+  CREATED: '请在 30 分钟内完成支付，超时订单会自动关闭并释放库存。',
+  PAID: '运营会在 1–2 个工作日内发货。发货前可以申请部分或整单退款。',
+  SHIPPED: '商品已交给模拟承运商。收到后请确认收货，7 天后会自动完成。',
+  COMPLETED: '订单已完成。感谢你把 AURORA 放进日常。',
+  CLOSED: '未支付超时或已取消。库存与优惠券已经释放。',
+  REFUNDED: '整单退款已经完成，支付金额与优惠券已按规则退回。',
+}
 
-const statusTone = computed<'pending' | 'paid' | 'closed'>(() => {
-  if (order.value?.status === OrderStatus.PAID) {
-    return 'paid'
+const normalSteps = ['CREATED', 'PAID', 'SHIPPED', 'COMPLETED']
+const currentStep = computed(() => {
+  if (!trade.value) {
+    return -1
   }
-  return order.value?.status === OrderStatus.CREATED ? 'pending' : 'closed'
+  return normalSteps.indexOf(trade.value.status)
 })
-
-const mockPayCommand = computed(() =>
-  order.value ? `bash docker/mock-pay.sh ${order.value.orderId} ${order.value.totalAmount.toFixed(2)}` : ''
-)
 
 async function load(): Promise<void> {
   loading.value = true
-  order.value = null
-  payment.value = null
-  sku.value = null
+  error.value = ''
   try {
-    const current = await orderApi.detail(orderId.value)
-    order.value = current
-    await Promise.all([loadPayment(), loadSku(current.skuId)])
-  } catch (error) {
-    ElMessage.error(describeError(error))
+    trade.value = await tradeApi.detail(Number(route.params.id))
+    payment.value = null
+    try {
+      payment.value = await paymentApi.detail(trade.value.id)
+    } catch {
+      payment.value = null
+    }
+  } catch (e) {
+    error.value = describeError(e)
+    trade.value = null
   } finally {
     loading.value = false
   }
 }
 
-async function loadPayment(): Promise<void> {
-  try {
-    payment.value = await paymentApi.byOrder(orderId.value)
-  } catch {
-    payment.value = null
+async function pay(): Promise<void> {
+  if (!trade.value) {
+    return
   }
-}
-
-async function loadSku(skuId: number): Promise<void> {
+  actionLoading.value = true
   try {
-    sku.value = await productApi.detail(skuId)
-  } catch {
-    sku.value = null
-  }
-}
-
-async function initiatePayment(): Promise<void> {
-  paying.value = true
-  try {
-    payment.value = await paymentApi.initiate(orderId.value)
-    ElMessage.success('模拟支付单已创建，等待本机回调')
-  } catch (error) {
-    ElMessage.error(describeError(error))
+    await paymentApi.initiate(trade.value.id)
+    await paymentApi.mockPay(trade.value.id)
+    ElMessage.success('支付完成')
+    await load()
+  } catch (e) {
+    ElMessage.error(describeError(e))
   } finally {
-    paying.value = false
+    actionLoading.value = false
   }
 }
 
-async function refresh(): Promise<void> {
-  await load()
+async function cancel(): Promise<void> {
+  if (!trade.value) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm('取消后订单关闭，库存与优惠券会释放。确认取消？', '取消订单', {
+      confirmButtonText: '取消订单',
+      cancelButtonText: '保留订单',
+      type: 'warning',
+    })
+    await tradeApi.cancel(trade.value.id)
+    ElMessage.success('订单已取消')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(describeError(e))
+    }
+  }
 }
 
-onMounted(load)
-watch(orderId, load)
+async function confirmReceipt(): Promise<void> {
+  if (!trade.value) {
+    return
+  }
+  try {
+    await ElMessageBox.confirm('确认已经收到商品？', '确认收货', {
+      confirmButtonText: '确认收货',
+      cancelButtonText: '再等等',
+    })
+    await tradeApi.confirm(trade.value.id)
+    ElMessage.success('订单已完成')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(describeError(e))
+    }
+  }
+}
+
+function goList(): void {
+  void router.push({ name: 'orders' })
+}
+
+watch(
+  () => route.params.id,
+  () => {
+    initialNew && void router.replace({ name: 'order-detail', params: { id: route.params.id } })
+    void load()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
-  <div class="app-page">
-    <PageHead
-      back-to="/orders"
-      back-label="返回订单列表"
-      :title="order ? `订单 ${order.orderId}` : '订单详情'"
-      :meta="order ? '金额与状态来自订单服务；支付结果只认渠道回调。' : '正在读取订单状态。'"
-    >
-      <template #actions>
-        <button type="button" class="btn btn--outline" :disabled="loading" @click="refresh">
-          {{ loading ? '刷新中…' : '刷新状态' }}
-        </button>
-      </template>
-    </PageHead>
-
-    <div v-if="loading" aria-busy="true" aria-label="正在加载订单">
-      <div class="skeleton-block skeleton-row" />
-      <div class="skeleton-block skeleton-row" />
-      <div class="skeleton-block skeleton-row" />
+  <div>
+    <div class="container breadcrumb">
+      <RouterLink to="/">首页</RouterLink>
+      <span>/</span>
+      <RouterLink to="/orders">我的订单</RouterLink>
+      <span>/</span>
+      <span>{{ trade?.tradeNo ?? '订单详情' }}</span>
     </div>
 
-    <div v-else-if="!order" class="empty-state">
-      <h2>订单不存在或不属于当前账户</h2>
-      <p>为了避免泄露他人订单是否存在，服务端对不属于你的订单统一返回不存在。</p>
-      <RouterLink class="btn" to="/orders">回到订单列表</RouterLink>
+    <div v-if="loading" class="container page-loading">正在读取订单…</div>
+    <div v-else-if="error || !trade" class="container">
+      <div class="error-banner">{{ error || '订单不存在' }}</div>
+      <button class="btn btn--line" type="button" style="margin-top: 16px" @click="goList">返回订单列表</button>
     </div>
 
-    <div v-else class="detail-grid">
-      <div class="detail-stack">
-        <section class="panel" aria-label="订单内容">
-          <div class="detail-header">
-            <div>
-              <h2 class="row-title">{{ sku?.title ?? `商品编号 ${order.skuId}` }}</h2>
-              <p class="detail-header__meta">
-                数量 {{ order.quantity }} · 单价按订单快照计算
-              </p>
-            </div>
-            <StatusPill :tone="statusTone" :label="ORDER_STATUS_LABEL[order.status]" />
-          </div>
-
-          <div class="order-product">
-            <div class="order-product__figure">
-              <ProductFigure
-                :title="sku?.title ?? `商品 ${order.skuId}`"
-                :label="`${sku?.title ?? '商品'} 的目录图形`"
-              />
-            </div>
-            <dl class="detail-facts">
-              <div>
-                <dt>订单号</dt>
-                <dd>{{ order.orderId }}</dd>
-              </div>
-              <div>
-                <dt>商品编号</dt>
-                <dd>{{ order.skuId }}</dd>
-              </div>
-              <div>
-                <dt>数量</dt>
-                <dd>{{ order.quantity }}</dd>
-              </div>
-              <div>
-                <dt>订单金额</dt>
-                <dd>{{ formatYuan(order.totalAmount) }}</dd>
-              </div>
-            </dl>
-          </div>
-        </section>
-
-        <section class="panel" aria-label="订单进度">
-          <h2 class="panel-head">订单进度</h2>
-          <OrderLifecycle :status="order.status" />
-        </section>
+    <template v-else>
+      <div v-if="initialNew && trade.status === 'CREATED'" class="container">
+        <div class="seckill-result" style="background: var(--success-soft); color: var(--success)">
+          订单已创建。完成支付后，运营会开始处理发货。
+        </div>
       </div>
 
-      <aside class="detail-side">
-        <section class="panel" aria-label="支付状态">
-          <h2 class="panel-head">
-            支付
-            <span class="channel-tag">模拟渠道</span>
-          </h2>
-          <p class="channel-note">不连接真实支付机构；回调由本机脚本签名触发。</p>
-          <div class="summary-line">
-            <span>支付状态</span>
-            <strong>{{ payment ? PAYMENT_STATUS_LABEL[payment.status] : '尚未发起支付' }}</strong>
+      <div class="container" style="margin-top: 16px">
+        <div class="status-hero">
+          <div>
+            <span class="eyebrow">{{ trade.source === 'SECKILL' ? 'Seckill Order' : 'Order' }}</span>
+            <h1 class="display">{{ statusTitle[trade.status] }}</h1>
+            <p>{{ statusCopy[trade.status] }}</p>
           </div>
-          <div v-if="payment" class="summary-line" style="margin-top: 8px">
-            <span>支付单号</span>
-            <strong class="num">{{ payment.paymentId }}</strong>
+          <div style="text-align: right">
+            <StatusBadge :status="trade.status" />
+            <div class="tiny" style="margin-top: 10px">{{ trade.tradeNo }}</div>
           </div>
-          <div v-if="payment" class="summary-line" style="margin-top: 8px">
-            <span>支付金额</span>
-            <strong class="num">{{ formatYuan(payment.amount) }}</strong>
-          </div>
-
-          <div class="summary-actions" style="margin-top: 16px">
-            <button
-              v-if="canPay"
-              type="button"
-              class="btn btn--block"
-              :disabled="paying"
-              @click="initiatePayment"
-            >
-              {{ paying ? '创建支付单…' : '发起模拟支付' }}
-            </button>
-            <RouterLink v-if="payment" class="btn btn--outline btn--block" to="/orders">
-              返回订单列表
-            </RouterLink>
-          </div>
-        </section>
-
-        <div v-if="order.status === OrderStatus.CREATED" class="notice notice--warning">
-          <strong>30 分钟内未支付会自动关单</strong>
-          <p>关单时库存会回滚，优惠券也会按订单状态退回。</p>
         </div>
 
-        <details v-if="payment && payment.status === PaymentStatus.PAYING" class="pay-details">
-          <summary>本机演示：模拟渠道回调</summary>
-          <p>
-            真实支付由渠道异步回调。回调必须带服务端密钥的 HMAC 签名，密钥不会下发浏览器；这里用本机脚本扮演渠道。
-          </p>
-          <code class="code-block">{{ mockPayCommand }}</code>
-          <button type="button" class="btn btn--outline btn--sm" @click="refresh">
-            回调后刷新状态
-          </button>
-        </details>
+        <div v-if="['CREATED', 'PAID', 'SHIPPED', 'COMPLETED'].includes(trade.status)" class="status-steps">
+          <div
+            v-for="(step, index) in ['提交订单', '完成支付', '运营发货', '确认收货']"
+            :key="step"
+            class="status-step"
+            :class="{ 'is-done': index <= currentStep }"
+          >
+            {{ step }}
+          </div>
+        </div>
 
-        <details class="pay-details">
-          <summary>为什么页面上不能直接“一键支付”</summary>
-          <p>
-            渠道回调必须通过 HMAC 验签，密钥只存在于服务端与 Nacos。把回调密钥打进前端包，等于允许任何人伪造“已支付”。
-          </p>
-        </details>
-      </aside>
-    </div>
+        <div class="detail-grid" style="margin-top: 20px">
+          <div>
+            <section class="detail-panel">
+              <h3>商品</h3>
+              <div class="checkout-items">
+                <div v-for="item in trade.items" :key="item.id" class="checkout-item">
+                  <div class="checkout-item__media">
+                    <img :src="item.imageUrl" :alt="item.title" />
+                  </div>
+                  <div>
+                    <div class="checkout-item__title">{{ item.title }}</div>
+                    <div class="checkout-item__meta">
+                      {{ item.attributesText }} · ×{{ item.quantity }} · {{ formatYuan(item.unitPrice) }}
+                    </div>
+                    <div v-if="item.discountAmount > 0" class="tiny">
+                      分摊优惠 {{ formatYuan(item.discountAmount) }}
+                    </div>
+                    <div v-if="item.refundedAmount > 0" class="error-text">
+                      已退 {{ formatYuan(item.refundedAmount) }}
+                    </div>
+                  </div>
+                  <div style="text-align: right">
+                    <div class="checkout-item__price">{{ formatYuan(item.itemAmount) }}</div>
+                    <StatusBadge v-if="item.status !== 'NORMAL'" :status="item.status" />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="detail-panel">
+              <h3>收货信息</h3>
+              <div class="address-option__name">{{ trade.address.receiverName }} · {{ trade.address.phone }}</div>
+              <div class="address-option__line">
+                {{ trade.address.province }} {{ trade.address.city }} {{ trade.address.district }}
+                {{ trade.address.detail }}
+                <span v-if="trade.address.postalCode"> · {{ trade.address.postalCode }}</span>
+              </div>
+              <p class="hint" style="margin-top: 10px">地址为下单时快照，修改地址簿不会影响这笔订单。</p>
+            </section>
+
+            <section v-if="trade.carrier || trade.trackingNo" class="detail-panel">
+              <h3>模拟物流</h3>
+              <div class="detail-panel">
+                <div class="summary-row">
+                  <span>承运商</span>
+                  <strong>{{ trade.carrier || '待补充' }}</strong>
+                </div>
+                <div class="summary-row" style="margin-top: 8px">
+                  <span>运单号</span>
+                  <span class="mono">{{ trade.trackingNo || '待补充' }}</span>
+                </div>
+                <p class="hint" style="margin-top: 10px">
+                  运单号为模拟数据，不连接真实承运商。发货后 7 天未确认将自动完成。
+                </p>
+              </div>
+            </section>
+
+            <section v-if="trade.refunds.length" class="detail-panel">
+              <h3>退款进度</h3>
+              <div v-for="refund in trade.refunds" :key="refund.id" class="refund-line">
+                <div>
+                  <div style="display: flex; align-items: center; gap: 8px">
+                    <strong>{{ formatYuan(refund.amount) }}</strong>
+                    <StatusBadge :status="refund.status" />
+                  </div>
+                  <div class="tiny" style="margin-top: 4px">{{ refund.reason }}</div>
+                  <div v-if="refund.rejectReason" class="error-text" style="margin-top: 4px">
+                    拒绝原因：{{ refund.rejectReason }}
+                  </div>
+                </div>
+                <div class="tiny" style="text-align: right">
+                  <div>{{ formatDateTime(refund.createdAt) }}</div>
+                  <div v-if="refund.reviewedAt">审批 {{ formatDateTime(refund.reviewedAt) }}</div>
+                </div>
+              </div>
+            </section>
+
+            <section class="detail-panel">
+              <h3>订单信息</h3>
+              <div class="summary-row">
+                <span>订单号</span>
+                <span class="mono">{{ trade.tradeNo }}</span>
+              </div>
+              <div class="summary-row" style="margin-top: 8px">
+                <span>来源</span>
+                <span>{{ trade.source === 'SECKILL' ? '秒杀' : '商城' }}</span>
+              </div>
+              <div class="summary-row" style="margin-top: 8px">
+                <span>下单时间</span>
+                <span>{{ formatDateTime(trade.createdAt) }}</span>
+              </div>
+              <div v-if="trade.paidAt" class="summary-row" style="margin-top: 8px">
+                <span>支付时间</span>
+                <span>{{ formatDateTime(trade.paidAt) }}</span>
+              </div>
+              <div v-if="trade.shippedAt" class="summary-row" style="margin-top: 8px">
+                <span>发货时间</span>
+                <span>{{ formatDateTime(trade.shippedAt) }}</span>
+              </div>
+              <div v-if="trade.completedAt" class="summary-row" style="margin-top: 8px">
+                <span>完成时间</span>
+                <span>{{ formatDateTime(trade.completedAt) }}</span>
+              </div>
+              <div v-if="trade.closedAt" class="summary-row" style="margin-top: 8px">
+                <span>关闭时间</span>
+                <span>{{ formatDateTime(trade.closedAt) }}</span>
+              </div>
+            </section>
+          </div>
+
+          <aside>
+            <div class="summary-card" style="position: static">
+              <h3>金额</h3>
+              <div class="summary-list">
+                <div class="summary-row">
+                  <span>商品金额</span>
+                  <strong>{{ formatYuan(trade.merchandiseAmount) }}</strong>
+                </div>
+                <div class="summary-row">
+                  <span>优惠</span>
+                  <span>{{ trade.discountAmount > 0 ? `− ${formatYuan(trade.discountAmount)}` : '—' }}</span>
+                </div>
+                <div class="summary-row">
+                  <span>运费</span>
+                  <span>{{ trade.shippingFee === 0 ? '免运费' : formatYuan(trade.shippingFee) }}</span>
+                </div>
+                <div v-if="trade.refundedAmount > 0" class="summary-row">
+                  <span>已退款</span>
+                  <span>− {{ formatYuan(trade.refundedAmount) }}</span>
+                </div>
+              </div>
+              <div class="summary-total">
+                <span>{{ trade.status === 'REFUNDED' ? '已退款' : '应付 / 实付' }}</span>
+                <strong>{{ formatYuan(trade.payableAmount) }}</strong>
+              </div>
+              <button
+                v-if="trade.status === 'CREATED'"
+                class="btn btn--primary btn--block"
+                type="button"
+                :disabled="actionLoading"
+                @click="pay"
+              >
+                {{ actionLoading ? '支付中…' : '模拟支付' }}
+              </button>
+              <button
+                v-if="trade.status === 'PAID'"
+                class="btn btn--line btn--block"
+                type="button"
+                style="margin-top: 10px"
+                @click="refundOpen = true"
+              >
+                申请退款
+              </button>
+              <button
+                v-if="trade.status === 'SHIPPED'"
+                class="btn btn--primary btn--block"
+                type="button"
+                style="margin-top: 10px"
+                @click="confirmReceipt"
+              >
+                确认收货
+              </button>
+              <button
+                v-if="trade.status === 'CREATED'"
+                class="btn btn--ghost btn--block"
+                type="button"
+                style="margin-top: 8px"
+                @click="cancel"
+              >
+                取消订单
+              </button>
+              <div v-if="payment" class="summary-note">
+                支付单 {{ payment.status }} · 已退 {{ formatYuan(payment.refundedAmount) }}
+              </div>
+              <p v-if="trade.couponTitle" class="summary-note">优惠券：{{ trade.couponTitle }}</p>
+            </div>
+          </aside>
+        </div>
+      </div>
+
+      <RefundDialog v-model="refundOpen" :trade="trade" @applied="load" />
+    </template>
   </div>
 </template>
-
-<style scoped>
-.detail-stack {
-  display: grid;
-  gap: 16px;
-}
-
-.detail-side {
-  display: grid;
-  gap: 16px;
-  align-content: start;
-}
-
-.order-product {
-  display: grid;
-  grid-template-columns: 140px minmax(0, 1fr);
-  gap: 20px;
-  align-items: center;
-}
-
-.order-product__figure {
-  background: var(--stone);
-  padding: 10px;
-}
-
-.pay-details {
-  background: var(--paper);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-app);
-  padding: 16px;
-}
-
-.pay-details summary {
-  cursor: pointer;
-  font-size: var(--step-2);
-  font-weight: 600;
-}
-
-.pay-details p {
-  margin: 10px 0;
-  font-size: var(--step-2);
-  color: var(--muted);
-  line-height: 1.55;
-}
-
-.pay-details .btn {
-  margin-top: 10px;
-}
-
-@media (max-width: 560px) {
-  .order-product {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

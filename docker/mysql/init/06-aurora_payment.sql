@@ -2,13 +2,30 @@ CREATE DATABASE IF NOT EXISTS aurora_payment DEFAULT CHARACTER SET utf8mb4 COLLA
 USE aurora_payment;
 
 CREATE TABLE IF NOT EXISTS payment_orders (
-    id         BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    order_id   BIGINT        NOT NULL,
-    amount     DECIMAL(10,2) NOT NULL,
-    status     TINYINT       NOT NULL DEFAULT 0 COMMENT '0=PAYING 1=PAID',
+    id                BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    trade_id          BIGINT        NOT NULL,
+    trade_no          VARCHAR(40)   NOT NULL,
+    user_id           BIGINT        NOT NULL,
+    amount            DECIMAL(12,2) NOT NULL,
+    refunded_amount   DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    status            VARCHAR(24)   NOT NULL DEFAULT 'PAYING' COMMENT 'PAYING / PAID / PARTIALLY_REFUNDED / REFUNDED',
+    channel           VARCHAR(24)   NOT NULL DEFAULT 'MOCK',
+    paid_at           DATETIME      NULL,
+    event_published   TINYINT       NOT NULL DEFAULT 0,
+    publish_attempts  INT           NOT NULL DEFAULT 0,
+    created_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at        DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_payment_trade (trade_id),
+    KEY idx_payment_status (status, created_at)
+) ENGINE = InnoDB;
+
+-- 一次退款申请一条记录；refund_id 作为幂等键，重复回调不会二次累加。
+CREATE TABLE IF NOT EXISTS payment_refunds (
+    refund_id  BIGINT        NOT NULL PRIMARY KEY,
+    trade_id   BIGINT        NOT NULL,
+    amount     DECIMAL(12,2) NOT NULL,
     created_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_payment_order (order_id)
+    KEY idx_payment_refund_trade (trade_id)
 ) ENGINE = InnoDB;
 
 CREATE TABLE IF NOT EXISTS idempotent_record (

@@ -3,7 +3,6 @@ package com.zengbohan.aurora.product.cache;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.zengbohan.aurora.common.exception.BusinessException;
 import com.zengbohan.aurora.common.exception.ErrorCode;
-import com.zengbohan.aurora.product.entity.Sku;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -17,18 +16,19 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * 商品详情的读写模式：cache aside + 空值缓存 + 布隆过滤器 + 逻辑过期 +
  * 互斥重建 + 随机化物理 TTL；管理端写入走"先删缓存、再延迟双删"。
+ * 泛型化后同时服务 SPU 详情与任何同构视图。
  */
 @Service
 @RefreshScope
 public class ProductCacheService {
 
     private static final Logger log = LoggerFactory.getLogger(ProductCacheService.class);
-    private static final String KEY_PREFIX = "aurora:product:sku:";
+    private static final String KEY_PREFIX = "aurora:product:spu:";
     private static final String MUTEX_PREFIX = "aurora:product:mutex:";
     private static final Duration NULL_TTL = Duration.ofSeconds(30);
     private static final Duration LOGICAL_TTL = Duration.ofMinutes(10);
@@ -56,21 +56,17 @@ public class ProductCacheService {
         this.rebuildExecutor = rebuildExecutor;
         this.doubleDeleteScheduler = doubleDeleteScheduler;
         this.physicalTtlSeconds = physicalTtlSeconds;
-        // 每次（重新）创建都打日志：配置中心改 TTL 会重建这个 @RefreshScope Bean，
-        // 在这里打印出新值
         log.info("product cache ready: physical ttl {}s", physicalTtlSeconds);
     }
 
-    public Sku getById(long id, Function<Long, Sku> dbLoader) {
-        // 布隆过滤器没有假阴性：不存在的 id 不会触达缓存或 DB
+    public <T> T get(long id, Class<T> type, Supplier<T> dbLoader) {
         if (!bloomFilterHolder.get().mightContain(String.valueOf(id))) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
         String key = KEY_PREFIX + id;
-        CacheWrapper<Sku> wrapper = readWrapper(key);
-
+        CacheWrapper<T> wrapper = readWrapper(key, type);
         if (wrapper == null) {
-            return coldLoad(key, id, dbLoader);
+            return coldLoad(key, id, type, dbLoader);
         }
         if (wrapper.getData() == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
@@ -78,70 +74,66 @@ public class ProductCacheService {
         if (wrapper.getExpireAt().isAfter(clock.instant())) {
             return wrapper.getData();
         }
-        return refreshIfAllowed(key, id, wrapper, dbLoader);
+        return refreshIfAllowed(key, id, type, wrapper, dbLoader);
     }
 
-    private CacheWrapper<Sku> readWrapper(String key) {
+    private <T> CacheWrapper<T> readWrapper(String key, Class<T> type) {
         String json = safeGet(key);
         if (json == null) {
             return null;
         }
         try {
             return mapper.readValue(json, mapper.getTypeFactory()
-                    .constructParametricType(CacheWrapper.class, Sku.class));
+                    .constructParametricType(CacheWrapper.class, type));
         } catch (Exception e) {
             log.warn("unreadable cache entry {}, treating as cold", key, e);
             return null;
         }
     }
 
-    private Sku coldLoad(String key, long id, Function<Long, Sku> dbLoader) {
+    private <T> T coldLoad(String key, long id, Class<T> type, Supplier<T> dbLoader) {
         Boolean leader = safeSetIfAbsent(MUTEX_PREFIX + id, "1", Duration.ofSeconds(10));
         if (leader == null) {
-            // Redis 不可用：缓存降级为直读 DB，不能把整个商品详情打成 500
-            Sku sku = dbLoader.apply(id);
-            writeWrapper(key, sku);
-            return skuOrThrow(sku);
+            T value = dbLoader.get();
+            writeWrapper(key, value);
+            return valueOrThrow(value);
         }
         if (leader) {
             try {
-                Sku sku = dbLoader.apply(id);
-                writeWrapper(key, sku);
-                return skuOrThrow(sku);
+                T value = dbLoader.get();
+                writeWrapper(key, value);
+                return valueOrThrow(value);
             } finally {
                 safeDelete(MUTEX_PREFIX + id);
             }
         }
-        // 没抢到互斥锁：先轮询胜出者的写入，再做判断
         for (int i = 0; i < 4; i++) {
             try {
                 TimeUnit.MILLISECONDS.sleep(50);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-            CacheWrapper<Sku> wrapper = readWrapper(key);
+            CacheWrapper<T> wrapper = readWrapper(key, type);
             if (wrapper != null) {
                 if (wrapper.getData() == null) {
-                    // 胜出者缓存了一次真实的未命中
                     throw new BusinessException(ErrorCode.NOT_FOUND);
                 }
                 return wrapper.getData();
             }
         }
-        // 胜出者太慢或它的互斥锁已过期：宁可重复查一次 DB，
-        // 也不要对存在的商品返回假 404
-        Sku sku = dbLoader.apply(id);
-        writeWrapper(key, sku);
-        return skuOrThrow(sku);
+        T value = dbLoader.get();
+        writeWrapper(key, value);
+        return valueOrThrow(value);
     }
 
-    private Sku refreshIfAllowed(String key, long id, CacheWrapper<Sku> wrapper, Function<Long, Sku> dbLoader) {
+    private <T> T refreshIfAllowed(String key, long id, Class<T> type,
+                                   CacheWrapper<T> wrapper, Supplier<T> dbLoader) {
         Boolean leader = safeSetIfAbsent(MUTEX_PREFIX + id, "1", Duration.ofSeconds(10));
         if (Boolean.TRUE.equals(leader)) {
             try {
                 rebuildExecutor.execute(() -> {
                     try {
-                        writeWrapper(key, dbLoader.apply(id));
+                        writeWrapper(key, dbLoader.get());
                     } catch (Exception e) {
                         log.error("async cache rebuild failed for {}", key, e);
                     } finally {
@@ -149,39 +141,34 @@ public class ProductCacheService {
                     }
                 });
             } catch (RuntimeException e) {
-                // 线程池满/已关闭：释放互斥锁，下一次读取再试；本次继续返回旧值
                 log.warn("cache rebuild rejected for {}: {}", key, e.toString());
                 safeDelete(MUTEX_PREFIX + id);
             }
         }
-        // 逻辑过期契约：单个重建者刷新期间照常返回旧值
         return wrapper.getData();
     }
 
-    private void writeWrapper(String key, Sku sku) {
+    private void writeWrapper(String key, Object value) {
         try {
-            if (sku == null) {
+            if (value == null) {
                 store.put(key, json(new CacheWrapper<>(null, clock.instant().plus(NULL_TTL))),
                         NULL_TTL.plus(NULL_TTL));
                 return;
             }
-            Duration logical = LOGICAL_TTL;
-            CacheWrapper<Sku> wrapper = new CacheWrapper<>(sku, clock.instant().plus(logical));
-            // 物理 TTL 长于逻辑过期加上抖动，让重建过程不出现空档
+            CacheWrapper<Object> wrapper = new CacheWrapper<>(value, clock.instant().plus(LOGICAL_TTL));
             Duration physical = Duration.ofSeconds(physicalTtlSeconds)
                     .plusSeconds(ThreadLocalRandom.current().nextLong(0, 3600));
             store.put(key, json(wrapper), physical);
         } catch (RuntimeException e) {
-            // 写缓存失败不影响本次读；下次读取继续走 DB
             log.warn("cache write failed for {}: {}", key, e.toString());
         }
     }
 
-    private Sku skuOrThrow(Sku sku) {
-        if (sku == null) {
+    private static <T> T valueOrThrow(T value) {
+        if (value == null) {
             throw new BusinessException(ErrorCode.NOT_FOUND);
         }
-        return sku;
+        return value;
     }
 
     public void evict(long id) {
@@ -213,7 +200,6 @@ public class ProductCacheService {
         }
     }
 
-    /** true=抢到锁，false=别人持有，null=缓存不可用（调用方应直接回源 DB）。 */
     private Boolean safeSetIfAbsent(String key, String value, Duration ttl) {
         try {
             return store.setIfAbsent(key, value, ttl);

@@ -6,134 +6,196 @@ import { useAuthStore } from '@/stores/auth'
 
 declare module 'vue-router' {
   interface RouteMeta {
-    /** 需要登录；未登录时跳登录页并带回来路 */
     requiresAuth?: boolean
-    /** 需要 ADMIN；隐含 requiresAuth */
     requiresAdmin?: boolean
+    bare?: boolean
     title?: string
   }
 }
 
 const routes: RouteRecordRaw[] = [
-  { path: '/', redirect: '/products' },
-
   {
-    path: '/login',
-    name: 'login',
-    component: () => import('@/views/LoginView.vue'),
-    meta: { title: '登录' }
+    path: '/',
+    name: 'home',
+    component: () => import('@/views/HomeView.vue'),
+    meta: { title: '桌面与随身科技' },
   },
-  {
-    path: '/register',
-    name: 'register',
-    component: () => import('@/views/RegisterView.vue'),
-    meta: { title: '注册' }
-  },
-
-  // 商品读对游客开放（网关白名单里 GET /api/product/** 免鉴权）
   {
     path: '/products',
     name: 'products',
     component: () => import('@/views/ProductListView.vue'),
-    meta: { title: '商品' }
+    meta: { title: '商品目录' },
   },
   {
     path: '/products/:id',
     name: 'product-detail',
     component: () => import('@/views/ProductDetailView.vue'),
-    meta: { title: '商品详情' }
+    meta: { title: '商品详情' },
   },
-
   {
     path: '/cart',
     name: 'cart',
     component: () => import('@/views/CartView.vue'),
-    meta: { requiresAuth: true, title: '购物车' }
+    meta: { requiresAuth: true, title: '购物车' },
   },
   {
     path: '/checkout',
     name: 'checkout',
     component: () => import('@/views/CheckoutView.vue'),
-    meta: { requiresAuth: true, title: '结算' }
+    meta: { requiresAuth: true, title: '结算' },
   },
   {
     path: '/orders',
     name: 'orders',
     component: () => import('@/views/OrdersView.vue'),
-    meta: { requiresAuth: true, title: '我的订单' }
+    meta: { requiresAuth: true, title: '我的订单' },
   },
   {
     path: '/orders/:id',
     name: 'order-detail',
     component: () => import('@/views/OrderDetailView.vue'),
-    meta: { requiresAuth: true, title: '订单详情' }
+    meta: { requiresAuth: true, title: '订单详情' },
+  },
+  {
+    path: '/addresses',
+    name: 'addresses',
+    component: () => import('@/views/AddressView.vue'),
+    meta: { requiresAuth: true, title: '地址簿' },
   },
   {
     path: '/coupons',
     name: 'coupons',
     component: () => import('@/views/CouponsView.vue'),
-    meta: { requiresAuth: true, title: '优惠券' }
+    meta: { requiresAuth: true, title: '优惠券' },
   },
-
-  // 秒杀活动列表也不在网关白名单里，同样要登录
+  {
+    path: '/profile',
+    name: 'profile',
+    component: () => import('@/views/ProfileView.vue'),
+    meta: { requiresAuth: true, title: '个人中心' },
+  },
   {
     path: '/seckill',
     name: 'seckill',
     component: () => import('@/views/SeckillListView.vue'),
-    meta: { requiresAuth: true, title: '秒杀' }
+    meta: { requiresAuth: true, title: '限时秒杀' },
   },
   {
     path: '/seckill/:id',
     name: 'seckill-detail',
     component: () => import('@/views/SeckillDetailView.vue'),
-    meta: { requiresAuth: true, title: '秒杀详情' }
+    meta: { requiresAuth: true, title: '秒杀详情' },
   },
-
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('@/views/LoginView.vue'),
+    meta: { bare: true, title: '登录' },
+  },
+  {
+    path: '/register',
+    name: 'register',
+    component: () => import('@/views/RegisterView.vue'),
+    meta: { bare: true, title: '注册' },
+  },
   {
     path: '/admin',
-    component: () => import('@/components/AdminLayout.vue'),
+    component: () => import('@/components/AdminShell.vue'),
     meta: { requiresAuth: true, requiresAdmin: true },
     children: [
-      { path: '', redirect: { name: 'admin-products' } },
+      { path: '', redirect: { name: 'admin-dashboard' } },
+      {
+        path: 'dashboard',
+        name: 'admin-dashboard',
+        component: () => import('@/views/admin/AdminDashboardView.vue'),
+        meta: { title: '运营概览' },
+      },
+      {
+        path: 'orders',
+        name: 'admin-orders',
+        component: () => import('@/views/admin/AdminOrdersView.vue'),
+        meta: { title: '订单管理' },
+      },
+      {
+        path: 'orders/:id',
+        name: 'admin-order-detail',
+        component: () => import('@/views/admin/AdminOrderDetailView.vue'),
+        meta: { title: '订单详情' },
+      },
+      {
+        path: 'refunds',
+        name: 'admin-refunds',
+        component: () => import('@/views/admin/AdminRefundsView.vue'),
+        meta: { title: '退款审批' },
+      },
       {
         path: 'products',
         name: 'admin-products',
         component: () => import('@/views/admin/AdminProductsView.vue'),
-        meta: { title: '商品管理' }
+        meta: { title: '商品管理' },
+      },
+      {
+        path: 'products/new',
+        name: 'admin-product-new',
+        component: () => import('@/views/admin/AdminProductEditView.vue'),
+        meta: { title: '新建商品' },
+      },
+      {
+        path: 'products/:id',
+        name: 'admin-product-edit',
+        component: () => import('@/views/admin/AdminProductEditView.vue'),
+        meta: { title: '编辑商品' },
+      },
+      {
+        path: 'catalog',
+        name: 'admin-catalog',
+        component: () => import('@/views/admin/AdminCatalogView.vue'),
+        meta: { title: '分类与属性' },
+      },
+      {
+        path: 'inventory',
+        name: 'admin-inventory',
+        component: () => import('@/views/admin/AdminInventoryView.vue'),
+        meta: { title: '库存' },
       },
       {
         path: 'coupons',
         name: 'admin-coupons',
         component: () => import('@/views/admin/AdminCouponsView.vue'),
-        meta: { title: '券模板' }
+        meta: { title: '优惠券' },
       },
       {
         path: 'seckill',
         name: 'admin-seckill',
         component: () => import('@/views/admin/AdminSeckillView.vue'),
-        meta: { title: '秒杀活动' }
-      }
-    ]
+        meta: { title: '秒杀活动' },
+      },
+      {
+        path: 'users',
+        name: 'admin-users',
+        component: () => import('@/views/admin/AdminUsersView.vue'),
+        meta: { title: '用户' },
+      },
+    ],
   },
-
   {
     path: '/forbidden',
     name: 'forbidden',
     component: () => import('@/views/ForbiddenView.vue'),
-    meta: { title: '无权访问' }
+    meta: { title: '无权访问' },
   },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',
     component: () => import('@/views/NotFoundView.vue'),
-    meta: { title: '页面不存在' }
-  }
+    meta: { title: '页面不存在' },
+  },
 ]
 
 export const router = createRouter({
   history: createWebHistory(),
   routes,
-  scrollBehavior: () => ({ top: 0 })
+  scrollBehavior: () => ({ top: 0 }),
 })
 
 router.beforeEach(async (to) => {
@@ -144,8 +206,7 @@ router.beforeEach(async (to) => {
   if (!auth.isLoggedIn) {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  // 刷新页面后令牌还在、role 还没补齐（role 只能异步从 /user/me 取）
-  if (auth.role === null) {
+  if (!auth.user) {
     await auth.loadIdentity()
     if (!auth.isLoggedIn) {
       return { name: 'login', query: { redirect: to.fullPath } }
@@ -158,10 +219,9 @@ router.beforeEach(async (to) => {
 })
 
 router.afterEach((to) => {
-  document.title = to.meta.title ? `${to.meta.title} · aurora-mall` : 'aurora-mall'
+  document.title = to.meta.title ? `${to.meta.title} · AURORA` : 'AURORA'
 })
 
-// 令牌失效（401 且刷新失败）时把用户送回登录页，并记住原来要去哪
 setSessionExpiredHandler(() => {
   const auth = useAuthStore()
   auth.forget()

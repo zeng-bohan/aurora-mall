@@ -1,119 +1,144 @@
 # 技术导览：设计、代码位置与验证方式
 
-这份文档给面试或代码审查用。每一项写清楚要解决什么问题、实现放在哪、怎么验证，以及当前方案的边界。
+这份文档按问题组织。每节写清楚要解决什么、实现放在哪、怎么验证，以及当前方案的边界。
 
-## 1. 自研 RPC：协议、复制、熔断与失败语义
+## 1. 商品 EAV 与目录查询
 
-**要解决的问题**：服务间调用默认走 OpenFeign。项目需要一条可以切换的传输路径，用来对照协议开销、连接模型和容错方式。
+**要解决的问题**：18 个 SPU、45 个 SKU，分类和属性都要能筛选；SKU 的属性组合必须唯一，不能靠前端拼接字符串防止重复。
 
-**协议**：18 字节定长头加 body。头字段为 magic(2) / version(1) / type(1) / serializer(1) / status(1) / requestId(8) / bodyLength(4)，大端。拆包统一用 `LengthFieldBasedFrameDecoder`，长度字段在 offset 14，body 上限 10MB。
+**做法**：
+- 属性字典独立成表，属性带类型、单位、可筛选、变体、必填、展示和排序字段。
+- SPU 与属性值绑定放在 `product_spu_attribute` / `product_spu_attribute_value`；SKU 与属性值绑定放在 `product_sku_attribute`。
+- SKU 保存 `combination_key` 并加唯一索引，保存 `sku_code` 并加唯一索引。保存商品时同时校验：变体属性必填、组合键不重复、SKU 编码不重复。
+- 目录查询从分类、关键词、价格带、属性值开始过滤，再组装 SPU 卡片。SKU 库存通过库存服务批量查询，库存服务不可用时返回 `null`，页面显示“库存待确认”，不伪造数字。
 
-**调用**：客户端每次调用分配自增 requestId，放进 `ConcurrentHashMap` 的挂起表；响应按 requestId 找回 Future。发送失败立即让该调用失败，断线时 `failAllPending` 让所有在途调用立即可失败，不必等到超时。心跳与重连解耦，空闲超过心跳间隔才发 ping。
+**代码**：`aurora-product/.../service/ProductQueryService.java`、`ProductAdminService.java`、`dto/ProductDtos.java`；表结构见 `docker/mysql/init/02-aurora_product.sql`，目录数据见 `12-dtc-catalog.sql`。
 
-**失败语义**：四类异常分开。`RpcRemoteException` 是业务失败，不走熔断；`RpcUnavailableException` 是不可达或过载，计入熔断；`RpcTimeoutException` 是超时，计入熔断；`RpcUnauthorizedException` 是握手密钥不一致，属于配置错误，单独成型且不计失败率。
+**验证**：目录、关键词、分类、价格与属性筛选在浏览器中逐项检查；运营台商品编辑校验必填变体与重复组合。前端类型检查覆盖 DTO 字段。
 
-**代码位置**：`aurora-rpc/src/main/java/com/zengbohan/aurora/rpc/protocol/ProtocolCodec.java`、`transport/RpcClient.java`、`transport/RpcServer.java`、`proxy/RpcProxyFactory.java`、`proxy/RpcClientPool.java`
+**边界**：筛选在 Java 侧完成，当前数据量下可接受。SKU 数量上到万级后，应改为索引化查询或搜索引擎。
 
-**验证**：`mvn -pl aurora-rpc test`，14 个传输集成用例、10 个编解码用例、8 个全链路代理用例。传输等价性用 `bash docker/smoke-rpc.sh`（11 条断言），并发对照见 [m4-load-test.md](m4-load-test.md)。
+## 2. 父订单、定价与退款金额
 
-**边界**：单连接多路复用，没有连接池，大响应会阻塞小响应；未实现 Seata XID 透传，所以 order→inventory 保持 Feign；注册中心只实现注册、订阅与健康过滤，没有权重和集群路由。
+**要解决的问题**：一次结算有多个 SKU，但只能有一次支付、一次发货。优惠要按商品分摊，退款后金额必须对得上。
 
-## 2. 秒杀：Lua 原子预扣与失败补偿
+**做法**：
+- 父订单 `trade_order` 保存商品金额、优惠、运费、应付、已退和地址快照；明细 `trade_order_item` 保存 SKU 快照与分摊后的金额。
+- 定价统一走 `TradePricingService`：金额换算成整数分；优惠按商品金额占比分摊，最大余数法补齐；券后满 299 免运费，否则收 12 元。
+- 部分退款按商品原始金额计算，不退运费。退款后剩余商品金额低于券门槛时，只允许整单退款。整单退款退回剩余实付并返还优惠券。秒杀订单只允许整单退款。
+- 退款审批和外部结算分开：审批只改订单、明细和退款记录；支付退款与库存回补由 `settle()` 执行，失败由 `RefundSettlementJob` 重试。
 
-**要解决的问题**：抢购要在高并发下同时保证时间窗、一人一单和库存不超卖，且落单失败时名额必须还回去。
+**代码**：`aurora-order/.../service/TradeService.java`、`TradePricingService.java`、`RefundService.java`；表结构见 `05-aurora_order.sql`。
 
-**做法**：`seckill_reserve.lua` 在一次脚本执行里完成时间窗判断、已购集合检查、库存扣减和结果写入 PENDING。`seckill_compensate.lua` 用 `SREM` 的返回值作为幂等凭据，只有确实移除掉已购标记时才回补库存，避免补偿重放造成超卖。两条路径的结果都写进同一个结果 hash，客户端只查这一个键。
+**验证**：
+- `TradePricingServiceTest`（8 例）：分摊总额、运费门槛、部分退款后保留券、低于门槛拒绝、整单退款、部分后退整单、秒杀限制、优惠重分摊。
+- `TradeServiceIntegrationTest`（6 例，真实 MySQL）：下单幂等、同键换内容、事务失败库存回补、关单、迟到支付、发货与确认收货。
+- 浏览器流程：多商品结算、部分退款、运营审批、发货、确认收货。
 
-**MQ 模式**：预扣成功后投递消息即返回，请求路径不碰 DB。消费者写入订单、去重行和扣减 DB 库存在同一个事务里，DB 是最终事实。受理结果走状态机 `PENDING → PROCESSING → ORDER/FAIL`，认领和补偿都是 Lua 原子操作；发送结果不确定时保留 PENDING，由 `SeckillReconcileJob` 确认订单或归还名额。详见 [reliability-fixes.md](reliability-fixes.md) 第 1、2 节。
+**边界**：退款申请按订单串行处理；同一订单不能并行审批多笔退款。退款金额只按商品原价，不重新计算已使用优惠的退回。
 
-**代码位置**：`aurora-seckill/src/main/resources/lua/seckill_{reserve,claim,reset_pending,compensate}.lua`、`service/SeckillOrderService.java`、`service/SeckillOrderWriter.java`、`service/SeckillReconcileJob.java`、`mq/SeckillEventPublisher.java`
+## 3. 下单幂等
 
-**验证**：`mvn -pl aurora-seckill -am test`。`SeckillLuaIntegrationTest` 对真实 Redis 有 11 例；`SeckillOrderTransactionIntegrationTest` 对真实 MySQL 验证 3 个事务场景。压测与一致性结论见 [m5-seckill-load-test.md](m5-seckill-load-test.md)。
+**要解决的问题**：网络超时后用户重试，不能生成第二张订单；同一个键换了内容，也不能悄悄下成另一单。
 
-**边界**：结果 hash 的 TTL 到活动结束后一天，之后只能回落到 DB 查询；对账按活动扫描，单机规模设计；限流是活动维度，不区分用户。
+**做法**：
+- `order_idempotency` 以 `(user_id, idem_key)` 为主键，保存 `trade_id` 和请求指纹。
+- 映射、订单、明细、优惠券绑定、`tx_message` 在同一个本地事务里提交。
+- 同键同指纹返回原订单；同键不同指纹抛 `DUPLICATE_REQUEST`。
+- 并发同键由主键裁决：后到事务回滚并释放已预扣库存，再查询赢家订单返回。
 
-## 3. 事务一致性：本地消息表、事务消息与回查
+**代码**：`TradeService.place()`、`insertIdempotency()`、`replay()`；`entity/OrderIdempotency.java`。
 
-**要解决的问题**：下单要写订单、扣库存，还要保证后续事件不丢。
+**验证**：`TradeServiceIntegrationTest` 的 `duplicateIdempotencyKeyReturnsTheOriginalTradeAndReservesOnce` 与 `reusingAKeyForDifferentContentIsRejectedWithoutSecondReserve`。
 
-**做法**：本地事务里同时写 `orders` 与 `tx_message`。RocketMQ 事务消息的确认依据是 `tx_message` 行是否存在，同一个查询也用于回答 broker 的回查，因此本地提交与确认之间崩溃时最终解析为一次 COMMIT。提交后发送失败不回滚订单，由 `TxMessageRetryJob` 重发；关单由延迟消息触发，`CloseTimeoutJob` 扫描兜底，两条路径都会回券。
+**边界**：幂等记录长期保留，没有清理任务。前端在提交中禁用按钮，但最终仍以服务端唯一键为准。
 
-**代码位置**：`aurora-order/src/main/java/com/zengbohan/aurora/order/service/OrderService.java`、`mq/OrderTxListener.java`、`mq/TxMessageRetryJob.java`、`mq/CloseTimeoutJob.java`
+## 4. 库存预扣、确认与回补
 
-**验证**：`OrderTxListenerTest`、`TxMessageRetryJobTest`、`OrderServiceTest`。AT 与 MQ 的对照见 [m2-tx-comparison.md](m2-tx-comparison.md)，其中包含回滚注入后的订单行撤销与库存不变断言。
+**要解决的问题**：多个 SKU 一起扣库存时必须原子；重复预扣、重复释放不能多扣或多还；Redis 与 DB 不能各说各话。
 
-**边界**：AT 模式只覆盖订单与库存，且不触碰 Redis；两种模式不能混跑同一 SKU。
+**做法**：
+- Redis 批量 Lua 一次检查所有 SKU 的可售量，任一不足就整批失败；全部满足才统一扣减，并写入父订单守卫，防止同一订单重复预扣。
+- DB 侧 `product_stock` 记录可售与已预占，`stock_reservation` 按 `(trade_id, sku_id)` 记录 `RESERVED / CONFIRMED / RELEASED`。
+- 支付成功确认预占；关单释放预占；退款按 `(refund_id, sku_id)` 写入 `stock_restore` 后回补可售库存。
+- Redis 键缺失时从 DB 重建；键存在但与 DB 有差异时只告警，不自动覆盖。
 
-## 4. 库存预扣与未知结果补偿
+**代码**：`aurora-inventory/.../stock/StockService.java`、`StockLuaScripts.java`、`lua/stock_batch_{reserve,release,restore}.lua`、`stock_set.lua`；表结构见 `04-aurora_inventory.sql`。
 
-**要解决的问题**：order 调用 inventory 预扣时如果超时，结果未知：可能扣了，也可能没扣。直接重试可能重复扣减。
+**验证**：`StockServiceIntegrationTest`（5 例，真实 MySQL + Redis）覆盖批量预扣、第二个 SKU 不足时整批不扣、释放幂等、确认后退款回补、并发抢最后一件只成功一次。
 
-**做法**：预扣按订单号幂等，库存侧只在确实预扣过时才回补。order 在收到传输类失败时调用补偿，补偿对没落地过的预扣不会增加库存。库存服务还有对账任务处理 Redis 与 DB 的偏差；管理员改可售库存时用 DB 行锁 + Redis CAS，遇到在途变更拒绝覆盖。
+**边界**：对账只重建缺失键，不自动修复有差异的键；管理员改库存时用 DB 行锁加 Redis CAS，有在途变更就拒绝。
 
-**代码位置**：`aurora-order/.../OrderService.java` 的 `reserveStock` 与 `rollbackStockQuietly`；`aurora-inventory/.../stock/StockService.java`
+## 5. 支付回调竞态与退款
 
-**验证**：`OrderServiceTest` 覆盖未知结果补偿；`StockServiceTest` 覆盖重复预留、已释放订单的中和与对账重建。
+**要解决的问题**：支付成功和超时关单可能同时发生；重复回调不能重复加钱；关单后的支付必须退回。
 
-## 5. 缓存穿透与缓存一致性
+**做法**：
+- 回调先校验 HMAC 签名，再比对支付单金额。
+- `markPaid` 是 `WHERE status='PAYING'` 的条件更新；更新后重新查单。
+- 如果订单已关闭，登记迟到退款（`markRefundedLate`），不发布支付成功事件。
+- 如果支付赢了关单，之后关单再执行时会再次查单，发现已支付就停止关单。
+- 退款按退款单号幂等：`payment_refunds` 先插入，重复请求直接返回；`applyRefund` 用 `amount - refunded_amount >= amount` 防止超退。
 
-**要解决的问题**：商品详情是读多写少的热点，需要挡住不存在的 ID，也要避免更新时读到旧值。
+**代码**：`aurora-payment/.../service/PaymentService.java`、`PaymentController.java`、`PaymentEventPublisher.java`；表结构见 `06-aurora_payment.sql`。
 
-**做法**：读取顺序是布隆过滤器 → 空值缓存 → 逻辑过期信封。逻辑过期允许单个重建者刷新期间继续返回旧值，物理 TTL 比逻辑过期长并带抖动。布隆过滤器用写时复制的方式整体替换，读路径不加锁。所有缓存操作都有安全包装：Redis 不可用时回源 DB，重建任务被线程池拒绝时释放互斥锁。
+**验证**：`PaymentServiceTest`（7 例）覆盖签名拒绝、正常回调只发布一次、关单退款、关单赢竞态、金额不符、退款幂等、迟到退款。
 
-**代码位置**：`aurora-product/src/main/java/com/zengbohan/aurora/product/cache/ProductCacheService.java`、`StringBloomFilter.java`、`VolatileBloomFilterHolder.java`
+**边界**：支付事件重试依赖 `event_published` 与重试任务；没有死信队列。渠道是模拟实现，不对接真实支付。
 
-**验证**：`mvn -pl aurora-product test`，覆盖布隆过滤器、空值缓存与逻辑过期。
+## 6. 秒杀：预扣、排队与归还
 
-**边界**：布隆过滤器是进程内实现，多实例各自一份，新商品写入后其他实例要等重建；重建与新建商品写入的竞态尚未消除；重建策略按本项目的单机部署设计。
+**要解决的问题**：活动库存独立，一人一单，不能超卖；异步落单失败要把名额还回去。
 
-## 6. 网关与内部接口的访问边界
+**做法**：
+- `seckill_reserve.lua` 原子完成时间窗、一人一单、库存扣减和 `PENDING` 结果。
+- 异步落单由 MQ 消费，结果状态机为 `PENDING → PROCESSING → ORDER / FAIL`；认领、补偿、重置都用 Lua。
+- 落单统一调用订单服务创建父订单，不另建一套订单表。
+- 关单或整单退款时，按父订单幂等归还活动库存（`seckill_release`），并同步增加 Redis 活动余量。
+- 发送结果未知时保留 `PENDING`，由 `SeckillReconcileJob` 查单确认或归还名额。
 
-**要解决的问题**：网关会为转发流量注入身份头，下游内部接口（`/internal/**`、`/stocks/**`）不能被普通登录用户借道调用。
+**代码**：`aurora-seckill/.../service/SeckillOrderService.java`、`SeckillActivityService.java`、`SeckillPreheatService.java`、`lua/seckill_{reserve,claim,reset_pending,compensate}.lua`。
 
-**做法**：网关的 `InternalPathGuardFilter` 按 StripPrefix 语义推算下游实际会看到的路径，再做与 Tomcat 一致的归一化（剥矩阵参数、折叠空段、解析点段），命中内部路径返回 404，不暴露端点存在性。库存服务的 `StockUserIdentityGuardFilter` 用 `UrlPathHelper` 解析路径，与 MVC 的匹配视图保持一致；携带 `X-User-Id` 的请求一律 403。
+**验证**：
+- `SeckillOrderServiceIntegrationTest`（5 例，真实 MySQL + Redis）：同步落单与二次抢购拒绝、售罄、未开始、退款归还、5 人抢 2 件只成功 2 人。
+- 浏览器全流程：运营创建并预热 → 用户抢购 → 支付 → 整单退款 → 运营审批 → 活动库存回到 5/5。
 
-**代码位置**：`aurora-gateway/src/main/java/com/zengbohan/aurora/gateway/auth/InternalPathGuardFilter.java`、`aurora-inventory/src/main/java/com/zengbohan/aurora/inventory/web/StockUserIdentityGuardFilter.java`
+**边界**：对账按活动扫描，单机规模；限流是活动维度；没有分布式锁，靠 Redis Lua 的原子性。
 
-**验证**：`InternalPathGuardFilterTest`（5 例）、`StockUserIdentityGuardFilterTest`（7 例）。后者包含矩阵参数绕过的回归用例：`/stocks;x=1/76` 必须仍进入身份校验。
+## 7. 关单消息与重试
 
-**边界**：管理端 `/admin/stocks/**` 刻意不在用户身份守卫范围内，它的授权依赖 `@RequireAdmin`，相关断言在 `AdminStockControllerTest`。
+**要解决的问题**：下单后要可靠触发超时关单，不能因为消息发送失败让订单一直挂着。
 
-## 7. 幂等
+**做法**：下单事务写 `tx_message`；发送 RocketMQ 延迟消息，成功后标记已发送。`TxMessageRetryJob` 重发未发送记录，`CloseTimeoutJob` 扫描超时订单兜底。关单按父订单幂等，重复消息不会重复释放。
 
-**要解决的问题**：下单、落单、支付回调都可能重放。
+**代码**：`aurora-order/.../mq/{OrderEventPublisher,TxMessageRetryJob,CloseTimeoutJob,TradeCloseListener}.java`。
 
-**做法**：下单用 `order_idempotency` 表持久化 `(user_id, idem_key) → order_id`，并保存请求指纹；映射、订单和 `tx_message` 同一事务提交。同键同指纹返回原订单，同键换参数拒绝。秒杀落单用消息 `messageId` 做 DB 去重，去重行与订单同事务；支付与关单用带前置状态的条件更新。
+**验证**：关单与迟到支付相关用例在 `TradeServiceIntegrationTest`、`PaymentServiceTest`；浏览器中把订单取消后检查库存与券状态。
 
-**代码位置**：`aurora-order/.../service/OrderService.java`、`entity/OrderIdempotency.java`、`aurora-common/.../idempotent/`、`aurora-seckill/.../SeckillOrderWriter.java`
+**边界**：`tx_message` 没有归档任务；消息重试没有上限，持续失败会产生重复日志。
 
-**验证**：`OrderServiceTest`（回放、同键换参数）、`SeckillOrderTransactionIntegrationTest`（真实 MySQL 回滚）、`IdempotentAspectTest`、`JdbcDedupStoreTest`。
+## 8. 前端设计系统与真实 API
 
-## 8. 分布式 ID
+**要解决的问题**：页面要像一个正常消费电子品牌，而不是后台模板；所有交互必须接真实接口。
 
-**要解决的问题**：订单号需要全局唯一、趋势递增，不能依赖数据库自增。
+**做法**：
+- 暖白、浅灰、深墨色与少量品牌橙；中文无衬线字体搭配现代英文无衬线字体。
+- 设计令牌放在 `styles/tokens.css`，基础组件在 `styles/base.css`，商城与运营台分别使用 `storefront.css` / `app.css`。
+- 商城使用编辑式首页、两列商品网格、详情画廊与 SKU 选择；运营台是独立侧栏布局。
+- 不展示虚构评价、评分和销量。支付与物流页面明确标注为演示流程。
+- 前端只通过 `src/api/dtc.ts` 调接口，类型与后端 DTO 对齐。
 
-**做法**：号段模式从数据库批量取号，双缓冲在当前号段消耗到 60% 时预先取下一段；雪花模式包含时钟回拨处理，workerId 优先取显式配置，缺省按 hostname 与 pid 推导。订单号由它生成；秒杀订单仍用数据库自增主键。
+**代码**：`aurora-web/src/styles/`、`src/views/`、`src/components/`、`src/api/dtc.ts`。
 
-**代码位置**：`aurora-id-generator/src/main/java/com/zengbohan/aurora/id/`
+**验证**：`npm run typecheck && npm run build`；`scripts/ui-storefront.mjs`、`ui-admin.mjs`、`ui-seckill-flow.mjs`、`ui-mobile.mjs` 在 Chrome 中跑真实流程并检查控制台错误与横向溢出。
 
-**验证**：`mvn -pl aurora-id-generator test`，覆盖并发唯一性、号段切换与时钟回拨。
+**边界**：商品图是概念渲染；没有真实支付、物流或评价系统。
 
-## 9. 限流与熔断
+## 9. 测试体系
 
-**要解决的问题**：网关需要限流，服务间调用需要熔断。
+- 纯单元测试：定价、签名、状态机、缓存、限流、ID 生成。
+- 真实 MySQL 测试：订单幂等与关单、支付退款、库存预约、秒杀预约。
+- 真实 Redis 测试：库存与秒杀 Lua 的原子性、并发防超卖。
+- 浏览器测试：商城购物、运营审批、秒杀全流程、桌面与 390px 布局。
 
-**做法**：限流有令牌桶与滑动窗口两种实现，网关用 Redis 滑动窗口在多实例间共享计数；熔断器按接口隔离，状态机为 CLOSED / OPEN / HALF_OPEN，半开状态并发试探有界，配置错误类异常不计入失败率。
-
-**代码位置**：`aurora-ratelimit/src/main/java/com/zengbohan/aurora/ratelimit/`、`aurora-gateway/.../ratelimit/`
-
-**验证**：`SlidingWindowRateLimiterTest`、`TokenBucketRateLimiterTest`、`CircuitBreakerTest`、`GatewayRateLimitFilterTest`。
-
-## 10. 测试体系
-
-**做法**：用例按依赖分层。不依赖外部服务的用例默认运行；需要 MySQL 或 Redis 的用例先探测连接，可用时执行，不可用时跳过。跳过不是静默的，surefire 报告里能看到具体数量。
-
-**代码位置**：`aurora-*/src/test/java`、`.github/workflows/ci.yml`
-
-**验证**：`mvn -B clean verify`。CI 的 `build-test` job 启动 MySQL 8.4 与 Redis 7，导入建表 SQL 后运行全量测试，并检查 seckill / inventory 的 surefire 报告：出现 skipped 就让构建失败。这样 Lua 脚本、事务回滚和并发用例进入必过项，不再靠“缺环境就跳过”保绿。
-
-**边界**：CI 改动尚未在 GitHub runner 上实际跑过；Nacos 注册等需要额外中间件的用例仍按环境跳过。
+CI 启动 MySQL 8.4 与 Redis 7，导入与本地相同的建表 SQL，运行 `mvn -B clean verify`；库存和秒杀报告出现 skipped 会让构建失败。

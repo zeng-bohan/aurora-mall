@@ -23,7 +23,15 @@ public class CacheWrapper<V> {
         return data;
     }
 
+    public void setData(V data) {
+        this.data = data;
+    }
+
     public Instant getExpireAt() {
         return expireAt;
+    }
+
+    public void setExpireAt(Instant expireAt) {
+        this.expireAt = expireAt;
     }
 }

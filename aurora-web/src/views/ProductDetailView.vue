@@ -1,268 +1,352 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { productApi } from '@/api'
-import type { Sku } from '@/api/product'
-import { SKU_ON_SALE } from '@/api/product'
-import { ApiError, ErrorCode } from '@/api/types'
-import ProductFigure from '@/components/ProductFigure.vue'
-import { useReveal } from '@/composables/useReveal'
+import { catalogApi, type Sku, type SpuDetail } from '@/api/dtc'
+import EmptyState from '@/components/EmptyState.vue'
+import ProductCard from '@/components/ProductCard.vue'
+import QuantityStepper from '@/components/QuantityStepper.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useCartStore } from '@/stores/cart'
-import { productKindLabel } from '@/utils/catalog'
-import { formatDateTime } from '@/utils/datetime'
-import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
+import { describeError } from '@/utils/errors'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const cart = useCartStore()
 
-const sku = ref<Sku | null>(null)
+const product = ref<SpuDetail | null>(null)
 const loading = ref(true)
-const notFound = ref(false)
+const error = ref('')
+const selectedValues = ref<Record<number, number>>({})
 const quantity = ref(1)
+const galleryIndex = ref(0)
 const adding = ref(false)
+const added = ref(false)
 
-const skuId = computed(() => Number(route.params.id))
-const sellable = computed(
-  () => sku.value !== null && sku.value.status === SKU_ON_SALE && sku.value.stock > 0
+const variantAttributes = computed(() =>
+  (product.value?.attributes ?? []).filter((attribute) => attribute.variant && attribute.values.length),
 )
-const maxQuantity = computed(() => Math.min(sku.value?.stock ?? 1, 999))
 
-const availability = computed(() => {
-  if (!sku.value) {
-    return ''
+const galleryImages = computed(() => {
+  const images: string[] = []
+  for (const sku of product.value?.skus ?? []) {
+    if (sku.imageUrl && !images.includes(sku.imageUrl)) {
+      images.push(sku.imageUrl)
+    }
   }
-  if (sku.value.status !== SKU_ON_SALE) {
-    return '已下架'
-  }
-  if (sku.value.stock <= 0) {
-    return '参考库存为 0'
-  }
-  return sku.value.stock <= 10 ? `参考库存仅剩 ${sku.value.stock} 件` : '参考库存充足'
+  return images
 })
 
-useReveal()
+const currentSku = computed<Sku | undefined>(() => {
+  const items = product.value?.skus ?? []
+  const selected = selectedValues.value
+  return items.find((sku) =>
+    variantAttributes.value.every((attribute) => {
+      const selectedValue = selected[attribute.id]
+      const value = sku.attributes.find((item) => item.attributeId === attribute.id)?.valueId
+      return selectedValue === undefined || value === selectedValue
+    }),
+  )
+})
 
-function step(delta: number): void {
-  quantity.value = Math.min(Math.max(quantity.value + delta, 1), maxQuantity.value)
+const currentImage = computed(() => {
+  const image = galleryImages.value[galleryIndex.value]
+  return image || currentSku.value?.imageUrl || product.value?.skus[0]?.imageUrl || '/products/placeholder.webp'
+})
+
+const price = computed(() => currentSku.value?.price ?? product.value?.skus[0]?.price ?? 0)
+const stock = computed(() => currentSku.value?.stock ?? null)
+const canBuy = computed(
+  () => Boolean(currentSku.value && currentSku.value.status === 1 && (stock.value === null || stock.value > 0)),
+)
+const maxQuantity = computed(() => Math.max(1, Math.min(99, stock.value ?? 99)))
+const selectedSummary = computed(() =>
+  variantAttributes.value
+    .map((attribute) => {
+      const valueId = selectedValues.value[attribute.id]
+      return attribute.values.find((value) => value.id === valueId)?.value
+    })
+    .filter(Boolean)
+    .join(' / '),
+)
+const stockLabel = computed(() => {
+  if (!currentSku.value) {
+    return '请选择规格'
+  }
+  if (stock.value === null) {
+    return '库存待确认'
+  }
+  if (stock.value <= 0) {
+    return '暂时缺货'
+  }
+  if (stock.value < 10) {
+    return `仅剩 ${stock.value} 件`
+  }
+  return '现货'
+})
+
+function syncSelection(sku: Sku | undefined): void {
+  if (!sku) {
+    return
+  }
+  selectedValues.value = Object.fromEntries(
+    sku.attributes.map((attribute) => [attribute.attributeId, attribute.valueId]),
+  )
+  const index = galleryImages.value.indexOf(sku.imageUrl)
+  if (index >= 0) {
+    galleryIndex.value = index
+  }
 }
 
 async function load(): Promise<void> {
+  const id = Number(route.params.id)
   loading.value = true
-  notFound.value = false
-  sku.value = null
+  error.value = ''
+  added.value = false
   try {
-    sku.value = await productApi.detail(skuId.value)
+    product.value = await catalogApi.detail(id)
+    selectedValues.value = {}
     quantity.value = 1
-  } catch (error) {
-    if (error instanceof ApiError && error.code === ErrorCode.NOT_FOUND) {
-      notFound.value = true
-      return
-    }
-    ElMessage.error(describeError(error))
+    galleryIndex.value = 0
+    syncSelection(product.value.skus[0])
+  } catch (e) {
+    error.value = describeError(e)
+    product.value = null
   } finally {
     loading.value = false
   }
 }
 
-async function requireLogin(): Promise<boolean> {
-  if (auth.isLoggedIn) {
-    return true
+function isAvailable(attributeId: number, valueId: number): boolean {
+  const candidate = { ...selectedValues.value, [attributeId]: valueId }
+  return (product.value?.skus ?? []).some(
+    (sku) =>
+      sku.status === 1 &&
+      variantAttributes.value.every((attribute) => {
+        const value = sku.attributes.find((item) => item.attributeId === attribute.id)?.valueId
+        const wanted = candidate[attribute.id]
+        return wanted === undefined || value === wanted
+      }),
+  )
+}
+
+function selectValue(attributeId: number, valueId: number): void {
+  if (!isAvailable(attributeId, valueId)) {
+    return
   }
-  await router.push({ name: 'login', query: { redirect: route.fullPath } })
-  return false
+  selectedValues.value = { ...selectedValues.value, [attributeId]: valueId }
+  const sku = currentSku.value
+  if (sku) {
+    const index = galleryImages.value.indexOf(sku.imageUrl)
+    if (index >= 0) {
+      galleryIndex.value = index
+    }
+  }
+}
+
+function selectGallery(index: number): void {
+  galleryIndex.value = index
+  const image = galleryImages.value[index]
+  const sku = (product.value?.skus ?? []).find((item) => item.imageUrl === image)
+  if (sku) {
+    selectedValues.value = Object.fromEntries(
+      sku.attributes.map((attribute) => [attribute.attributeId, attribute.valueId]),
+    )
+  }
 }
 
 async function addToCart(): Promise<void> {
-  if (!sku.value || !(await requireLogin())) {
+  if (!currentSku.value || !canBuy.value) {
+    return
+  }
+  if (!auth.isLoggedIn) {
+    void router.push({ name: 'login', query: { redirect: route.fullPath } })
     return
   }
   adding.value = true
   try {
-    await cart.add(sku.value.id, quantity.value)
+    await cart.add(currentSku.value.id, Math.min(quantity.value, maxQuantity.value))
+    added.value = true
     ElMessage.success('已加入购物车')
-  } catch (error) {
-    ElMessage.error(describeError(error))
+    window.setTimeout(() => {
+      added.value = false
+    }, 1800)
+  } catch (e) {
+    ElMessage.error(describeError(e))
   } finally {
     adding.value = false
   }
 }
 
-async function buyNow(): Promise<void> {
-  if (!sku.value || !(await requireLogin())) {
+function buyNow(): void {
+  if (!currentSku.value || !canBuy.value) {
     return
   }
-  await router.push({
+  if (!auth.isLoggedIn) {
+    void router.push({ name: 'login', query: { redirect: route.fullPath } })
+    return
+  }
+  void router.push({
     name: 'checkout',
-    query: { skuId: String(sku.value.id), quantity: String(quantity.value) }
+    query: { skuId: String(currentSku.value.id), quantity: String(quantity.value) },
   })
 }
 
-onMounted(load)
-watch(skuId, load)
+watch(
+  () => route.params.id,
+  () => {
+    void load()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
-  <div class="store-product">
-    <div class="container">
-      <RouterLink class="back-link" to="/products">← 返回目录</RouterLink>
-
-      <div v-if="loading" class="store-skeleton" aria-busy="true" aria-label="正在加载商品" />
-
-      <div v-else-if="notFound" class="store-empty">
-        <h1>商品不存在</h1>
-        <p>它可能已经下架，或链接已经失效。</p>
-        <RouterLink class="btn" to="/products">回到目录</RouterLink>
-      </div>
-
-      <template v-else-if="sku">
-        <div class="product-layout">
-          <div class="product-visual" data-reveal>
-            <ProductFigure :title="sku.title" :label="`${sku.title} 的目录图形`" />
-            <p class="product-visual__caption">
-              目录图形按商品类型绘制，不是商品实拍。所选商品：{{ sku.title }}。
-            </p>
-          </div>
-
-          <div class="product-copy" data-reveal style="--reveal-delay: 100ms">
-            <h1>{{ sku.title }}</h1>
-            <p class="product-price num">{{ formatYuan(sku.price) }}</p>
-            <p class="product-status">{{ productKindLabel(sku.title) }} · {{ availability }}</p>
-
-            <dl class="product-specs">
-              <div>
-                <dt>商品编号</dt>
-                <dd>{{ sku.id }}</dd>
-              </div>
-              <div>
-                <dt>目录库存</dt>
-                <dd>{{ sku.stock }} 件</dd>
-              </div>
-              <div>
-                <dt>更新时间</dt>
-                <dd>{{ formatDateTime(sku.updatedAt) }}</dd>
-              </div>
-              <div>
-                <dt>状态</dt>
-                <dd>{{ sku.status === SKU_ON_SALE ? '在售' : '已下架' }}</dd>
-              </div>
-            </dl>
-
-            <div class="buy-panel">
-              <div class="quantity" role="group" aria-label="购买数量">
-                <button type="button" :disabled="!sellable || quantity <= 1" @click="step(-1)">−</button>
-                <output aria-live="polite">{{ quantity }}</output>
-                <button type="button" :disabled="!sellable || quantity >= maxQuantity" @click="step(1)">
-                  +
-                </button>
-              </div>
-
-              <div class="buy-actions">
-                <button
-                  type="button"
-                  class="btn"
-                  :disabled="!sellable || adding"
-                  @click="addToCart"
-                >
-                  {{ adding ? '加入中…' : '加入购物车' }}
-                </button>
-                <button type="button" class="btn btn--signal" :disabled="!sellable" @click="buyNow">
-                  立即购买
-                </button>
-              </div>
-
-              <p v-if="!sellable" class="notice notice--warning">
-                该商品当前不可购买。{{ sku.status !== SKU_ON_SALE ? '它已经下架。' : '参考库存不足。' }}
-              </p>
-
-              <p class="product-note">
-                目录库存是商品表的参考值，不等于库存服务的可售库存。下单时会由服务端再次校验；如果库存不足，订单页会给出明确拒绝原因。
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <section class="product-pipeline" aria-labelledby="what-next">
-          <h2 id="what-next">下单后会发生什么</h2>
-          <p>每一步都有服务端状态，不靠前端动画制造“已完成”的错觉。</p>
-          <ol class="product-steps">
-            <li>
-              <strong>订单创建</strong>
-              <span>订单与事务消息同时写入，重复提交由幂等键拦截。</span>
-            </li>
-            <li>
-              <strong>库存预留</strong>
-              <span>Redis 原子预扣，数据库扣减由消费者完成。</span>
-            </li>
-            <li>
-              <strong>支付确认</strong>
-              <span>模拟渠道回调必须通过 HMAC 验签，金额与订单一致才生效。</span>
-            </li>
-            <li>
-              <strong>超时关单</strong>
-              <span>30 分钟未支付自动关闭，库存与优惠券按订单状态回退。</span>
-            </li>
-          </ol>
-        </section>
+  <div>
+    <div class="container breadcrumb">
+      <RouterLink to="/">首页</RouterLink>
+      <span>/</span>
+      <RouterLink to="/products">商品目录</RouterLink>
+      <template v-if="product">
+        <span>/</span>
+        <RouterLink :to="{ name: 'products', query: { categoryId: String(product.categoryId) } }">
+          {{ product.categoryName }}
+        </RouterLink>
+        <span>/</span>
+        <span>{{ product.title }}</span>
       </template>
     </div>
+
+    <div v-if="loading" class="container detail-layout">
+      <div class="skeleton" style="aspect-ratio: 1" />
+      <div class="admin-stack">
+        <div class="skeleton" style="height: 44px; width: 70%" />
+        <div class="skeleton" style="height: 22px; width: 50%" />
+        <div class="skeleton" style="height: 86px" />
+      </div>
+    </div>
+
+    <div v-else-if="error || !product" class="container">
+      <EmptyState title="商品暂时无法打开" :description="error || '商品可能已下架。'">
+        <RouterLink class="btn btn--line" to="/products">返回商品目录</RouterLink>
+      </EmptyState>
+    </div>
+
+    <template v-else>
+      <div class="container detail-layout">
+        <section class="gallery">
+          <div class="gallery__main">
+            <img :src="currentImage" :alt="product.title" />
+          </div>
+          <div v-if="galleryImages.length > 1" class="gallery__thumbs">
+            <button
+              v-for="(image, index) in galleryImages"
+              :key="image"
+              class="gallery__thumb"
+              :class="{ 'is-active': galleryIndex === index }"
+              type="button"
+              @click="selectGallery(index)"
+            >
+              <img :src="image" :alt="`${product.title} 图 ${index + 1}`" />
+            </button>
+          </div>
+        </section>
+
+        <section class="product-info">
+          <span class="eyebrow">{{ product.brand }} / {{ product.categoryName }}</span>
+          <h1 class="display">{{ product.title }}</h1>
+          <p class="product-info__subtitle">{{ product.subtitle }}</p>
+
+          <div class="price-row">
+            <span class="price-row__amount">{{ formatYuan(price) }}</span>
+            <span class="price-row__note">{{ selectedSummary || '选择规格查看价格' }}</span>
+          </div>
+
+          <div v-for="attribute in variantAttributes" :key="attribute.id" class="variant-group">
+            <div class="variant-group__head">
+              <span class="variant-group__name">{{ attribute.name }}</span>
+              <span class="variant-group__value">
+                {{
+                  attribute.values.find((value) => value.id === selectedValues[attribute.id])?.value ?? '请选择'
+                }}
+              </span>
+            </div>
+            <div class="option-row">
+              <button
+                v-for="value in attribute.values"
+                :key="value.id"
+                class="option"
+                :class="{ 'is-selected': selectedValues[attribute.id] === value.id }"
+                type="button"
+                :disabled="!isAvailable(attribute.id, value.id)"
+                @click="selectValue(attribute.id, value.id)"
+              >
+                <span v-if="value.colorHex" class="swatch-dot" :style="{ background: value.colorHex }" />
+                {{ value.value }}
+              </button>
+            </div>
+          </div>
+
+          <div class="stock-line">
+            <span class="stock-dot" :class="{ 'stock-dot--out': stock === 0 }" />
+            {{ stockLabel }}
+            <span v-if="currentSku">· {{ currentSku.skuCode }}</span>
+          </div>
+
+          <div class="quantity-row">
+            <span class="tiny">数量</span>
+            <QuantityStepper v-model="quantity" :min="1" :max="maxQuantity" :disabled="!canBuy" />
+          </div>
+
+          <div class="buy-row">
+            <button class="btn btn--line" type="button" :disabled="!canBuy || adding" @click="addToCart">
+              {{ adding ? '加入中…' : added ? '已加入购物车' : '加入购物车' }}
+            </button>
+            <button class="btn btn--primary" type="button" :disabled="!canBuy" @click="buyNow">
+              立即购买
+            </button>
+          </div>
+
+          <ul class="assurance-list">
+            <li>券后满 ¥299 免运费，未满收取 ¥12。预计 1–2 个工作日发出。</li>
+            <li>发货前支持部分或整单退款；退款金额按商品金额与优惠券门槛规则计算。</li>
+            <li>发货后可在订单详情查看模拟运单，7 天未确认将自动完成。</li>
+            <li>商品图为演示概念渲染，不冒充真实拍摄。</li>
+          </ul>
+        </section>
+      </div>
+
+      <section class="container detail-section">
+        <span class="eyebrow">Product Notes</span>
+        <h2 class="display" style="margin-top: 10px">为日常使用而设计。</h2>
+        <p class="detail-section__copy">{{ product.description }}</p>
+        <table v-if="product.specs.length" class="spec-table">
+          <tbody>
+            <tr v-for="spec in product.specs" :key="spec.name">
+              <th>{{ spec.name }}</th>
+              <td>{{ spec.value }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section v-if="product.related.length" class="container detail-section">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Related</span>
+            <h2 class="display">同一张桌面上的其他选择。</h2>
+          </div>
+          <RouterLink class="link-arrow" :to="{ name: 'products', query: { categoryId: String(product.categoryId) } }">
+            查看分类 →
+          </RouterLink>
+        </div>
+        <div class="related-grid">
+          <ProductCard v-for="item in product.related" :key="item.id" :product="item" />
+        </div>
+      </section>
+    </template>
   </div>
 </template>
-
-<style scoped>
-.product-steps {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  border-top: 1px solid var(--line);
-}
-
-.product-steps li {
-  display: grid;
-  gap: 6px;
-  padding: 18px 20px 18px 0;
-  border-bottom: 1px solid var(--line);
-}
-
-.product-steps li + li {
-  padding-left: 20px;
-  border-left: 1px solid var(--line);
-}
-
-.product-steps strong {
-  font-size: var(--step-3);
-}
-
-.product-steps span {
-  font-size: var(--step-2);
-  color: var(--muted);
-  line-height: 1.55;
-}
-
-@media (max-width: 900px) {
-  .product-steps {
-    grid-template-columns: 1fr 1fr;
-  }
-
-  .product-steps li:nth-child(3) {
-    padding-left: 0;
-    border-left: 0;
-  }
-}
-
-@media (max-width: 560px) {
-  .product-steps {
-    grid-template-columns: 1fr;
-  }
-
-  .product-steps li + li {
-    padding-left: 0;
-    border-left: 0;
-  }
-}
-</style>

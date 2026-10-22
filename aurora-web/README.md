@@ -1,80 +1,78 @@
 # aurora-web
 
-aurora-mall 的前端：Vue 3 + TypeScript + Vite + Element Plus + Pinia。一份代码里两套界面——用户端（浏览、购物车、下单、支付、领券、秒杀）与管理台（商品、券模板、秒杀活动）。
+AURORA Mall 前端：Vue 3 + TypeScript + Vite + Pinia + Element Plus。一份代码包含商城和独立运营台。
 
-## 起来
+## 启动
 
 ```bash
-npm install
+npm ci
 npm run dev        # http://localhost:5173，端口可用 PORT 覆盖
 ```
 
-前端只请求**同源**的 `/api`：开发期由 Vite 反代到网关（默认 `http://localhost:8000`，用 `VITE_GATEWAY` 覆盖），生产交给 nginx 做同样的事。所以代码里不出现网关地址，两种环境的凭据与同源策略表现一致。
-
-要真正跑通得先起后端：`docker compose up -d` → `bash nacos/import.sh` → 启服务（见根 README）。前端本身不依赖后端也能启动，只是接口会失败。管理台要 `role=ADMIN`，而注册出来的账号一律是普通用户，得手工改库（命令在根 README）。
+前端只请求同源 `/api`。开发期由 Vite 反代到网关（默认 `http://localhost:8000`，用 `VITE_GATEWAY` 覆盖）；生产环境由 nginx 做同样的事。代码里不出现网关地址。
 
 ```bash
-npm run build      # vue-tsc 类型检查 + vite 打包到 dist/
-npm run typecheck  # 只做类型检查
+npm run typecheck  # vue-tsc 类型检查
+npm run build      # 类型检查 + 生产构建
 ```
+
+要跑通交易流程，先按根 README 启动中间件和八个服务，再执行 `bash docker/seed-demo.sh`。
+
+## 页面
+
+商城：
+
+- 首页：品牌主视觉、分类入口、精选商品、使用场景。
+- 商品目录：分类、关键词、价格、属性筛选与排序。
+- 商品详情：画廊、SKU 选择、库存、数量、加购、立即购买、参数与相关商品。
+- 购物车、地址簿、多商品结算、模拟支付。
+- 订单列表与详情、模拟物流、发货前退款申请与进度。
+- 秒杀列表、详情和结果查询。
+- 登录、注册、个人中心、优惠券。
+
+运营台（`/admin`）：
+
+- 概览：待发货、待审批退款、近 30 天订单与销售额，全部来自订单库 SQL。
+- 订单、退款审批、SPU / SKU、分类与属性、库存、优惠券、秒杀、用户。
 
 ## 目录
 
 ```
 src/
-├── api/            # 后端契约层：每个服务一个模块，加一个 http 拦截器
-├── stores/         # Pinia：登录态、购物车
-├── router/         # 路由与守卫（requiresAuth / requiresAdmin）
-├── views/          # 页面；admin/ 下是运营台
-├── components/     # AppHeader / AppFooter / AdminLayout / 状态与空态组件
-├── styles/         # tokens.css（设计变量）+ 商城、运营台、Element Plus 覆盖
-├── composables/    # useNow（驱动倒计时）、useReveal（进入动画）
+├── api/            # dtc.ts 是唯一接口封装；http.ts 处理信封、刷新令牌和错误
+├── stores/         # 登录态、购物车
+├── router/         # 路由与 requiresAuth / requiresAdmin 守卫
+├── views/          # 商城页面；admin/ 下是运营台
+├── components/     # 头部、页脚、商品卡、状态标签、地址与退款弹窗、运营台外壳
+├── styles/         # tokens / base / storefront / app / element
 └── utils/          # 金额、时间、错误文案
 ```
 
-## 界面结构
+设计令牌在 `styles/tokens.css`：暖白、浅灰、深墨色与少量品牌橙；中英文无衬线字体；统一页面宽度、间距、圆角、阴影和状态色。商城与运营台共享令牌，但布局和密度分开。
 
-商城与运营台是两套独立布局，不再共用同一排导航：
+## 鉴权与幂等
 
-- 商城：`AppHeader` + 页面内容 + `AppFooter`。商品列表默认用印刷目录式的价格带编排，也可以切到响应式网格；商品没有实拍图，目录图形按商品类型绘制并明确标注。
-- 运营台：`AdminLayout`，232px 侧边导航、56px 顶部工具栏（面包屑 + 店铺入口 + 退出）、独立内容区；路由挂在 `/admin` 下，子页面只负责数据与表单。
-- 设计变量集中在 `styles/tokens.css`：颜色、语义色、字号、间距、圆角、阴影、页面最大宽度。商城与运营台共享变量，运营台的密度和标题字号在 `app.css` 中单独校准。
-- 1440 / 768 / 390 三个宽度都做过截图检查；运营台在 900px 以下把侧边栏收进抽屉。
+- 登录态由 Pinia 保存，`api/http.ts` 统一处理 `{code,message,data}` 信封；业务错误抛 `ApiError`，网络错误抛 `NetworkError`。
+- 刷新令牌做了并发收敛：多个 401 只发起一次 refresh，成功后重放原请求。
+- 下单的 `Idempotency-Key` 按一次提交意图生成；超时重试复用同一个键，服务端据此返回原订单。
+- 金额展示前换算成整数分比较，避免浮点误差影响优惠门槛。
 
-## 几处值得说明的取舍
+## 浏览器验收脚本
 
-**鉴权集中在 `api/http.ts`。** 响应拦截器统一解后端信封 `{code,message,data}`：业务失败（HTTP 200 + 非零 code）抛 `ApiError` 并把后端文案原样给用户；连接不上或 5xx 抛 `NetworkError`，用前端自己写的通用文案——这时候后端根本没回话，它的 message 是给运维看的。两者不混。
+`scripts/` 下是 Playwright 脚本，使用本机 Chrome：
 
-**刷新令牌做了单飞。** 后端的 refresh 是一次一换（旧 refreshToken 用过即失效），如果一个页面并发发了 N 个请求同时被 401，各刷一次只有第一个能成功，其余会把会话打成死局。所以 `http.ts` 里用同一个 in-flight Promise 收敛并发刷新，刷新成功再重放原请求。
+```bash
+node scripts/ui-storefront.mjs      # 商城浏览、加购、结算
+node scripts/ui-admin.mjs           # 运营台订单、退款、商品、库存
+node scripts/ui-seckill-flow.mjs    # 创建活动、抢购、支付、退款、审批
+node scripts/ui-mobile.mjs          # 390px 布局与横向溢出检查
+node scripts/ui-verify-demo.mjs     # 演示数据核对与截图
+```
 
-**金额一律换算成整数分再比较。** 后端用 BigDecimal，序列化成 JSON 数字后 `19.90` 会变成 `19.9`；`0.1 + 0.2 !== 0.3` 这种浮点坑落在优惠券门槛判断上就是算错。展示时才 `toFixed(2)` 补回两位。
+脚本会连接 `http://127.0.0.1:5173`，运行前需启动前端与后端。
 
-**下单的幂等键按「提交意图」复用。** `Idempotency-Key` 事实上必填，且必须在超时重试时复用同一个键——每次重试都换新键等于每次都是新订单。
+## 已知边界
 
-**支付回调故意不在前端实现。** `POST /api/payment/payments/mock-callback` 要带渠道密钥的 HMAC 签名，密钥只存在于服务端与 Nacos。下发到浏览器就等于任何人都能伪造「已支付」。所以支付页在发起支付后给出 `docker/mock-pay.sh <orderId> <amount>`，由那个脚本扮演渠道——它从 Nacos 取密钥、按同样的算法签名，与 `smoke-flows.sh` 同法。
-
-## 接口约定速查（会被踩的那几条）
-
-| 约定 | 说明 |
-| --- | --- |
-| `Idempotency-Key` | 下单事实上必填，缺失回 10001 |
-| `Coupon-Id` | 用券下单时券 id 走**请求头**，不在请求体里 |
-| 秒杀活动列表 | 也要 token，不在网关白名单里 |
-| `/admin` 路径 | 商品读接口公开，但路径含 `/admin` 就需要 ADMIN 角色 |
-| 管理员判定 | 登录响应里**没有** role，只能另问 `GET /user/me` |
-| 业务错误 | 大多是 HTTP 200 + 非零 code，必须判 code 而不是只看 HTTP 状态 |
-| 浏览器不可达 | `/api/inventory/stocks/**` 与 `/api/order/internal/**` 一律拒绝，不要实现 |
-
-## 做这层时暴露并补掉的两处后端缺口
-
-- **没有「我的订单」列表接口** → 补了 `GET /api/order/orders`（按 userId 分页，user_id 写进 SQL 条件而不是查出来再过滤）。在此之前前端只能把下过的订单号记在浏览器本地，换浏览器就没了；那个本地 store 已经删掉。
-- **管理台建的商品不能下单** → 补了 `GET/PUT /api/inventory/admin/stocks/{skuId}`（要求 ADMIN）。库存原本只有 order 经 Feign 能写，浏览器没有任何路径能把可售库存开出来，于是商品表里的 `stock` 只是展示字段、新建的商品永远下不了单。管理台因此有两处库存概念：列表里的「库存」是商品表的展示字段，行内「库存」按钮管的是真正决定能不能卖的可售库存。
-
-## 仍然是设计本身的边界，没改
-
-- **一个订单只能有一个商品**（`PlaceOrderRequest` 是 `{skuId, quantity}`）。所以购物车多件结算会生成多个订单，页面如实呈现；优惠券只对单个订单生效，多件时不可选。
-- **关单回券，不是退款回券。** 项目里没有用户发起的退款入口，唯一的退款是「迟到支付落到已关订单 → 自动退钱」；而那种订单在关单时券已经退回成 `UNUSED` 了，不存在「已核销的券要回退」这条路。
-
-## 打包体积
-
-Element Plus 目前是整包引入，主 chunk 约 1.1 MB（gzip 373 KB）。要压下来就上 `unplugin-vue-components` + `unplugin-auto-import` 做按需引入——代价是 `ElMessage` 这类 API 变成隐式全局，且生成的 `.d.ts` 需要在类型检查之前就存在（`npm run build` 是 `vue-tsc` 在先），所以得把生成文件一并提交。这里选了简单可控的那条路。
+- 支付与物流是演示流程；商品图是概念渲染，不是实拍。
+- 没有评价、评分和销量。页面只展示数据库能证明的信息。
+- Element Plus 目前整包引入，主 chunk 约 1.1 MB；按需引入需要额外插件与生成文件，暂未采用。

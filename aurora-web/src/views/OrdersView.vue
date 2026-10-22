@@ -1,178 +1,225 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
-import { computed, onMounted, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
-import { orderApi, productApi } from '@/api'
-import type { OrderView } from '@/api/order'
-import { ORDER_STATUS_LABEL, OrderStatus } from '@/api/order'
+import { paymentApi, tradeApi, type Trade, type TradeRow } from '@/api/dtc'
 import EmptyState from '@/components/EmptyState.vue'
-import PageHead from '@/components/PageHead.vue'
-import StatusPill from '@/components/StatusPill.vue'
+import RefundDialog from '@/components/RefundDialog.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
+import { formatDateTime } from '@/utils/datetime'
 import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
 
-type Filter = 'all' | 'created' | 'paid' | 'closed'
+const router = useRouter()
 
-const orders = ref<OrderView[]>([])
-const productTitles = ref<Record<number, string>>({})
-const total = ref(0)
-const current = ref(1)
-const size = ref(10)
-const loading = ref(true)
-const filter = ref<Filter>('all')
-
-const filters: Array<{ id: Filter; label: string }> = [
-  { id: 'all', label: '全部' },
-  { id: 'created', label: '待支付' },
-  { id: 'paid', label: '已支付' },
-  { id: 'closed', label: '已关闭' }
+const tabs = [
+  { key: '', label: '全部' },
+  { key: 'CREATED', label: '待支付' },
+  { key: 'PAID', label: '待发货' },
+  { key: 'SHIPPED', label: '已发货' },
+  { key: 'COMPLETED', label: '已完成' },
+  { key: 'CLOSED', label: '已关闭' },
+  { key: 'REFUNDED', label: '已退款' },
 ]
-
-const filtered = computed(() => {
-  if (filter.value === 'all') {
-    return orders.value
-  }
-  const status = filter.value === 'created' ? OrderStatus.CREATED : filter.value === 'paid' ? OrderStatus.PAID : OrderStatus.CLOSED
-  return orders.value.filter((order) => order.status === status)
-})
-
-const counts = computed(() => ({
-  total: orders.value.length,
-  created: orders.value.filter((order) => order.status === OrderStatus.CREATED).length,
-  paid: orders.value.filter((order) => order.status === OrderStatus.PAID).length
-}))
-
-function titleOf(skuId: number): string {
-  return productTitles.value[skuId] ?? `商品编号 ${skuId}`
-}
-
-function statusTone(status: number): 'pending' | 'paid' | 'closed' {
-  if (status === OrderStatus.PAID) {
-    return 'paid'
-  }
-  return status === OrderStatus.CREATED ? 'pending' : 'closed'
-}
+const activeTab = ref('')
+const trades = ref<TradeRow[]>([])
+const total = ref(0)
+const pages = ref(0)
+const current = ref(1)
+const size = 8
+const loading = ref(true)
+const error = ref('')
+const refundOpen = ref(false)
+const refundTrade = ref<Trade | null>(null)
 
 async function load(): Promise<void> {
   loading.value = true
+  error.value = ''
   try {
-    const page = await orderApi.list(current.value, size.value)
-    orders.value = page.records
+    const page = await tradeApi.list({
+      status: activeTab.value || undefined,
+      current: current.value,
+      size,
+    })
+    trades.value = page.records
     total.value = page.total
-
-    const ids = [...new Set(page.records.map((order) => order.skuId))]
-    if (ids.length > 0) {
-      try {
-        const skus = await productApi.batch(ids)
-        productTitles.value = Object.fromEntries(skus.map((sku) => [sku.id, sku.title]))
-      } catch {
-        productTitles.value = {}
-      }
-    }
-  } catch (error) {
-    ElMessage.error(describeError(error))
+    pages.value = page.pages
+  } catch (e) {
+    error.value = describeError(e)
+    trades.value = []
   } finally {
     loading.value = false
   }
 }
 
-function onChangePage(next: number): void {
-  current.value = next
+function selectTab(key: string): void {
+  activeTab.value = key
+  current.value = 1
   void load()
 }
 
-onMounted(load)
+async function pay(row: TradeRow): Promise<void> {
+  try {
+    await paymentApi.initiate(row.id)
+    await paymentApi.mockPay(row.id)
+    ElMessage.success('支付完成')
+    await load()
+  } catch (e) {
+    ElMessage.error(describeError(e))
+  }
+}
+
+async function cancel(row: TradeRow): Promise<void> {
+  try {
+    await ElMessageBox.confirm('取消后订单会关闭，库存和优惠券会释放。确认取消？', '取消订单', {
+      confirmButtonText: '取消订单',
+      cancelButtonText: '保留订单',
+      type: 'warning',
+    })
+    await tradeApi.cancel(row.id)
+    ElMessage.success('订单已取消')
+    await load()
+  } catch (e) {
+    if (e instanceof Error && e.message === 'cancel') {
+      return
+    }
+    if (e !== 'cancel') {
+      ElMessage.error(describeError(e))
+    }
+  }
+}
+
+async function confirmReceipt(row: TradeRow): Promise<void> {
+  try {
+    await ElMessageBox.confirm('确认已经收到商品？', '确认收货', {
+      confirmButtonText: '确认收货',
+      cancelButtonText: '再等等',
+    })
+    await tradeApi.confirm(row.id)
+    ElMessage.success('订单已完成')
+    await load()
+  } catch (e) {
+    if (e !== 'cancel') {
+      ElMessage.error(describeError(e))
+    }
+  }
+}
+
+async function openRefund(row: TradeRow): Promise<void> {
+  try {
+    refundTrade.value = await tradeApi.detail(row.id)
+    refundOpen.value = true
+  } catch (e) {
+    ElMessage.error(describeError(e))
+  }
+}
+
+function goDetail(row: TradeRow): void {
+  void router.push({ name: 'order-detail', params: { id: row.id } })
+}
+
+onMounted(() => {
+  void load()
+})
 </script>
 
 <template>
-  <div class="app-page">
-    <PageHead title="我的订单" meta="订单按下单时间倒序；金额由订单服务计算，状态直接来自服务端。">
-      <template #actions>
-        <button type="button" class="btn btn--outline" :disabled="loading" @click="load">
-          {{ loading ? '刷新中…' : '刷新订单' }}
+  <div>
+    <div class="container page-head">
+      <span class="eyebrow">Orders</span>
+      <h1 class="display">我的订单。</h1>
+      <p>一个订单对应一次支付和一次发货。退款进度与订单状态同步展示。</p>
+    </div>
+
+    <div class="container">
+      <div class="order-tabs">
+        <button
+          v-for="tab in tabs"
+          :key="tab.key"
+          class="order-tab"
+          :class="{ 'is-active': activeTab === tab.key }"
+          type="button"
+          @click="selectTab(tab.key)"
+        >
+          {{ tab.label }}
         </button>
-      </template>
-    </PageHead>
+      </div>
 
-    <dl class="summary-strip" aria-label="本页订单概况">
-      <div>
-        <dt>本页订单</dt>
-        <dd>{{ counts.total }} <span>笔</span></dd>
-      </div>
-      <div>
-        <dt>待支付</dt>
-        <dd>{{ counts.created }} <span>笔</span></dd>
-      </div>
-      <div>
-        <dt>已支付</dt>
-        <dd>{{ counts.paid }} <span>笔</span></dd>
-      </div>
-    </dl>
-
-    <div class="filter-row" aria-label="按状态筛选本页订单">
-      <button
-        v-for="item in filters"
-        :key="item.id"
-        type="button"
-        class="filter-chip"
-        :aria-pressed="filter === item.id"
-        @click="filter = item.id"
+      <div v-if="loading" class="page-loading">正在读取订单…</div>
+      <div v-else-if="error" class="error-banner">{{ error }}</div>
+      <EmptyState
+        v-else-if="!trades.length"
+        title="这里还没有订单"
+        description="完成一次结算后，订单会出现在这里。"
       >
-        {{ item.label }}
-      </button>
-    </div>
+        <RouterLink class="btn btn--primary" to="/products">去逛逛</RouterLink>
+      </EmptyState>
 
-    <div v-if="loading && orders.length === 0" aria-busy="true" aria-label="正在加载订单">
-      <div class="skeleton-block skeleton-row" />
-      <div class="skeleton-block skeleton-row" />
-      <div class="skeleton-block skeleton-row" />
-    </div>
+      <div v-else>
+        <article v-for="row in trades" :key="row.id" class="order-card">
+          <div class="order-card__head">
+            <div class="order-card__meta">
+              <span class="mono">{{ row.tradeNo }}</span>
+              <span>{{ formatDateTime(row.createdAt) }}</span>
+              <span>{{ row.source === 'SECKILL' ? '秒杀' : '商城' }}</span>
+            </div>
+            <StatusBadge :status="row.status" />
+          </div>
 
-    <EmptyState
-      v-else-if="orders.length === 0"
-      title="还没有订单"
-      hint="结算成功后的订单会出现在这里；下单后 30 分钟内完成支付。"
-    >
-      <RouterLink class="btn" to="/products">去目录挑选</RouterLink>
-    </EmptyState>
+          <div class="order-items">
+            <div v-for="item in row.items.slice(0, 3)" :key="item.id" class="order-item">
+              <RouterLink class="order-item__media" :to="`/orders/${row.id}`">
+                <img :src="item.imageUrl" :alt="item.title" />
+              </RouterLink>
+              <div>
+                <div class="order-item__title">{{ item.title }}</div>
+                <div class="order-item__meta">{{ item.attributesText }} · ×{{ item.quantity }}</div>
+              </div>
+              <div class="order-item__meta">{{ formatYuan(item.unitPrice) }}</div>
+            </div>
+            <div v-if="row.items.length > 3" class="tiny">另有 {{ row.items.length - 3 }} 件商品</div>
+          </div>
 
-    <EmptyState
-      v-else-if="filtered.length === 0"
-      title="本页没有符合条件的订单"
-      hint="切换筛选条件，或者到下一页看看。"
-    />
+          <div class="order-card__foot">
+            <div>
+              <span class="order-card__amount">{{ formatYuan(row.payableAmount) }}</span>
+              <span v-if="row.refundedAmount > 0" class="tiny" style="margin-left: 10px">
+                已退 {{ formatYuan(row.refundedAmount) }}
+              </span>
+              <span v-if="row.refundStatus !== 'NONE'" class="tag" :class="row.refundStatus === 'FULL' ? 'tag--danger' : 'tag--warning'">{{ row.refundStatus === 'FULL' ? '整单退款' : '部分退款' }}</span>
+            </div>
+            <div class="order-actions">
+              <button class="btn btn--ghost btn--sm" type="button" @click="goDetail(row)">查看详情</button>
+              <button v-if="row.status === 'CREATED'" class="btn btn--primary btn--sm" type="button" @click="pay(row)">
+                去支付
+              </button>
+              <button v-if="row.status === 'CREATED'" class="btn btn--line btn--sm" type="button" @click="cancel(row)">
+                取消订单
+              </button>
+              <button v-if="row.status === 'PAID'" class="btn btn--line btn--sm" type="button" @click="openRefund(row)">
+                申请退款
+              </button>
+              <button v-if="row.status === 'SHIPPED'" class="btn btn--primary btn--sm" type="button" @click="confirmReceipt(row)">
+                确认收货
+              </button>
+            </div>
+          </div>
+        </article>
 
-    <section v-else class="panel" aria-label="订单列表">
-      <div class="order-row" v-for="order in filtered" :key="order.orderId">
-        <div>
-          <p class="order-row__id">订单 {{ order.orderId }}</p>
-          <p class="order-row__meta">{{ titleOf(order.skuId) }}</p>
-        </div>
-        <div>
-          <p class="order-row__meta">数量</p>
-          <p class="num">{{ order.quantity }}</p>
-        </div>
-        <div class="order-row__amount">{{ formatYuan(order.totalAmount) }}</div>
-        <StatusPill :tone="statusTone(order.status)" :label="ORDER_STATUS_LABEL[order.status]" />
-        <div class="order-row__end">
-          <RouterLink
-            class="btn btn--outline btn--sm"
-            :to="{ name: 'order-detail', params: { id: order.orderId } }"
-          >
-            查看
-          </RouterLink>
+        <div v-if="pages > 1" class="pagination-row">
+          <el-pagination
+            background
+            layout="prev, pager, next"
+            :total="total"
+            :page-size="size"
+            :current-page="current"
+            @current-change="(page: number) => { current = page; load() }"
+          />
         </div>
       </div>
-    </section>
-
-    <div v-if="total > size" class="catalog-pager">
-      <el-pagination
-        layout="prev, pager, next, total"
-        :total="total"
-        :page-size="size"
-        :current-page="current"
-        @current-change="onChangePage"
-      />
     </div>
+
+    <RefundDialog v-model="refundOpen" :trade="refundTrade" @applied="load" />
   </div>
 </template>

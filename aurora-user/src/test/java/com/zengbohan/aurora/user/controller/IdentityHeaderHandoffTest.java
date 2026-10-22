@@ -27,20 +27,20 @@ class IdentityHeaderHandoffTest {
     @Test
     void downstreamReadsUserIdRoleAndSecret() throws Exception {
         mockMvc.perform(get("/me")
-                        .header("X-User-Id", "7")
-                        .header("X-User-Role", "ADMIN")
+                        .header("X-User-Id", "1")
+                        .header("X-User-Role", "USER")
                         .header("X-Internal-Secret", "test-only-internal-secret-not-real"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value(0))
-                .andExpect(jsonPath("$.data.userId").value("7"))
+                .andExpect(jsonPath("$.data.id").value(1))
                 .andExpect(jsonPath("$.data.role").value("ADMIN"));
     }
 
     @Test
     void requestWithoutInternalSecretIsRejectedEvenWithIdentityHeaders() throws Exception {
         mockMvc.perform(get("/me")
-                        .header("X-User-Id", "7")
-                        .header("X-User-Role", "ADMIN"))
+                        .header("X-User-Id", "1")
+                        .header("X-User-Role", "USER"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value(40100));
     }

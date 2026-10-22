@@ -18,16 +18,9 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * 优惠券（M5 S4：模板与领取；下单抵扣/退款回券见 S5）。
- * <p>
- * 券并入 order 域而不是独立服务：它的生命周期完全围绕订单（领取 → 锁定 → 核销 → 回退），
- * 独立出去只会引入跨服务事务，换不到任何收益。表在 aurora_order 库，服务是同进程的 order。
- */
 @Service
 public class CouponService {
 
-    // 与列宽一致：校验前置，坏数据不进库
     private static final int TITLE_MAX_LENGTH = 64;
 
     private final CouponTemplateMapper templateMapper;
@@ -38,7 +31,6 @@ public class CouponService {
         this.couponMapper = couponMapper;
     }
 
-    /** 运营建券。校验与列宽/业务语义对齐，任何调用方都过同一套规则。 */
     public long createTemplate(CreateTemplate command) {
         if (command.title() == null || command.title().isBlank()
                 || command.title().length() > TITLE_MAX_LENGTH) {
@@ -51,7 +43,6 @@ public class CouponService {
             fail("抵扣金额必须大于 0");
         }
         if (command.discountAmount().compareTo(command.thresholdAmount()) >= 0) {
-            // 「满 100 减 100」这种券只会把订单打成 0 元，不是有效配置
             fail("抵扣金额必须小于门槛金额");
         }
         if (command.total() <= 0) {
@@ -69,7 +60,6 @@ public class CouponService {
         if (command.validDays() <= 0) {
             fail("有效期天数必须大于 0");
         }
-
         CouponTemplate template = new CouponTemplate();
         template.setTitle(command.title());
         template.setThresholdAmount(command.thresholdAmount());
@@ -83,16 +73,6 @@ public class CouponService {
         return template.getId();
     }
 
-    /**
-     * 领券。三步的次序与分工是刻意的：
-     * <ol>
-     *   <li><b>资格判定</b>（窗口、是否已领）——先给出明确的业务码，不让人等到最后才被拒；</li>
-     *   <li><b>条件更新占名额</b>——防超发靠 SQL 守卫（{@code claimed < total}），不靠先查后改；</li>
-     *   <li><b>插入用户券</b>——一人一张由唯一键兜底。</li>
-     * </ol>
-     * ②③ 在同一事务：③ 因唯一键失败时整体回滚，② 占掉的配额随之释放——
-     * 不会出现"领取失败却少了一张券"。
-     */
     @Transactional
     public long claim(long templateId, long userId) {
         CouponTemplate template = templateMapper.selectById(templateId);
@@ -115,7 +95,6 @@ public class CouponService {
         if (templateMapper.claimOne(templateId) != 1) {
             throw new BusinessException(ErrorCode.COUPON_SOLD_OUT);
         }
-
         UserCoupon coupon = new UserCoupon();
         coupon.setTemplateId(templateId);
         coupon.setUserId(userId);
@@ -128,19 +107,15 @@ public class CouponService {
         try {
             couponMapper.insert(coupon);
         } catch (DuplicateKeyException e) {
-            // 并发下同一用户同时领：唯一键拦下后抛业务码；异常传播触发回滚，
-            // 上面占用的名额一并归还（这正是把两步放进同一事务的原因）
             throw new BusinessException(ErrorCode.COUPON_ALREADY_CLAIMED, "该券已领取");
         }
         return coupon.getId();
     }
 
-    /** 我的券：状态在读取时按 expire_at 推导（EXPIRED 不落库），先过期的排前面。 */
     public List<CouponView> myCoupons(long userId) {
         return couponMapper.findByUser(userId).stream().map(CouponService::toView).toList();
     }
 
-    /** 用户视角的可领模板：只给领取窗口未结束的。 */
     public List<CouponTemplateView> claimableTemplates() {
         List<CouponTemplate> templates = templateMapper.selectList(Wrappers.<CouponTemplate>lambdaQuery()
                 .gt(CouponTemplate::getClaimEndAt, LocalDateTime.now())
@@ -148,41 +123,15 @@ public class CouponService {
         return templates.stream().map(CouponService::toView).toList();
     }
 
-    /** 运营视角的模板列表：不筛窗口，含已停发的。 */
     public List<CouponTemplateView> listTemplates() {
         List<CouponTemplate> templates = templateMapper.selectList(Wrappers.<CouponTemplate>lambdaQuery()
                 .orderByDesc(CouponTemplate::getId));
         return templates.stream().map(CouponService::toView).toList();
     }
 
-    private static CouponTemplateView toView(CouponTemplate template) {
-        return new CouponTemplateView(template.getId(), template.getTitle(),
-                template.getThresholdAmount(), template.getDiscountAmount(),
-                Math.max(template.getTotal() - template.getClaimed(), 0),
-                template.getClaimStartAt(), template.getClaimEndAt());
-    }
-
-    // 派生状态：UNUSED 且已过期 → EXPIRED。其他状态（LOCKED/USED）不再改写展示值
-    private static CouponView toView(UserCoupon coupon) {
-        String status = coupon.getStatus();
-        LocalDateTime expireAt = coupon.getExpireAt();
-        if (CouponStatus.UNUSED.name().equals(status) && expireAt != null
-                && expireAt.isBefore(LocalDateTime.now())) {
-            status = CouponStatus.EXPIRED.name();
-        }
-        return new CouponView(coupon.getId(), coupon.getTitle(), coupon.getThresholdAmount(),
-                coupon.getDiscountAmount(), status, expireAt, coupon.getOrderId());
-    }
-
-    /**
-     * 为一次下单准备用券钩子。这里只做只读校验（归属/状态/有效期），状态迁移
-     * （UNUSED→LOCKED）留给 {@link CouponUseHook#bind}——它在订单自己的事务里执行，
-     * 因此下单失败时券不会被扣在半路。
-     */
-    public CouponUseHook prepareUse(long couponId, long userId) {
+    public CouponUse prepareUse(long couponId, long userId) {
         UserCoupon coupon = couponMapper.selectById(couponId);
         if (coupon == null || coupon.getUserId() == null || coupon.getUserId() != userId) {
-            // 不暴露他人券的存在性
             throw new BusinessException(ErrorCode.NOT_FOUND, "优惠券不存在");
         }
         if (!CouponStatus.UNUSED.name().equals(coupon.getStatus())) {
@@ -191,62 +140,81 @@ public class CouponService {
         if (coupon.getExpireAt() != null && coupon.getExpireAt().isBefore(LocalDateTime.now())) {
             throw new BusinessException(ErrorCode.COUPON_EXPIRED);
         }
-        return new CouponUseHook(couponId, userId, coupon.getThresholdAmount(), coupon.getDiscountAmount());
+        return new CouponUse(coupon.getId(), coupon.getTemplateId(), userId,
+                coupon.getTitle(), coupon.getThresholdAmount(), coupon.getDiscountAmount());
     }
 
-    /** 支付成功：核销该订单锁定的券（无券订单是空操作，重投递天然幂等）。 */
-    public boolean markUsedForOrder(long orderId) {
-        return couponMapper.markUsedByOrder(orderId) == 1;
+    public BigDecimal discountFor(CouponUse coupon, BigDecimal merchandiseAmount) {
+        if (merchandiseAmount.compareTo(coupon.thresholdAmount()) < 0) {
+            throw new BusinessException(ErrorCode.COUPON_THRESHOLD_NOT_MET);
+        }
+        return coupon.discountAmount().min(merchandiseAmount);
     }
 
-    /** 关单/超时：把锁定的券退回 UNUSED（已核销的不动，理由见 mapper 注释）。 */
-    public boolean releaseForOrder(long orderId) {
-        return couponMapper.releaseByOrder(orderId) == 1;
+    /** 在订单本地事务内锁定券并把 trade_id 绑上。 */
+    public void bindInTransaction(long tradeId, CouponUse coupon) {
+        if (couponMapper.lock(coupon.id(), coupon.userId()) != 1) {
+            throw new BusinessException(ErrorCode.COUPON_NOT_USABLE);
+        }
+        couponMapper.bindToTrade(coupon.id(), tradeId);
     }
 
-    /**
-     * 下单用券钩子：{@code discountFor} 是纯函数（门槛判定 + 抵扣额），
-     * {@code bind} 必须在订单事务内执行（UNUSED→LOCKED 与订单行在同一事务内提交或回滚）。
-     */
-    public class CouponUseHook implements OrderService.CouponHook {
+    public boolean markUsed(long tradeId) {
+        return couponMapper.markUsedByTrade(tradeId) == 1;
+    }
 
-        private final long couponId;
-        private final long userId;
-        private final BigDecimal thresholdAmount;
-        private final BigDecimal discountAmount;
+    public boolean release(long tradeId) {
+        return couponMapper.releaseByTrade(tradeId) == 1;
+    }
 
-        CouponUseHook(long couponId, long userId, BigDecimal thresholdAmount, BigDecimal discountAmount) {
-            this.couponId = couponId;
-            this.userId = userId;
-            this.thresholdAmount = thresholdAmount;
-            this.discountAmount = discountAmount;
+    /** 整单退款：券回到用户券包，已核销的也恢复。 */
+    public boolean refundReturn(long tradeId) {
+        return couponMapper.refundByTrade(tradeId) == 1;
+    }
+
+    public String titleOf(Long userCouponId) {
+        if (userCouponId == null) {
+            return null;
         }
+        UserCoupon coupon = couponMapper.selectById(userCouponId);
+        return coupon == null ? null : coupon.getTitle();
+    }
 
-        @Override
-        public BigDecimal discountFor(BigDecimal orderAmount) {
-            if (orderAmount.compareTo(thresholdAmount) < 0) {
-                throw new BusinessException(ErrorCode.COUPON_THRESHOLD_NOT_MET);
-            }
-            return discountAmount;
+    public BigDecimal thresholdOf(Long userCouponId) {
+        if (userCouponId == null) {
+            return null;
         }
+        UserCoupon coupon = couponMapper.selectById(userCouponId);
+        return coupon == null ? null : coupon.getThresholdAmount();
+    }
 
-        @Override
-        public void bind(long orderId) {
-            if (couponMapper.lock(couponId, userId) != 1) {
-                // 并发下同一张券被两笔订单同时用：守卫在这里拦下，异常让订单事务整体回滚
-                throw new BusinessException(ErrorCode.COUPON_NOT_USABLE);
-            }
-            couponMapper.bindToOrder(couponId, orderId);
+    private static CouponTemplateView toView(CouponTemplate template) {
+        return new CouponTemplateView(template.getId(), template.getTitle(),
+                template.getThresholdAmount(), template.getDiscountAmount(),
+                Math.max(template.getTotal() - template.getClaimed(), 0), template.getTotal(),
+                template.getClaimStartAt(), template.getClaimEndAt());
+    }
+
+    private static CouponView toView(UserCoupon coupon) {
+        String status = coupon.getStatus();
+        if (CouponStatus.UNUSED.name().equals(status) && coupon.getExpireAt() != null
+                && coupon.getExpireAt().isBefore(LocalDateTime.now())) {
+            status = CouponStatus.EXPIRED.name();
         }
+        return new CouponView(coupon.getId(), coupon.getTitle(), coupon.getThresholdAmount(),
+                coupon.getDiscountAmount(), status, coupon.getExpireAt(), coupon.getTradeId());
+    }
+
+    public record CouponUse(long id, long templateId, long userId, String title,
+                            BigDecimal thresholdAmount, BigDecimal discountAmount) {
+    }
+
+    public record CreateTemplate(String title, BigDecimal thresholdAmount, BigDecimal discountAmount,
+                                 int total, LocalDateTime claimStartAt, LocalDateTime claimEndAt,
+                                 int validDays) {
     }
 
     private static void fail(String message) {
         throw new BusinessException(ErrorCode.PARAM_ERROR, message);
-    }
-
-    /** 建券命令：把 7 个入参收成一个（避免长参数列表在服务内部继续扩散）。 */
-    public record CreateTemplate(String title, BigDecimal thresholdAmount, BigDecimal discountAmount,
-                                 int total, LocalDateTime claimStartAt, LocalDateTime claimEndAt,
-                                 int validDays) {
     }
 }

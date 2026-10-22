@@ -60,8 +60,9 @@ public class CartService {
         lines.forEach((skuId, quantity) -> {
             ProductSnapshot snapshot = snapshots.get(skuId);
             if (snapshot != null) {
-                items.add(new CartItem(skuId, Math.toIntExact(quantity),
-                        snapshot.title(), snapshot.price(), snapshot.stock(), snapshot.status()));
+                items.add(new CartItem(skuId, snapshot.spuId(), snapshot.skuCode(),
+                        Math.toIntExact(quantity), snapshot.title(), snapshot.attributesText(),
+                        snapshot.imageUrl(), snapshot.price(), snapshot.stock(), snapshot.status()));
             }
         });
         return items;

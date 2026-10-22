@@ -29,29 +29,15 @@ mybatis-plus:
 aurora:
   config:
     required-keys: aurora.internal.secret
-  # mq = 主链路（默认）；at = Seata AT 对比场景
-  tx:
-    mode: ${AURORA_TX_MODE:mq}
   order:
     # RocketMQ 延迟级别 16 = 30 分钟；冒烟测试通过配置中心调小它
     close-delay-level: 16
     close-timeout-seconds: 1800
     tx-retry-interval-ms: 30000
     close-scan-interval-ms: 60000
-
-seata:
-  # AT 对照实验开关：默认关闭（mq 主链路），经配置中心开启
-  enabled: ${SEATA_ENABLED:false}
-  application-id: aurora-order
-  tx-service-group: aurora_tx_group
-  service:
-    vgroup-mapping:
-      aurora_tx_group: default
-    grouplist:
-      # file registry 直连：宿主可达的 seata-server 地址
-      default: ${SEATA_ADDR:127.0.0.1:8091}
-  registry:
-    type: file
+    auto-complete-days: 7
+    auto-complete-interval-ms: 600000
+    refund-settle-interval-ms: 60000
 
 management:
   metrics:

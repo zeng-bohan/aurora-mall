@@ -5,6 +5,7 @@ import com.zengbohan.aurora.user.dto.LoginRequest;
 import com.zengbohan.aurora.user.dto.RefreshRequest;
 import com.zengbohan.aurora.user.dto.RegisterRequest;
 import com.zengbohan.aurora.user.dto.TokenResponse;
+import com.zengbohan.aurora.user.dto.AddressDtos.UserView;
 import com.zengbohan.aurora.user.service.LogoutService;
 import com.zengbohan.aurora.user.service.UserService;
 import jakarta.validation.Valid;
@@ -48,9 +49,7 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public Result<java.util.Map<String, String>> me(
-            @RequestHeader("X-User-Id") String userId,
-            @RequestHeader("X-User-Role") String role) {
-        return Result.ok(java.util.Map.of("userId", userId, "role", role));
+    public Result<UserView> me(@RequestHeader("X-User-Id") long userId) {
+        return Result.ok(userService.view(userId));
     }
 }

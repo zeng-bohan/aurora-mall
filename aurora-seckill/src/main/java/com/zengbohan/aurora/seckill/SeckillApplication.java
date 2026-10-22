@@ -4,6 +4,7 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 // 根扫描会带上 aurora-common 的 web 缝（advice + trace filter + admin 角色守卫）。
@@ -13,6 +14,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @SpringBootApplication(scanBasePackages = "com.zengbohan.aurora")
 @ConfigurationPropertiesScan
 @MapperScan("com.zengbohan.aurora.seckill.mapper")
+@EnableFeignClients(basePackages = "com.zengbohan.aurora.seckill.client")
 @EnableScheduling
 public class SeckillApplication {
 

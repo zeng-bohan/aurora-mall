@@ -6,34 +6,38 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 public interface PaymentOrderMapper extends BaseMapper<PaymentOrder> {
 
-    @Select("SELECT * FROM payment_orders WHERE order_id = #{orderId}")
-    PaymentOrder findByOrderId(@Param("orderId") long orderId);
+    @Select("SELECT * FROM payment_orders WHERE trade_id = #{tradeId}")
+    PaymentOrder findByTradeId(@Param("tradeId") long tradeId);
 
-    // 带守卫的迁移：PAYING -> PAID 恰好成功一次。
-    @Update("UPDATE payment_orders SET status = 1 WHERE order_id = #{orderId} AND status = 0")
-    int markPaid(@Param("orderId") long orderId);
+    @Update("UPDATE payment_orders SET status = 'PAID', paid_at = #{paidAt}, updated_at = NOW() "
+            + "WHERE trade_id = #{tradeId} AND status = 'PAYING'")
+    int markPaid(@Param("tradeId") long tradeId, @Param("paidAt") LocalDateTime paidAt);
 
-    // 守卫转移：PAYING 或 PAID → REFUNDED（订单已关的钱款退款闭环，迟付/迟到回调/补发 job 共用）。
-    @Update("UPDATE payment_orders SET status = 2 WHERE order_id = #{orderId} AND status IN (0, 1)")
-    int markRefunded(@Param("orderId") long orderId);
+    @Update("UPDATE payment_orders SET status = 'REFUNDED', refunded_amount = amount, updated_at = NOW() "
+            + "WHERE trade_id = #{tradeId} AND status IN ('PAYING', 'PAID', 'PARTIALLY_REFUNDED')")
+    int markRefundedLate(@Param("tradeId") long tradeId);
 
-    // 事件发布完成后打标（守卫：不重复标记）。
-    @Update("UPDATE payment_orders SET event_published = 1 WHERE order_id = #{orderId} AND event_published = 0")
-    int markEventPublished(@Param("orderId") long orderId);
+    @Update("UPDATE payment_orders SET refunded_amount = refunded_amount + #{amount}, "
+            + "status = IF(refunded_amount + #{amount} >= amount, 'REFUNDED', 'PARTIALLY_REFUNDED'), "
+            + "updated_at = NOW() "
+            + "WHERE trade_id = #{tradeId} AND status IN ('PAID', 'PARTIALLY_REFUNDED') "
+            + "AND amount - refunded_amount >= #{amount}")
+    int applyRefund(@Param("tradeId") long tradeId, @Param("amount") BigDecimal amount);
 
-    // PAID 且事件未发的记录：补发 job 的扫描集（LIMIT 200 防一次拖垮）。
-    @Select("SELECT * FROM payment_orders WHERE status = 1 AND event_published = 0 "
-            + "AND event_failed = 0 "
+    @Update("UPDATE payment_orders SET event_published = 1, updated_at = NOW() "
+            + "WHERE trade_id = #{tradeId} AND event_published = 0")
+    int markEventPublished(@Param("tradeId") long tradeId);
+
+    @Select("SELECT * FROM payment_orders WHERE status = 'PAID' AND event_published = 0 "
             + "AND created_at <= #{before} LIMIT 200")
-    List<PaymentOrder> findUnpublishedPaid(@Param("before") java.time.LocalDateTime before);
+    List<PaymentOrder> findUnpublishedPaid(@Param("before") LocalDateTime before);
 
-    // 补发失败计数 +1。
-    @Update("UPDATE payment_orders SET publish_attempts = publish_attempts + 1 WHERE order_id = #{orderId}")
-    int incrementPublishAttempts(@Param("orderId") long orderId);
-
-    // 达到重试上限：放弃自动补发，等待人工处理。
+    @Update("UPDATE payment_orders SET publish_attempts = publish_attempts + 1 WHERE trade_id = #{tradeId}")
+    int incrementPublishAttempts(@Param("tradeId") long tradeId);
 }

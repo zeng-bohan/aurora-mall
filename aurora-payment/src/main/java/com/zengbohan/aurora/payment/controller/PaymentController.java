@@ -1,8 +1,8 @@
 package com.zengbohan.aurora.payment.controller;
 
+import com.zengbohan.aurora.api.order.PaymentSummary;
 import com.zengbohan.aurora.common.result.Result;
 import com.zengbohan.aurora.payment.channel.ChannelSignatureVerifier;
-import com.zengbohan.aurora.payment.entity.PaymentOrder;
 import com.zengbohan.aurora.payment.service.PaymentService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
@@ -22,17 +22,11 @@ import java.math.BigDecimal;
 @RequestMapping("/payments")
 public class PaymentController {
 
-    // 发起支付：金额由服务端按订单计算，请求只带订单号（防越权定价）。
-    public record InitiateRequest(@NotNull @Min(1) Long orderId) {
+    public record InitiateRequest(@NotNull @Min(1) Long tradeId) {
     }
 
-    // 渠道回调：金额参与渠道签名，防篡改。
-    public record PayRequest(@NotNull @Min(1) Long orderId,
+    public record PayRequest(@NotNull @Min(1) Long tradeId,
                              @NotNull @DecimalMin("0.01") BigDecimal amount) {
-    }
-
-    // status 三态：0=PAYING 1=PAID 2=REFUNDED（迟到回调自动退款，T13）。
-    public record PaymentView(long paymentId, long orderId, BigDecimal amount, int status) {
     }
 
     private final PaymentService paymentService;
@@ -42,29 +36,38 @@ public class PaymentController {
     }
 
     @PostMapping
-    public Result<PaymentView> initiate(@RequestHeader("X-User-Id") long userId,
-                                        @Valid @RequestBody InitiateRequest request) {
-        return Result.ok(toView(paymentService.initiate(userId, request.orderId())));
+    public Result<PaymentSummary> initiate(@RequestHeader("X-User-Id") long userId,
+                                           @Valid @RequestBody InitiateRequest request) {
+        return Result.ok(PaymentServiceSummary.of(paymentService.initiate(userId, request.tradeId())));
     }
 
-    // 模拟的第三方异步回调（生产环境会带签名）。
     @PostMapping("/mock-callback")
-    public Result<PaymentView> mockCallback(
-            @RequestHeader(
-                value = ChannelSignatureVerifier.HEADER,
-                required = false) String signature,
+    public Result<PaymentSummary> mockCallback(
+            @RequestHeader(value = ChannelSignatureVerifier.HEADER, required = false) String signature,
             @Valid @RequestBody PayRequest request) {
-        return Result.ok(toView(paymentService.handleMockCallback(request.orderId(), request.amount(), signature)));
+        return Result.ok(PaymentServiceSummary.of(
+                paymentService.handleMockCallback(request.tradeId(), request.amount(), signature)));
     }
 
-    @GetMapping("/{orderId}")
-    public Result<PaymentView> byOrder(@RequestHeader("X-User-Id") long userId,
-                                       @PathVariable long orderId) {
-        return Result.ok(toView(paymentService.byOrderId(userId, orderId)));
+    @GetMapping("/{tradeId}")
+    public Result<PaymentSummary> byTrade(@RequestHeader("X-User-Id") long userId,
+                                          @PathVariable long tradeId) {
+        return Result.ok(PaymentServiceSummary.of(paymentService.byTradeId(userId, tradeId)));
     }
 
-    private PaymentView toView(PaymentOrder payment) {
-        return new PaymentView(payment.getId(), payment.getOrderId(),
-                payment.getAmount(), payment.getStatus());
+    /**
+     * 模拟支付入口：服务端签名后复用 mock 回调，浏览器不接触渠道密钥。
+     */
+    @PostMapping("/{tradeId}/mock-pay")
+    public Result<PaymentSummary> mockPay(@RequestHeader("X-User-Id") long userId,
+                                          @PathVariable long tradeId) {
+        return Result.ok(PaymentServiceSummary.of(paymentService.mockPay(userId, tradeId)));
+    }
+
+    private static final class PaymentServiceSummary {
+        static PaymentSummary of(com.zengbohan.aurora.payment.entity.PaymentOrder payment) {
+            return new PaymentSummary(payment.getId(), payment.getTradeId(), payment.getTradeNo(),
+                    payment.getAmount(), payment.getRefundedAmount(), payment.getStatus());
+        }
     }
 }

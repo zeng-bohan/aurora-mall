@@ -2,40 +2,32 @@ package com.zengbohan.aurora.order.client;
 
 import com.zengbohan.aurora.common.result.Result;
 import org.springframework.cloud.openfeign.FeignClient;
-import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-// 订单生命周期使用的库存入口。
+import java.util.List;
+
 @FeignClient(name = "aurora-inventory")
 public interface InventoryClient {
 
-    record StockRequest(int quantity) {
+    record StockItem(long skuId, int quantity) {
     }
 
-    // 预扣请求带 orderId：库存侧按订单幂等，重试/重投递不会重复扣减。
-    record ReserveRequest(long orderId, int quantity) {
+    record StockBatchRequest(long tradeId, List<StockItem> items) {
     }
 
-    // 释放类请求带 orderId：库存侧按订单幂等（补偿可安全重入）。
-    record ReleaseRequest(long orderId, int quantity) {
+    record RestoreRequest(long refundId, long tradeId, List<StockItem> items) {
     }
 
-    @PostMapping("/stocks/{skuId}/reserve")
-    Result<Void> reserve(@PathVariable("skuId") long skuId, @RequestBody ReserveRequest request);
+    @PostMapping("/internal/stocks/reserve")
+    Result<Void> reserve(@RequestBody StockBatchRequest request);
 
-    @PostMapping("/stocks/{skuId}/rollback")
-    Result<Void> rollback(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);
+    @PostMapping("/internal/stocks/confirm")
+    Result<Void> confirm(@RequestBody StockBatchRequest request);
 
-    // 预扣补偿：预扣调用结果未知（超时/断连）时的回补，库存侧只在确实预扣过时才加回。
-    @PostMapping("/stocks/{skuId}/compensate-reserve")
-    Result<Void> compensateReserve(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);
+    @PostMapping("/internal/stocks/release")
+    Result<Void> release(@RequestBody StockBatchRequest request);
 
-    // AT 对比：在全局事务内只做 DB 预占。
-    @PostMapping("/stocks/{skuId}/reserve-db")
-    Result<Void> reserveDb(@PathVariable("skuId") long skuId, @RequestBody StockRequest request);
-
-    // AT 关单：只释放 DB 预占（从未触碰 redis）。
-    @PostMapping("/stocks/{skuId}/release-db")
-    Result<Void> releaseDb(@PathVariable("skuId") long skuId, @RequestBody ReleaseRequest request);
+    @PostMapping("/internal/stocks/restore")
+    Result<Void> restore(@RequestBody RestoreRequest request);
 }

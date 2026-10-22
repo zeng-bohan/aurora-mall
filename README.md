@@ -1,154 +1,169 @@
-# aurora-mall
+# AURORA Mall
 
-一个用于学习和验证分布式电商架构的 Java 微服务项目，包含用户端与管理端 Web 界面。交易链路覆盖下单、库存预留、支付回调和超时关单，并提供可切换的事务方案与自研分布式组件。
+AURORA 是一个消费电子品牌 DTC 电商项目：商城前台、独立运营台、七个 Spring Boot 业务服务，以及可复现的 MySQL / Redis 交易链路。
+
+商品定位是桌面与随身科技。演示数据包含 18 个 SPU、45 个 SKU、37 笔历史订单和 3 场秒杀。支付与物流是模拟流程，商品图为概念渲染，不是实拍。
 
 [![CI](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml/badge.svg)](https://github.com/zeng-bohan/aurora-mall/actions/workflows/ci.yml)
 ![Java](https://img.shields.io/badge/Java-21-007396?style=flat-square&logo=openjdk&logoColor=white)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-6DB33F?style=flat-square&logo=springboot&logoColor=white)
-![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
-
-支付使用模拟回调链路，不连接真实支付渠道。所有压测与对照数据都来自本机环境，具体口径见对应报告。
-
-## 核心亮点
-
-- **交易一致性**：订单与本地消息表同事务提交，RocketMQ 事务消息以该消息行为提交依据；库存预扣、支付回调和关单都有可收敛的补偿路径。下单幂等键持久化到数据库，超时重试会拿回同一张订单。
-- **高并发秒杀**：Redis Lua 原子预扣，消息异步落单；落单结果有 `PENDING → PROCESSING → ORDER/FAIL` 状态机，发送结果未知时由对账任务确认或归还名额。压测 20 万级尝试、限量 3000，成交数与库存同时收敛。
-- **自研组件与对照实验**：Netty RPC、分布式 ID、限流与熔断都是独立模块；购物车到商品服务可以在 OpenFeign 与自研 RPC 之间切换，业务代码不变。对照实验保留连接模型、吞吐和错误的原始数据。
+![Vue](https://img.shields.io/badge/Vue-3-42B883?style=flat-square&logo=vuedotjs&logoColor=white)
 
 ## 界面
 
-<table>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/user-products.png" alt="商品目录" /></td>
-    <td width="50%"><img src="docs/screenshots/user-seckill.png" alt="秒杀活动" /></td>
-  </tr>
-  <tr>
-    <td align="center">用户端：商品目录与价格带</td>
-    <td align="center">用户端：秒杀活动</td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="docs/screenshots/admin-products.png" alt="管理台商品管理" /></td>
-    <td width="50%"><img src="docs/screenshots/obs-grafana-overview.jpg" alt="Grafana 全链路总览" /></td>
-  </tr>
-  <tr>
-    <td align="center">运营台：商品管理（独立后台布局）</td>
-    <td align="center">可观测性：Grafana 全链路总览</td>
-  </tr>
-</table>
+| 商城首页 | 商品目录 |
+| --- | --- |
+| ![首页](docs/screenshots/dtc-home-1440.png) | ![目录](docs/screenshots/dtc-products-1440.png) |
 
-更多截图在 [docs/screenshots](docs/screenshots)，包含移动端与结算、订单、秒杀页面。
+| 商品详情 | 运营概览 |
+| --- | --- |
+| ![详情](docs/screenshots/dtc-product-detail-1440.png) | ![运营概览](docs/screenshots/dtc-admin-dashboard-1440.png) |
 
-## 功能
+| 退款审批 | 秒杀 |
+| --- | --- |
+| ![退款审批](docs/screenshots/dtc-admin-refunds-1440.png) | ![秒杀](docs/screenshots/dtc-seckill-1440.png) |
 
-- 用户注册、登录、令牌刷新与登出。网关校验 JWT，登出会撤销令牌。
-- 商品浏览（目录 / 网格两种视图）与管理、购物车、单商品订单、优惠券领取与下单抵扣、模拟支付回调。下单幂等键持久化，同键同请求返回原订单。
-- 订单库存预留、RocketMQ 事务消息与延迟关单。订单事务可切换为 Seata AT 对照模式。
-- 秒杀活动和异步下单。预扣由 Redis Lua 原子完成，落单交给 MQ 消费者；受理结果有对账任务兜底。
-- 缓存穿透保护：空值缓存、布隆过滤器、逻辑过期；Redis 不可用时商品详情回源数据库。
-- 网关限流与熔断、请求幂等、业务补偿任务。
-- 独立实现分布式 ID 生成器、限流/熔断组件和基于 Netty 的 RPC 组件。购物车到商品服务的调用可在 OpenFeign 与自研 RPC 之间切换，业务代码不变。
-- Vue 3 用户端与独立运营台（侧边导航 + 顶部工具栏），Prometheus、Grafana、Loki、SkyWalking 可观测性配置。
+移动端截图在 [docs/screenshots](docs/screenshots)，文件名以 `-390` 结尾。
+
+## 业务模型
+
+交易对象是**父订单**。一次结算生成一张父订单，对应一次支付和一次发货；订单明细按 SKU 记录商品快照、数量、分摊后的优惠与退款金额。库存、支付、退款、秒杀都围绕父订单工作。
+
+商品使用全局 EAV：
+
+- `product_category`：7 个分类。
+- `product_attribute` / `product_attribute_value`：15 个属性、54 个值，带类型、单位、可筛选、变体、必填与展示标记。
+- `product_spu` / `product_spu_attribute` / `product_spu_attribute_value`：SPU 与参数绑定。
+- `product_sku` / `product_sku_attribute`：SKU 与属性组合。组合键唯一，SKU 编码唯一。
+
+金额规则集中在一个定价服务里：
+
+1. 所有金额按整数分计算，落库为两位小数。
+2. 优惠券按商品金额占比分摊，余数用最大余数法补齐，分摊总额必须等于券面额。
+3. 券后金额满 299 元免运费，未满收 12 元。
+4. 部分退款只退所选商品的原始商品金额，不退运费；退款后剩余商品金额低于券门槛时，只允许整单退款。
+5. 整单退款退回剩余实付（含运费），并返还优惠券。
+6. 秒杀订单不使用优惠券、不收运费，只支持整单退款。
+
+状态流转：
+
+- 订单：`CREATED → PAID → SHIPPED → COMPLETED`，未支付可 `CLOSED`，整单退款后 `REFUNDED`。
+- 退款：`PENDING → APPROVED / REJECTED`。审批与外部结算分开，`settled` 标记结算完成；失败由重试任务补偿。
+- 支付：`PAYING → PAID → PARTIALLY_REFUNDED / REFUNDED`。关单后的迟到支付自动原路退回。
+- 库存预约：`RESERVED → CONFIRMED / RELEASED`。
+- 秒杀预约：`RESERVED → CONSUMED / RELEASED`。
+
+## 可靠性设计
+
+下单幂等：
+`order_idempotency` 以 `(user_id, idem_key)` 为主键，保存订单号和请求指纹。映射、订单、明细、优惠券绑定和关单消息在同一本地事务提交。同键同内容返回原订单，同键换内容拒绝。并发同键由唯一键裁决，后到事务回滚并释放已预扣库存。
+
+库存：
+Redis 批量 Lua 在同一个脚本里检查每个 SKU 的可售量、扣减库存、写父订单守卫。DB 侧另有 `product_stock` 与 `stock_reservation` 台账：预扣、确认、释放都按父订单幂等。退款回补按 `(refund_id, sku_id)` 幂等。Redis 键缺失时对账任务从 DB 重建，不覆盖有差异的现存键。
+
+支付竞态：
+支付回调先校验渠道签名，再比对金额。`markPaid` 是条件更新；关单与支付同时发生时，支付侧会重新查单，若订单已关闭就登记迟到退款，不发布支付成功事件。支付事件发送失败由 `payment_orders.event_published` 与重试任务补齐。
+
+退款：
+申请时只锁商品为 `REFUNDING`；运营同意后写退款金额、商品状态和订单退款汇总，再调用支付退款、库存回补或秒杀库存归还。外部调用失败不回滚已同意的审批，`RefundSettlementJob` 会重试未结算记录。
+
+超时关单：
+下单时写 `tx_message` 并发送 RocketMQ 延迟消息，`CloseTimeoutJob` 扫描兜底。关单释放库存和优惠券；秒杀订单归还活动库存。所有释放动作都按父订单幂等。
+
+秒杀：
+活动库存独立于普通 SKU。`seckill_reserve.lua` 原子完成时间窗、一人一单、扣库存和写受理结果。异步落单通过 MQ，结果状态为 `PENDING → PROCESSING → ORDER / FAIL`；发送结果未知时保留 `PENDING`，由对账任务确认订单或归还名额。秒杀中签后仍走统一订单服务创建父订单。
 
 ## 架构
 
-~~~mermaid
+```mermaid
 flowchart LR
-    Web[Vue 用户端 / 管理台] --> GW[Spring Cloud Gateway<br/>JWT 校验 · 限流 · 内部路径守卫]
-    GW --> S[用户 · 商品 · 购物车<br/>库存 · 支付 · 秒杀]
-    GW --> O[订单服务]
-    S --> N[Nacos 注册与配置]
-    O --> N
-    S --> DB[(MySQL，按服务分库)]
-    O --> DB
-    S --> R[(Redis)]
-    O --> R
-    O --> MQ[RocketMQ]
-    O -. 可选事务对照 .-> SEATA[Seata AT]
-    S --> OBS[Prometheus · Grafana · Loki · SkyWalking]
-    O --> OBS
-~~~
-
-订单链路用 RocketMQ 事务消息和延迟消息实现最终一致：本地事务里写订单与 `tx_message`，事务消息以该消息行为提交依据；库存预扣走 Redis Lua，DB 扣减由消费者完成；超时关单由延迟消息触发，扫描任务兜底。
-
-核心交易链路：
-
-~~~mermaid
-flowchart TD
-    U[用户 / 运营台] --> GW[Gateway]
+    Web[Vue 商城 / 运营台] --> GW[Gateway<br/>JWT · 限流 · 内部路径守卫]
+    GW --> U[user]
+    GW --> P[product]
+    GW --> C[cart]
     GW --> O[order]
-    O -->|Feign 预扣| INV[inventory]
-    O -->|本地事务 orders + tx_message| DB[(MySQL)]
-    O -->|事务消息 stock-reserved| MQ[RocketMQ]
-    MQ --> INV
-    INV -->|DB 预占 / 扣减| DB
-    INV -->|Redis Lua 可售库存| R[(Redis)]
-    O -->|延迟消息 close| MQ
-    P[payment] -->|查单| O
-    P -->|order-paid| MQ
-    MQ --> O
-    MQ --> INV
-    S[seckill] -->|Lua 预扣| R
-    S -->|秒杀落单消息| MQ
-    MQ --> S
-    S -->|seckill_order| DB
-~~~
+    GW --> I[inventory]
+    GW --> PAY[payment]
+    GW --> S[seckill]
+    O -->|地址 / 用户| U
+    O -->|商品快照| P
+    O -->|库存预扣 / 确认 / 释放| I
+    O -->|支付 / 退款| PAY
+    O -->|秒杀库存归还| S
+    P -->|库存查询| I
+    U & P & C & O & I & PAY & S --> DB[(MySQL<br/>按服务分库)]
+    O & I & S & P --> R[(Redis)]
+    O & PAY & S --> MQ[RocketMQ]
+    U & P & C & O & I & PAY & S --> N[Nacos]
+```
 
+一次多商品结算：
+
+```mermaid
+sequenceDiagram
+    participant B as 浏览器
+    participant O as order
+    participant I as inventory
+    participant P as payment
+    participant MQ as RocketMQ
+    B->>O: POST /trades（Idempotency-Key）
+    O->>O: 商品快照 / 券 / 运费 / 分摊
+    O->>I: reserve(tradeId, items)
+    I-->>O: Redis Lua + DB 预约
+    O->>O: 父订单 + 明细 + 幂等映射 + tx_message
+    O->>MQ: close-timeout 延迟消息
+    O-->>B: tradeId
+    B->>P: mock-pay
+    P->>MQ: payment-paid
+    MQ->>O: markPaid + 确认库存
+    B->>O: 发货前退款申请
+    O->>I: 运营同意后 restore(refundId)
+```
 
 ## 模块
 
-Maven 父 POM 列出 14 个模块，其中 8 个是可独立启动的 Spring Boot 服务（网关 + 7 个业务服务），另有 1 个 Vue 前端。
-
 | 路径 | 职责 |
 | --- | --- |
-| `aurora-gateway` | API 网关、JWT 校验、路由限流、内部路径守卫 |
-| `aurora-user`、`aurora-product` | 用户与商品服务 |
-| `aurora-cart`、`aurora-order` | 购物车与订单服务 |
-| `aurora-inventory`、`aurora-payment`、`aurora-seckill` | 库存、模拟支付与秒杀服务 |
-| `aurora-common`、`aurora-api` | 公共基础设施与服务契约 |
-| `aurora-id-generator`、`aurora-ratelimit`、`aurora-rpc` | 分布式 ID、限流/熔断、Netty RPC |
-| `aurora-sharding-pilot` | ShardingSphere 分库试点，不进入产品链路 |
-| `aurora-web` | Vue 3 用户端与管理台 |
-| `docker` | 本地中间件栈、建表 SQL、冒烟与演示脚本 |
-| `docs` | 对照实验与压测报告、截图 |
-
-## 环境要求
-
-- JDK 21
-- Maven 3.9 或更高版本
-- Docker Compose
-- Bash（Windows 可用 Git Bash）
-- Node.js 22（只在构建或运行前端时需要）
+| `aurora-gateway` | 路由、JWT 校验、限流、内部路径守卫 |
+| `aurora-user` | 注册登录、个人资料、地址簿 |
+| `aurora-product` | 分类 / SPU / SKU / 属性 EAV、目录查询、运营商品维护 |
+| `aurora-cart` | 购物车 |
+| `aurora-order` | 父订单、优惠券、退款、运营订单与统计 |
+| `aurora-inventory` | Redis + DB 库存台账、预约与回补 |
+| `aurora-payment` | 模拟支付、支付回调、退款与迟到退款 |
+| `aurora-seckill` | 活动、预热、抢购、异步落单与库存归还 |
+| `aurora-common`、`aurora-api` | 公共 Web 缝、异常、鉴权、服务契约 |
+| `aurora-id-generator`、`aurora-ratelimit`、`aurora-rpc` | 分布式 ID、限流熔断、Netty RPC |
+| `aurora-web` | Vue 3 商城与独立运营台 |
+| `docker` | 中间件、建表与幂等种子数据 |
+| `docs` | 设计说明、实验报告、截图 |
 
 ## 快速开始
 
-### 1. 启动基础设施
+要求：JDK 21、Maven 3.9+、Docker Compose、Node.js 22、Git Bash。
 
 ```bash
 cd docker
 docker compose up -d
-bash smoke.sh
 bash nacos/import.sh
-```
-
-`smoke.sh` 检查中间件是否就绪；`nacos/import.sh` 生成并复用被 Git 忽略的开发密钥，把应用配置写入 Nacos。**先完成导入再启动 Java 服务**，服务缺配置会直接启动失败。
-
-中间件端口：MySQL `13306`、Redis `16379`、Nacos `8848`、RocketMQ `9876`，详细列表见 [docker/README.md](docker/README.md)。
-
-### 2. 构建并启动后端
-
-```bash
 cd ..
+
 mvn -B clean verify
 
 for service in gateway user product cart order inventory payment seckill; do
   java -jar "aurora-$service/target/aurora-$service-0.1.0-SNAPSHOT.jar" &
 done
-wait
 ```
 
-服务从 Nacos 读取运行配置。只调试单个服务时，在 IDE 里启动对应模块的 Spring Boot 应用即可。
+首次启动 MySQL 会自动执行 `docker/mysql/init` 下的建表与种子 SQL。已有数据卷不会重跑初始化脚本；需要重新铺演示数据时执行：
 
-### 3. 启动前端
+```bash
+bash docker/seed-demo.sh
+```
+
+需要把演示订单恢复到初始状态时执行 `bash docker/seed-demo.sh --reset`；它只删除 3001–3037 的演示订单，真实下单产生的订单不动。
+
+前端：
 
 ```bash
 cd aurora-web
@@ -156,135 +171,81 @@ npm ci
 npm run dev
 ```
 
-开发地址 `http://localhost:5173`，`/api` 代理到网关 `8000`。管理界面需要 ADMIN 角色，注册流程创建的是普通用户；演示管理员账号由 `bash docker/seed-demo.sh` 提供。
+- 商城：`http://localhost:5173`
+- 运营台：`http://localhost:5173/admin`
+- 网关：`http://localhost:8000`
+- 演示账号：`admin / Aurora123!`，顾客 `linyi / Aurora123!`（`chenmo`、`zhouran`、`wutong`、`xuzhi`、`heyu` 同密码）
 
-### 4. 验证
+## 主要接口
 
-```bash
-bash docker/smoke-services.sh   # 网关与各服务健康检查
-bash docker/smoke-flows.sh      # 注册 → 登录 → 浏览 → 加购 → 改价收敛 → 登出
-```
-
-## 使用示例
-
-所有业务请求经网关 `http://localhost:8000`：
+网关统一加 `/api/{service}` 前缀。
 
 | 功能 | 路径 |
 | --- | --- |
-| 注册、登录、续期、登出 | `/api/user/register`、`/api/user/login`、`/api/user/refresh`、`/api/user/logout` |
-| 商品浏览与管理 | `/api/product/products`、`/api/product/admin/products` |
-| 购物车 | `/api/cart/carts` |
-| 订单与优惠券 | `/api/order/orders`、`/api/order/coupons/templates` |
-| 秒杀 | `/api/seckill/activities`、`/api/seckill/activities/{id}/orders` |
+| 登录 / 当前用户 | `POST /api/user/login`、`GET /api/user/me` |
+| 地址簿 | `GET/POST /api/user/addresses` |
+| 目录 / 筛选 / 关键词 | `GET /api/product/products` |
+| 商品详情 / 相关商品 | `GET /api/product/products/{id}` |
+| 购物车 | `GET /api/cart/carts`、`POST /api/cart/carts/items` |
+| 下单 / 取消 / 确认收货 | `POST /api/order/trades`、`POST /api/order/trades/{id}/cancel`、`/confirm` |
+| 退款申请 / 记录 | `GET /api/order/trades/{id}/refunds/quote`、`POST /trades/{id}/refunds` |
+| 支付 / 回调 | `POST /api/payment/payments`、`POST /api/payment/payments/{tradeId}/mock-pay` |
+| 秒杀列表 / 抢购 / 结果 | `GET /api/seckill/activities`、`POST /activities/{id}/orders`、`GET /activities/{id}/orders/mine` |
+| 运营概览 / 订单 / 退款 | `GET /api/order/admin/stats`、`/admin/trades`、`/admin/refunds` |
+| 运营商品 / 分类属性 | `GET /api/product/admin/skus`、`/admin/products`、`/admin/categories`、`/admin/attributes` |
+| 库存 / 优惠券 / 秒杀 / 用户 | `/api/inventory/admin/stocks`、`/api/order/admin/coupons`、`/api/seckill/admin/activities`、`/api/order/admin/users` |
 
-```bash
-TOKEN=$(curl -s -X POST http://localhost:8000/api/user/login \
-  -H 'Content-Type: application/json' \
-  -d '{"username":"admin","password":"..."}' | sed -E 's/.*"accessToken":"([^"]+)".*/\1/')
+完整契约以模块 Controller 为准。前端 `aurora-web/src/api/dtc.ts` 是这些接口的唯一前端封装。
 
-curl -s http://localhost:8000/api/product/products \
-  -H "Authorization: Bearer $TOKEN"
-```
+## 演示数据
 
-请求模型与完整路由以各模块 Controller 和 [aurora-web/README.md](aurora-web/README.md) 为准。
+| 数据 | 内容 |
+| --- | --- |
+| 商品 | 18 SPU、45 SKU、7 分类、15 属性、54 属性值 |
+| 订单 | 37 笔历史订单：待支付、已关闭、待发货、已发货、已完成、部分退款、整单退款 |
+| 退款 | 3 笔待审批、1 笔已拒绝、5 笔已同意并结算 |
+| 秒杀 | 1 场进行中、1 场次日开始、1 场由浏览器流程创建 |
+| 账号 | 1 个运营管理员、6 个顾客，均带默认地址 |
+| 图片 | 45 张统一风格的概念渲染图，位于 `aurora-web/public/products` |
+
+种子 SQL 固定主键并使用 `INSERT IGNORE` / `ON DUPLICATE KEY UPDATE`，重复执行不会产生第二份数据。订单金额由 SKU 单价推导，退款金额与支付单状态跟随订单状态。
 
 ## 测试
 
 ```bash
-mvn -B clean verify      # 后端全模块构建与测试
+mvn -B clean verify
 cd aurora-web && npm run typecheck && npm run build
 ```
 
-本机中间件全部启动时，当前结果：422 个用例，0 失败，0 跳过。`SeckillLuaIntegrationTest`、`StockLuaIntegrationTest`、`SeckillOrderTransactionIntegrationTest`、`CouponClaimConcurrencyRealMysqlTest` 都对着真实 Redis/MySQL 执行；如果中间件不可达，这些用例会显式跳过，surefire 报告里能看到。
+关键测试：
 
-测试分三类：
+- `TradePricingServiceTest`：优惠分摊、运费门槛、部分退款、整单退款、券门槛、秒杀限制。
+- `TradeServiceIntegrationTest`：真实 MySQL 下的下单幂等、同键换参数、事务失败库存回补、超时关单、迟到支付、发货与确认收货。
+- `PaymentServiceTest`：回调签名、金额校验、关单竞态、退款幂等。
+- `StockServiceIntegrationTest`：真实 MySQL + Redis 下的批量预扣、库存不足回滚、释放、确认、退款回补与并发防超卖。
+- `SeckillOrderServiceIntegrationTest`：真实 MySQL + Redis 下的一人一单、售罄、未开始、退款归还与并发防超卖。
+- 前端脚本：`aurora-web/scripts/ui-*.mjs` 覆盖桌面购物、运营台、秒杀全流程和移动端布局检查。
 
-- 纯单元测试：编解码、负载均衡、熔断状态机、缓存策略、限流器，不依赖外部服务。
-- Spring 上下文与 Web 层测试：网关过滤器、守卫过滤器、控制器参数校验。
-- 真实中间件集成测试：用 Docker 起的 MySQL/Redis 验证 Lua 脚本与并发语义，缺环境时跳过。
-
-CI 在 `ubuntu-24.04` 上启动 MySQL 8.4 和 Redis 7，导入与本地相同的建表 SQL，再跑 `mvn -B clean verify`；seckill / inventory 出现 skipped 会让构建失败。前端与全部服务镜像单独构建，工作流不推送镜像。首次推送后的真实 CI 结果还需再核对一次。
-
-## 工程证据
-
-以下报告都来自实际运行，每一份写明了环境、方法、结果和复现命令。
-
-| 报告 | 内容 |
-| --- | --- |
-| [docs/m2-tx-comparison.md](docs/m2-tx-comparison.md) | RocketMQ 最终一致 vs Seata AT：机制对比与回滚注入实测 |
-| [docs/m3-rpc-comparison.md](docs/m3-rpc-comparison.md) | OpenFeign vs 自研 RPC：功能等价性证据、微基准、边界 |
-| [docs/m4-load-test.md](docs/m4-load-test.md) | 同一购物车链路下两种传输的并发对照，含失败根因分析 |
-| [docs/m5-seckill-load-test.md](docs/m5-seckill-load-test.md) | 秒杀在限流开/关两轮下的吞吐、一致性与限流证据 |
-| [docs/m5-sharding-pilot.md](docs/m5-sharding-pilot.md) | ShardingSphere 分库试点：路由、分页、事务、唯一键 |
-| [docs/TECHNICAL_HIGHLIGHTS.md](docs/TECHNICAL_HIGHLIGHTS.md) | 核心设计对应的代码位置、验证方式与已知限制 |
-| [docs/reliability-fixes.md](docs/reliability-fixes.md) | 本次修复的失败场景、事务边界、状态机、测试证据与剩余风险 |
-| [docs/interview-guide.md](docs/interview-guide.md) | 面试导览：三个技术点的业务问题、代码位置、证据和边界 |
-
-几个可以直接核对的结论：
-
-- 秒杀压测两轮各 20 万级尝试，限量 3000 恰好成交 3000，DB 与 Redis 余量同时归零，没有残留 PENDING。
-- 同一购物车链路，默认 Feign 在 160 线程并发下 50 线程档就出现连接耗尽错误，RPC 在 100 线程仍为零错误。补测连接池 Feign（HC5）后，50 线程单组下 RPC 的吞吐优势收窄到约 4.6%、p99 只差约 1 ms；报告把这组数据也写进去了，没有把连接复用的收益算成协议优势。
-- Seata AT 回滚注入后，已提交的订单行被 undo_log 撤销，库存预占保持不变。
-
-## 目录结构
-
-```text
-aurora-gateway/          网关
-aurora-user/             用户
-aurora-product/          商品（含缓存穿透保护）
-aurora-cart/             购物车（Feign / RPC 可切换）
-aurora-order/            订单（事务消息、关单、优惠券）
-aurora-inventory/        库存（Lua 预扣、对账）
-aurora-payment/          模拟支付
-aurora-seckill/          秒杀
-aurora-common/           公共基础设施
-aurora-api/              服务契约
-aurora-id-generator/     分布式 ID
-aurora-ratelimit/        限流与熔断
-aurora-rpc/              Netty RPC
-aurora-sharding-pilot/   分库试点
-aurora-web/              Vue 前端
-docker/                  中间件栈与脚本
-docs/                    报告与截图
-```
-
-## 配置与数据
-
-仓库没有统一的 `.env.example`，本地基础地址与覆盖项见各服务的 `application.yml`。
-
-| 变量 | 用途 |
-| --- | --- |
-| `NACOS_ADDR` | Nacos 地址 |
-| `MYSQL_ADDR`、`MYSQL_PASSWORD` | MySQL 地址与密码 |
-| `REDIS_HOST`、`REDIS_PORT` | Redis 连接 |
-| `ROCKETMQ_ADDR` | RocketMQ NameServer |
-| `AURORA_TX_MODE`、`SEATA_ENABLED`、`SEATA_ADDR` | 订单事务方案与 Seata 连接 |
-| `AURORA_RPC_ENABLED`、`RPC_HOST`、`RPC_PORT` | 购物车到商品服务的 RPC 开关与监听配置 |
-| `AURORA_SECKILL_ORDER_MODE` | 秒杀订单处理模式 |
-| `VITE_GATEWAY` | 前端开发代理目标 |
-
-建库与建表脚本在 [docker/mysql/init](docker/mysql/init)，由 MySQL 镜像在新建数据卷时执行。已有数据卷不会自动重跑初始化脚本。项目没有 Flyway/Liquibase 迁移流程，表结构变更需要手工处理。
-
-`docker/nacos/import.sh` 生成的密钥保存在 `docker/nacos/.secrets.env`，已加入 `.gitignore`。
+CI 在 Ubuntu 上启动 MySQL 8.4 与 Redis 7，导入同一组 SQL，运行全量测试；库存与秒杀测试出现跳过会让构建失败。
 
 ## 已知限制
 
-- 订单模型是单商品订单。购物车多商品结算会分别生成多笔订单，优惠券只作用于单个订单。
-- 支付是模拟链路，回调由服务端校验 HMAC 签名，但不对接真实渠道。
-- Seata AT 只覆盖订单与库存两个分支，用于对照实验，不与 MQ 模式混跑同一 SKU。
-- 自研 RPC 是单连接多路复用，大响应会阻塞小响应；没有实现 XID 透传，所以 AT 链路仍走 Feign。连接池化留待后续。
-- 秒杀限流的 300 配额证据来自 Redis 窗口采样，入口被拒比例是按采样推导的，不是直接计数器。
-- 管理员设置可售库存时，如果存在未落账的在途预扣/释放，接口会拒绝并要求重试；没有提供强制覆盖入口。
-- 支付事件补发会一直重试到成功；`publish_attempts` 只用于观测，没有接 dead-letter 或人工处理队列。
-- 商品布隆过滤器是进程内实现，多实例各自一份；重建与新建商品写入的竞态尚未消除。
-- 库存对账会重建缺失的 Redis key，并对已存在 key 的差值告警；持续偏差不会自动覆盖，需要人工确认。
-- 下单幂等映射表长期保留，没有清理任务；每张订单一行，当前规模可以接受。
-- 压测数字来自单机环境（服务、中间件、压测器同机，每服务 256MB 堆），不代表生产容量，只适合同环境对照。
-- 本地开发凭证和关闭认证的 Nacos 配置只用于开发，不能直接用于公网部署。
+- 支付和物流是模拟流程。支付渠道签名在服务端生成和校验，物流单号由运营填写，不对接真实承运商。
+- 商品图是概念渲染，用于演示版式与变体对应关系。
+- 只支持发货前退款；退款申请按订单串行处理，不支持同一订单并行审批多笔退款。
+- 商品筛选在 Java 侧完成，适合当前 45 个 SKU 的演示规模；目录扩大后应改为索引化查询或搜索引擎。
+- 秒杀对账按活动扫描，单机规模设计；没有分片和死信队列。
+- 布隆过滤器是进程内实现，多实例各自一份。
+- 下单幂等记录长期保留，没有清理任务。
+- `docs/m2`–`docs/m5` 的压测与对照报告记录的是 DTC 重构前的实验环境，代码路径和订单模型已经变化；结论只用于对照，不代表当前版本的容量。
+- 本地开发凭证和 Nacos 配置只用于开发环境。
 
-## 支持与反馈
+## 文档
 
-问题与建议请提 [Issue](https://github.com/zeng-bohan/aurora-mall/issues)。报告 Bug 时请附复现步骤、服务日志和相关配置。
+- [技术导览](docs/TECHNICAL_HIGHLIGHTS.md)：关键设计、代码位置、验证方式与边界。
+- [可靠性修复记录](docs/reliability-fixes.md)：失败场景、事务边界和修复证据。
+- [面试导览](docs/interview-guide.md)：按问题组织的代码路径。
+- [压测与对照报告](docs/)：自研 RPC、Seata、秒杀压测与分库试点（历史环境）。
 
 ## 许可证
 

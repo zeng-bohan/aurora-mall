@@ -1,47 +1,65 @@
 # docker/ — 本地基础设施
 
-全项目共用的中间件栈，与未来服务器部署同构。
+本地中间件栈。服务通过 Nacos 发现，MySQL 按服务分库，Redis 保存库存与秒杀预扣，RocketMQ 承载关单与支付事件。
 
 ## 启动
 
 ```bash
 cd docker
-docker compose up -d        # 首次拉取镜像约 2.5GB
-bash smoke.sh               # 等待并断言全部服务健康
+docker compose up -d
+bash smoke.sh               # 等待并检查中间件健康
 bash nacos/import.sh        # 命名空间 dev + 配置/密钥导入 Nacos
 ```
 
-`import.sh` 必须在**首次启动任何服务之前**执行：服务从配置中心导入 `aurora-common.yml`（密钥），缺配置即启动失败（fail-fast）。脚本首次运行会在 `docker/nacos/.secrets.env` 生成密钥（已 gitignore，不进仓库），重复运行复用同一文件并覆盖发布配置。
+`import.sh` 要在首次启动服务之前执行。服务从配置中心读取内部密钥，缺配置会直接启动失败。首次运行会在 `docker/nacos/.secrets.env` 生成开发密钥，已加入 `.gitignore`；重复运行复用同一文件。
 
-## 端点速查
+## 端点
 
 | 服务 | 地址 |
 | --- | --- |
-| MySQL | localhost:13306（root/aurora123）——宿主 3306 被其他项目占用 |
-| Redis | localhost:16379——宿主 6379 同样被占用 |
-| Nacos 控制台 | http://localhost:8848/nacos（命名空间 `dev` 存放 aurora 配置） |
-| RocketMQ namesrv / broker | localhost:9876 / localhost:10911，控制台 http://localhost:8180 |
-| SkyWalking | OAP 11800/12800，UI http://localhost:8090（9.7 线：H2 存储） |
-| Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3000（admin/aurora123） |
-| Loki | http://localhost:3100 |
+| MySQL | `localhost:13306`（root / aurora123） |
+| Redis | `localhost:16379` |
+| Nacos | `http://localhost:8848/nacos`（命名空间 `dev`） |
+| RocketMQ | `localhost:9876`，控制台 `http://localhost:8180` |
+| SkyWalking UI | `http://localhost:8090` |
+| Prometheus | `http://localhost:9090` |
+| Grafana | `http://localhost:3000`（admin / aurora123） |
+| Loki | `http://localhost:3100` |
+
+## 建表与种子数据
+
+MySQL 镜像首次创建数据卷时，会按文件名顺序执行 `mysql/init/*.sql`：
+
+| 文件 | 内容 |
+| --- | --- |
+| `01`–`08` | 用户、商品、ID、库存、订单、支付、秒杀、分库试点的表结构 |
+| `12-dtc-catalog.sql` | 7 分类、15 属性、54 属性值、18 SPU、45 SKU、库存 |
+| `13-dtc-demo-users.sql` | 运营管理员、6 个顾客、地址、券模板与用户券 |
+| `14-dtc-demo-orders.sql` | 37 笔历史父订单、明细、退款、支付单 |
+| `15-dtc-demo-seckill.sql` | 1 场进行中、1 场次日的秒杀活动 |
+
+已有数据卷不会自动重跑初始化脚本。需要补种子或重置演示数据时执行：
+
+```bash
+bash seed-demo.sh            # 补种子并预热秒杀
+bash seed-demo.sh --reset    # 先重置 3001–3037 演示订单，再重铺
+```
+
+脚本依次执行 12–15 号 SQL，并在服务已启动时登录运营账号，为两场活动预热 Redis。SQL 使用固定主键与 `INSERT IGNORE` / `ON DUPLICATE KEY UPDATE`，重复执行不会产生第二份数据。
+
+演示账号：
+
+- 运营：`admin / Aurora123!`
+- 顾客：`linyi`、`chenmo`、`zhouran`、`wutong`、`xuzhi`、`heyu`，密码同为 `Aurora123!`
 
 ## 冒烟脚本
 
-- `bash smoke.sh` — 中间接缝：逐容器断言 healthy/running，并对镜像内无探测工具的 dashboard/UI 从宿主侧主动探测
-- `bash smoke-services.sh` — 服务接缝：网关 + 6 服务经 `/api/<service>/actuator/health` 全 200（需先启动服务）
-- `bash smoke-flows.sh` — 业务金路径接缝：注册→登录→浏览→加购→改价收敛→登出，逐步断言（需全部服务在跑）
+- `bash smoke.sh`：检查中间件容器与端口。
+- `bash smoke-services.sh`：检查网关与服务健康端点，需要先启动服务。
+- `bash smoke-flows.sh`、`smoke-coupon.sh`、`smoke-seckill.sh`、`mock-pay.sh` 写于 DTC 重构前，接口已经变化，不再作为当前验收依据。当前业务流程用 `aurora-web/scripts/ui-*.mjs` 或 README 中的浏览器流程验证。
 
-## 演示数据
+## 注意
 
-- `bash seed-demo.sh` — 铺一套像样的演示数据（16 个商品 + 3 张券 + 1 个秒杀活动 + 3 笔已支付订单 + `admin` 账号），便于截图、演示或 clone 后直接看效果；幂等，已存在的会跳过
-- `bash seed-demo.sh --reset` — 先清掉上面这些冒烟脚本生成的测试残留（`Flow Product *` / `smoke-*` / `audit-*` 等），再铺演示数据
-
-> ⚠️ 脚本里所有带中文的请求体都走「写临时文件 + `curl --data-binary @文件`」，SQL 走 stdin。
-> 原因是 MSYS/Git Bash 会把非 ASCII 的**命令行参数**按本地代码页转换，中文经 argv 传给原生
-> curl/mysql 会变乱码，表现为服务端报「请求体格式错误（10001）」。别把它们改回 `-d "…"` 内联。
-
-## 备注
-
-- RocketMQ 容器以 root 运行：镜像不含 store/logs 目录，卷挂载点属主为 root
-- 上表端口是本开发机的偏离值；容器网络内通信一律走标准端口
+- 开发密钥与 Nacos 配置只用于本地，不能直接用于公网。
+- 商品图为概念渲染，支付与物流为模拟流程。
+- MySQL 端口使用 13306、Redis 使用 16379，避免与本机常见的 3306/6379 冲突。

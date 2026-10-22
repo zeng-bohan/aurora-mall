@@ -19,6 +19,10 @@
             <groupId>com.zengbohan.aurora</groupId>
             <artifactId>aurora-common</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.zengbohan.aurora</groupId>
+            <artifactId>aurora-api</artifactId>
+        </dependency>
         <!-- SkyWalking toolkit：%tid 日志转换器（agent 挂载后自动填充，缺席输出 N/A） -->
         <dependency>
             <groupId>org.apache.skywalking</groupId>
@@ -36,6 +40,14 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

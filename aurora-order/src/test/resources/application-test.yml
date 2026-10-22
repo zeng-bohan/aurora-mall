@@ -13,3 +13,6 @@ spring:
 aurora:
   internal:
     secret: test-only-internal-secret-not-real
+  # 测试不启动后台任务，避免扫描到共享库里的演示订单
+  background-jobs:
+    enabled: false

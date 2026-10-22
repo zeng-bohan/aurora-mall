@@ -1,123 +1,105 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
-import { onMounted, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, onUnmounted, ref } from 'vue'
 
-import { seckillApi } from '@/api'
-import type { SeckillActivityView } from '@/api/seckill'
-import { SECKILL_PHASE_LABEL, SeckillPhase } from '@/api/seckill'
-import { useNow } from '@/composables/useNow'
-import { useReveal } from '@/composables/useReveal'
+import { seckillApi, type SeckillActivity } from '@/api/dtc'
+import EmptyState from '@/components/EmptyState.vue'
+import StatusBadge from '@/components/StatusBadge.vue'
 import { formatCountdown, formatDateTime } from '@/utils/datetime'
 import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
 
-const router = useRouter()
-const activities = ref<SeckillActivityView[]>([])
+const activities = ref<SeckillActivity[]>([])
 const loading = ref(true)
-const now = useNow()
-
-useReveal()
-
-function phaseOf(activity: SeckillActivityView): string {
-  const start = new Date(activity.startAt).getTime()
-  const end = new Date(activity.endAt).getTime()
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    return activity.phase
-  }
-  if (now.value < start) {
-    return SeckillPhase.NOT_STARTED
-  }
-  if (now.value >= end) {
-    return SeckillPhase.ENDED
-  }
-  return SeckillPhase.RUNNING
-}
-
-function countdownLabel(activity: SeckillActivityView): string {
-  const phase = phaseOf(activity)
-  if (phase === SeckillPhase.NOT_STARTED) {
-    return `距开抢 ${formatCountdown(activity.startAt, now.value) ?? '即将开始'}`
-  }
-  if (phase === SeckillPhase.RUNNING) {
-    return `距结束 ${formatCountdown(activity.endAt, now.value) ?? '即将结束'}`
-  }
-  return '已结束'
-}
-
-function actionLabel(activity: SeckillActivityView): string {
-  return phaseOf(activity) === SeckillPhase.RUNNING ? '去抢购' : '查看'
-}
+const error = ref('')
+const now = ref(Date.now())
+let tick: number | undefined
 
 async function load(): Promise<void> {
   loading.value = true
+  error.value = ''
   try {
-    activities.value = await seckillApi.activities()
-  } catch (error) {
-    ElMessage.error(describeError(error))
+    activities.value = await seckillApi.list()
+  } catch (e) {
+    error.value = describeError(e)
   } finally {
     loading.value = false
   }
 }
 
-onMounted(load)
+function countdown(activity: SeckillActivity): string {
+  if (activity.phase === 'RUNNING') {
+    return formatCountdown(activity.endAt, now.value) ?? '即将结束'
+  }
+  if (activity.phase === 'NOT_STARTED') {
+    return formatCountdown(activity.startAt, now.value) ?? '即将开始'
+  }
+  return '已结束'
+}
+
+onMounted(() => {
+  void load()
+  tick = window.setInterval(() => {
+    now.value = Date.now()
+  }, 1000)
+})
+
+onUnmounted(() => {
+  if (tick) {
+    window.clearInterval(tick)
+  }
+})
 </script>
 
 <template>
-  <div class="seckill-page">
-    <div class="container">
-      <header class="seckill-head">
-        <div>
-          <h1>秒杀排期</h1>
-          <p>
-            限量、限时、限购。预扣在 Redis 中原子完成，落单由消息队列异步处理；排队结果会如实显示。
-          </p>
-        </div>
-        <button type="button" class="btn btn--outline" :disabled="loading" @click="load">
-          刷新排期
-        </button>
-      </header>
+  <div>
+    <div class="container page-head">
+      <span class="eyebrow">Limited Drop</span>
+      <h1 class="display">限时秒杀。</h1>
+      <p>活动库存独立分配，不占普通 SKU 库存。中签后生成待支付订单，请在 30 分钟内完成支付。</p>
+    </div>
 
-      <div v-if="loading" class="store-skeleton" aria-busy="true" aria-label="正在加载秒杀活动" />
-
-      <div v-else-if="activities.length === 0" class="release-empty">
-        <h2>当前没有进行中的秒杀</h2>
-        <p>排期发布后会出现在这里。</p>
-        <RouterLink class="btn" to="/products">回到目录</RouterLink>
-      </div>
-
-      <div v-else class="release-sheet" data-reveal>
-        <article
+    <div class="container" style="padding-block: 32px 72px">
+      <div v-if="loading" class="page-loading">正在读取活动…</div>
+      <div v-else-if="error" class="error-banner">{{ error }}</div>
+      <EmptyState
+        v-else-if="!activities.length"
+        title="暂时没有秒杀活动"
+        description="运营创建并预热活动后会出现在这里。"
+      >
+        <RouterLink class="btn btn--line" to="/products">先逛逛商品</RouterLink>
+      </EmptyState>
+      <div v-else class="seckill-list">
+        <RouterLink
           v-for="activity in activities"
           :key="activity.id"
-          class="release-row"
+          class="seckill-card"
+          :to="`/seckill/${activity.id}`"
         >
-          <div class="release-row__phase">
-            {{ SECKILL_PHASE_LABEL[phaseOf(activity)] ?? phaseOf(activity) }}
-            <span class="num">{{ countdownLabel(activity) }}</span>
+          <div class="seckill-card__media">
+            <img :src="activity.productImage" :alt="activity.productTitle" />
           </div>
-
-          <div>
-            <h2 class="release-row__title">{{ activity.title }}</h2>
-            <p class="release-row__meta">
-              剩余 {{ activity.availableStock }} / {{ activity.totalStock }} 件 · 每人限
-              {{ activity.perUserLimit }} 件 · {{ formatDateTime(activity.startAt) }} 起
+          <div class="seckill-card__body">
+            <div style="display: flex; justify-content: space-between; gap: 10px">
+              <span class="eyebrow">AURORA Drop</span>
+              <StatusBadge :status="activity.phase" />
+            </div>
+            <h3>{{ activity.title }}</h3>
+            <p class="tiny" style="margin-top: 6px">{{ activity.productTitle }}</p>
+            <div class="seckill-card__price">
+              {{ formatYuan(activity.seckillPrice) }}
+              <small v-if="activity.originalPrice > activity.seckillPrice">
+                {{ formatYuan(activity.originalPrice) }}
+              </small>
+            </div>
+            <div class="seckill-card__meta">
+              <span>{{ activity.phase === 'RUNNING' ? '距结束' : '距开始' }} {{ countdown(activity) }}</span>
+              <span>剩余 {{ activity.availableStock }} / {{ activity.totalStock }}</span>
+            </div>
+            <p class="tiny" style="margin-top: 10px">
+              {{ formatDateTime(activity.startAt) }} – {{ formatDateTime(activity.endAt) }}
             </p>
           </div>
-
-          <div class="release-row__price">{{ formatYuan(activity.seckillPrice) }}</div>
-
-          <div class="release-row__action">
-            <button
-              type="button"
-              class="btn"
-              :class="{ 'btn--signal': phaseOf(activity) === SeckillPhase.RUNNING }"
-              @click="router.push({ name: 'seckill-detail', params: { id: activity.id } })"
-            >
-              {{ actionLabel(activity) }}
-            </button>
-          </div>
-        </article>
+        </RouterLink>
       </div>
     </div>
   </div>

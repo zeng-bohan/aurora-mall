@@ -27,7 +27,7 @@ class FeignProductAdapterTest {
     private FeignProductAdapter adapter;
 
     private static final ProductSnapshot MUG =
-            new ProductSnapshot(1L, "Aurora Mug", new BigDecimal("29.90"), 100, 1);
+            new ProductSnapshot(1L, 10L, "SKU-MUG", "Aurora Mug", "雾白", "/products/mug.webp", new BigDecimal("29.90"), 100, 1);
 
     @BeforeEach
     void setUp() {

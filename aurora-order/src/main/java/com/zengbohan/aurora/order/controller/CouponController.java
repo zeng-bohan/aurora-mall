@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** 用户端：看可领的券、领券、看自己的券。身份来自网关注入的 X-User-Id。 */
 @RestController
 @RequestMapping("/coupons")
 public class CouponController {

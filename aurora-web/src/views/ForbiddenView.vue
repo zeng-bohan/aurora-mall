@@ -1,9 +1,12 @@
 <template>
-  <div class="app-page">
-    <div class="empty-state">
-      <h1>无权访问</h1>
-      <p>当前账户没有这个页面的权限。运营台只对 ADMIN 角色开放；接口侧也会再次校验。</p>
-      <RouterLink class="btn" to="/products">回到目录</RouterLink>
+  <div class="container section">
+    <div class="empty">
+      <div class="empty__title">这里需要运营权限</div>
+      <p>当前账号不是管理员。请使用运营账号登录后再进入后台。</p>
+      <div style="display: flex; gap: 10px">
+        <RouterLink class="btn btn--primary" to="/login">切换账号</RouterLink>
+        <RouterLink class="btn btn--line" to="/">返回商城</RouterLink>
+      </div>
     </div>
   </div>
 </template>

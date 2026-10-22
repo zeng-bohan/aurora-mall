@@ -1,43 +1,109 @@
 CREATE DATABASE IF NOT EXISTS aurora_order DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE aurora_order;
 
-CREATE TABLE IF NOT EXISTS orders (
-    id           BIGINT        NOT NULL PRIMARY KEY COMMENT 'aurora-id-generator 供号',
-    user_id      BIGINT        NOT NULL,
-    sku_id       BIGINT        NOT NULL,
-    quantity     INT           NOT NULL,
-    total_amount DECIMAL(10,2) NOT NULL,
-    status       TINYINT       NOT NULL DEFAULT 0 COMMENT '0=CREATED 1=PAID 2=CLOSED',
-    created_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    KEY idx_orders_user (user_id, id),
-    KEY idx_orders_status_created (status, created_at)
+CREATE TABLE IF NOT EXISTS trade_order (
+    id                 BIGINT        NOT NULL PRIMARY KEY COMMENT 'aurora-id-generator 供号',
+    trade_no           VARCHAR(40)   NOT NULL,
+    user_id            BIGINT        NOT NULL,
+    source             VARCHAR(16)   NOT NULL DEFAULT 'MALL' COMMENT 'MALL / SECKILL',
+    status             VARCHAR(16)   NOT NULL DEFAULT 'CREATED' COMMENT 'CREATED / PAID / SHIPPED / COMPLETED / CLOSED / REFUNDED',
+    refund_status      VARCHAR(16)   NOT NULL DEFAULT 'NONE' COMMENT 'NONE / PARTIAL / FULL',
+    merchandise_amount DECIMAL(12,2) NOT NULL,
+    discount_amount    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    shipping_fee       DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    payable_amount     DECIMAL(12,2) NOT NULL,
+    refunded_amount    DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    coupon_template_id BIGINT        NULL,
+    user_coupon_id     BIGINT        NULL,
+    receiver_name      VARCHAR(32)   NOT NULL,
+    receiver_phone     VARCHAR(20)   NOT NULL,
+    province           VARCHAR(32)   NOT NULL,
+    city               VARCHAR(32)   NOT NULL,
+    district           VARCHAR(32)   NOT NULL,
+    address_detail     VARCHAR(200)  NOT NULL,
+    postal_code        VARCHAR(12)   NULL,
+    carrier            VARCHAR(32)   NULL,
+    tracking_no        VARCHAR(64)   NULL,
+    seckill_activity_id BIGINT       NULL,
+    stock_confirmed    TINYINT       NOT NULL DEFAULT 0,
+    stock_released     TINYINT       NOT NULL DEFAULT 0,
+    paid_at            DATETIME      NULL,
+    shipped_at         DATETIME      NULL,
+    completed_at       DATETIME      NULL,
+    closed_at          DATETIME      NULL,
+    version            INT           NOT NULL DEFAULT 0,
+    created_at         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at         DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_trade_no (trade_no),
+    KEY idx_trade_user (user_id, id),
+    KEY idx_trade_status_created (status, created_at),
+    KEY idx_trade_ship_time (status, shipped_at),
+    KEY idx_trade_source (source, created_at)
 ) ENGINE = InnoDB;
 
-CREATE TABLE IF NOT EXISTS idempotent_record (
-    id         BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    biz_type   VARCHAR(32)  NOT NULL,
-    biz_key    VARCHAR(128) NOT NULL,
-    created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_idempotent (biz_type, biz_key),
-    KEY idx_idempotent_created (created_at)
+CREATE TABLE IF NOT EXISTS trade_order_item (
+    id              BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    trade_id        BIGINT        NOT NULL,
+    spu_id          BIGINT        NOT NULL,
+    sku_id          BIGINT        NOT NULL,
+    spu_title       VARCHAR(160)  NOT NULL,
+    sku_code        VARCHAR(48)   NOT NULL,
+    attributes_text VARCHAR(255)  NOT NULL,
+    image_url       VARCHAR(255)  NOT NULL,
+    unit_price      DECIMAL(10,2) NOT NULL,
+    quantity        INT           NOT NULL,
+    item_amount     DECIMAL(12,2) NOT NULL,
+    discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    refunded_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+    status          VARCHAR(16)   NOT NULL DEFAULT 'NORMAL' COMMENT 'NORMAL / REFUNDED / REFUNDING',
+    created_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_trade_item_trade (trade_id, id),
+    KEY idx_trade_item_sku (sku_id)
 ) ENGINE = InnoDB;
 
--- 下单幂等映射：与订单在同一个本地事务里写入。
--- 同一 (user_id, idem_key) 永远对应同一张订单；request_hash 防止同键换参数。
+CREATE TABLE IF NOT EXISTS order_refund (
+    id             BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    refund_no      VARCHAR(40)   NOT NULL,
+    trade_id       BIGINT        NOT NULL,
+    user_id        BIGINT        NOT NULL,
+    amount         DECIMAL(12,2) NOT NULL,
+    reason         VARCHAR(200)  NOT NULL,
+    status         VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING / APPROVED / REJECTED',
+    settled        TINYINT       NOT NULL DEFAULT 0 COMMENT '1=退款与库存回补已完成',
+    reject_reason  VARCHAR(200)  NULL,
+    reviewer       VARCHAR(64)   NULL,
+    created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at    DATETIME      NULL,
+    UNIQUE KEY uk_refund_no (refund_no),
+    KEY idx_refund_trade (trade_id, status),
+    KEY idx_refund_status_created (status, created_at),
+    KEY idx_refund_settlement (status, settled, reviewed_at)
+) ENGINE = InnoDB;
+
+CREATE TABLE IF NOT EXISTS order_refund_item (
+    id            BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    refund_id     BIGINT        NOT NULL,
+    order_item_id BIGINT        NOT NULL,
+    sku_id        BIGINT        NOT NULL,
+    quantity      INT           NOT NULL,
+    amount        DECIMAL(12,2) NOT NULL,
+    UNIQUE KEY uk_refund_item (refund_id, order_item_id)
+) ENGINE = InnoDB;
+
 CREATE TABLE IF NOT EXISTS order_idempotency (
     user_id      BIGINT       NOT NULL,
     idem_key     VARCHAR(128) NOT NULL,
-    order_id     BIGINT       NOT NULL,
+    trade_id     BIGINT       NOT NULL,
     request_hash CHAR(64)     NOT NULL,
     created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, idem_key),
-    KEY idx_order_idempotency_order (order_id)
+    KEY idx_order_idempotency_trade (trade_id)
 ) ENGINE = InnoDB;
 
 CREATE TABLE IF NOT EXISTS tx_message (
     id         BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    biz_key    VARCHAR(64)  NOT NULL COMMENT '订单号：本地事务与消息的一致性依据',
+    biz_key    VARCHAR(64)  NOT NULL,
     topic      VARCHAR(64)  NOT NULL,
     tag        VARCHAR(64)  NOT NULL,
     payload    TEXT         NOT NULL,
@@ -48,37 +114,33 @@ CREATE TABLE IF NOT EXISTS tx_message (
     KEY idx_tx_message_status (status, created_at)
 ) ENGINE = InnoDB;
 
--- 券模板：运营创建（M5 S4）。满减类型：订单金额 >= threshold_amount 时抵扣 discount_amount。
--- claimed < total 是防超发的守卫（条件更新），不是展示字段。
 CREATE TABLE IF NOT EXISTS coupon_template (
     id               BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
     title            VARCHAR(64)   NOT NULL,
-    threshold_amount DECIMAL(10,2) NOT NULL COMMENT '使用门槛：订单金额不低于该值才可用',
-    discount_amount  DECIMAL(10,2) NOT NULL COMMENT '抵扣金额',
-    total            INT           NOT NULL COMMENT '发放总量',
-    claimed          INT           NOT NULL DEFAULT 0 COMMENT '已领取数',
+    threshold_amount DECIMAL(10,2) NOT NULL,
+    discount_amount  DECIMAL(10,2) NOT NULL,
+    total            INT           NOT NULL,
+    claimed          INT           NOT NULL DEFAULT 0,
     claim_start_at   DATETIME      NOT NULL,
     claim_end_at     DATETIME      NOT NULL,
-    valid_days       INT           NOT NULL COMMENT '领取后有效天数（过期由读取时按 expire_at 推导，不落状态）',
+    valid_days       INT           NOT NULL,
     created_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
     KEY idx_coupon_template_window (claim_start_at, claim_end_at)
 ) ENGINE = InnoDB;
 
--- 用户券：一人一张由唯一键兜底（并发抢输的那次会因唯一键失败而回滚，配额随之释放）。
--- 标题/门槛/抵扣在领取时快照：模板日后被改，不影响已领出的券。
 CREATE TABLE IF NOT EXISTS user_coupon (
     id               BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
     template_id      BIGINT        NOT NULL,
     user_id          BIGINT        NOT NULL,
-    status           VARCHAR(16)   NOT NULL DEFAULT 'UNUSED' COMMENT 'UNUSED/LOCKED/USED（EXPIRED 由读取时推导）',
-    order_id         BIGINT        NULL COMMENT '锁定/核销它的订单；未使用时为空',
-    title            VARCHAR(64)   NOT NULL COMMENT '领取时快照',
-    threshold_amount DECIMAL(10,2) NOT NULL COMMENT '领取时快照',
-    discount_amount  DECIMAL(10,2) NOT NULL COMMENT '领取时快照',
+    status           VARCHAR(16)   NOT NULL DEFAULT 'UNUSED' COMMENT 'UNUSED / LOCKED / USED',
+    trade_id         BIGINT        NULL,
+    title            VARCHAR(64)   NOT NULL,
+    threshold_amount DECIMAL(10,2) NOT NULL,
+    discount_amount  DECIMAL(10,2) NOT NULL,
     claimed_at       DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expire_at        DATETIME      NOT NULL COMMENT 'claimed_at + valid_days',
+    expire_at        DATETIME      NOT NULL,
     used_at          DATETIME      NULL,
     UNIQUE KEY uk_user_coupon_once (template_id, user_id),
     KEY idx_user_coupon_user (user_id, status, expire_at),
-    KEY idx_user_coupon_order (order_id)
+    KEY idx_user_coupon_trade (trade_id)
 ) ENGINE = InnoDB;

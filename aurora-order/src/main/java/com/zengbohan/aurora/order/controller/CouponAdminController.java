@@ -13,12 +13,9 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/**
- * 运营端：建券与查看模板。挂在 /admin/** 上由 common 的角色守卫拦截
- * （本模块的 /admin/** 目前只有券这一组端点）。
- */
 @RestController
 @RequestMapping("/admin/coupons")
+@RequireAdmin
 public class CouponAdminController {
 
     private final CouponService couponService;
@@ -27,7 +24,6 @@ public class CouponAdminController {
         this.couponService = couponService;
     }
 
-    @RequireAdmin
     @PostMapping
     public Result<Long> create(@RequestBody CreateCouponTemplateRequest request) {
         return Result.ok(couponService.createTemplate(new CouponService.CreateTemplate(
@@ -35,7 +31,6 @@ public class CouponAdminController {
                 request.claimStartAt(), request.claimEndAt(), request.validDays())));
     }
 
-    @RequireAdmin
     @GetMapping
     public Result<List<CouponTemplateView>> list() {
         return Result.ok(couponService.listTemplates());

@@ -9,6 +9,7 @@ public record CouponTemplateView(long id,
                                  BigDecimal thresholdAmount,
                                  BigDecimal discountAmount,
                                  int remaining,
+                                 int total,
                                  LocalDateTime claimStartAt,
                                  LocalDateTime claimEndAt) {
 }

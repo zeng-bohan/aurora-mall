@@ -16,7 +16,7 @@ public class OrderIdempotency {
     @TableId(value = "user_id", type = IdType.INPUT)
     private Long userId;
     private String idemKey;
-    private Long orderId;
+    private Long tradeId;
     private String requestHash;
     private LocalDateTime createdAt;
 
@@ -36,12 +36,12 @@ public class OrderIdempotency {
         this.idemKey = idemKey;
     }
 
-    public Long getOrderId() {
-        return orderId;
+    public Long getTradeId() {
+        return tradeId;
     }
 
-    public void setOrderId(Long orderId) {
-        this.orderId = orderId;
+    public void setTradeId(Long tradeId) {
+        this.tradeId = tradeId;
     }
 
     public String getRequestHash() {

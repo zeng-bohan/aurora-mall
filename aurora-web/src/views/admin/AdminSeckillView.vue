@@ -1,304 +1,219 @@
 <script setup lang="ts">
-import { ElMessage, ElMessageBox } from 'element-plus'
-import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage } from 'element-plus'
+import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
-import { seckillApi } from '@/api'
-import type { SeckillActivityView } from '@/api/seckill'
-import { SECKILL_PHASE_LABEL, SeckillPhase } from '@/api/seckill'
-import EmptyState from '@/components/EmptyState.vue'
-import PageHead from '@/components/PageHead.vue'
-import StatusPill from '@/components/StatusPill.vue'
-import { useNow } from '@/composables/useNow'
+import { adminCatalogApi, seckillApi, type AdminSku, type SaveSeckill, type SeckillActivity } from '@/api/dtc'
+import StatusBadge from '@/components/StatusBadge.vue'
 import { formatDateTime } from '@/utils/datetime'
 import { describeError } from '@/utils/errors'
 import { formatYuan } from '@/utils/money'
 
-const activities = ref<SeckillActivityView[]>([])
+const router = useRouter()
+
+const rows = ref<SeckillActivity[]>([])
+const skus = ref<AdminSku[]>([])
 const loading = ref(true)
-const loadError = ref('')
+const error = ref('')
+const createOpen = ref(false)
 const saving = ref(false)
-const preheatingId = ref<number | null>(null)
-const dialogVisible = ref(false)
-const now = useNow()
+const preheating = ref<number | null>(null)
 
-const form = reactive({
-  title: '',
-  skuId: 1,
-  seckillPrice: 1.0,
-  totalStock: 100,
-  perUserLimit: 1,
-  startAt: '',
-  endAt: ''
-})
-
-function phaseOf(activity: SeckillActivityView): string {
-  const start = new Date(activity.startAt).getTime()
-  const end = new Date(activity.endAt).getTime()
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    return activity.phase
-  }
-  if (now.value < start) {
-    return SeckillPhase.NOT_STARTED
-  }
-  if (now.value >= end) {
-    return SeckillPhase.ENDED
-  }
-  return SeckillPhase.RUNNING
+function localInput(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
 }
 
-function canPreheat(activity: SeckillActivityView): boolean {
-  return phaseOf(activity) === SeckillPhase.NOT_STARTED
+function defaults(): SaveSeckill {
+  const now = new Date()
+  return {
+    title: '',
+    skuId: 0,
+    seckillPrice: 0,
+    totalStock: 10,
+    perUserLimit: 1,
+    startAt: localInput(new Date(now.getTime() - 5 * 60000)),
+    endAt: localInput(new Date(now.getTime() + 2 * 3600000)),
+  }
 }
 
-const runningCount = computed(
-  () => activities.value.filter((activity) => phaseOf(activity) === SeckillPhase.RUNNING).length
-)
-const remainingStock = computed(() =>
-  activities.value.reduce((sum, activity) => sum + Math.max(activity.availableStock, 0), 0)
-)
+const form = reactive<SaveSeckill>(defaults())
 
 async function load(): Promise<void> {
   loading.value = true
-  loadError.value = ''
+  error.value = ''
   try {
-    activities.value = await seckillApi.adminActivities()
-  } catch (error) {
-    loadError.value = describeError(error)
-    ElMessage.error(loadError.value)
+    const [activities, skuList] = await Promise.all([seckillApi.adminList(), adminCatalogApi.skus()])
+    rows.value = activities
+    skus.value = skuList.filter((sku) => sku.status === 1)
+  } catch (e) {
+    error.value = describeError(e)
   } finally {
     loading.value = false
   }
 }
 
 function openCreate(): void {
-  form.title = ''
-  form.skuId = 1
-  form.seckillPrice = 1.0
-  form.totalStock = 100
-  form.perUserLimit = 1
-  form.startAt = ''
-  form.endAt = ''
-  dialogVisible.value = true
+  Object.assign(form, defaults())
+  form.skuId = skus.value[0]?.id ?? 0
+  const sku = skus.value[0]
+  if (sku) {
+    form.seckillPrice = Math.max(1, Math.round(sku.price * 0.75))
+  }
+  createOpen.value = true
 }
 
 async function save(): Promise<void> {
   if (!form.title.trim()) {
-    ElMessage.warning('请填写活动名')
+    ElMessage.warning('请填写活动标题')
     return
   }
-  if (form.skuId < 1) {
-    ElMessage.warning('商品编号必须大于 0')
+  if (!form.skuId) {
+    ElMessage.warning('请选择 SKU')
     return
   }
   if (form.seckillPrice <= 0) {
-    ElMessage.warning('秒杀价必须大于 0')
+    ElMessage.warning('活动价必须大于 0')
     return
   }
-  if (form.totalStock < 1) {
-    ElMessage.warning('活动库存至少 1 件')
-    return
-  }
-  if (form.perUserLimit < 1) {
-    ElMessage.warning('每人限购至少 1 件')
-    return
-  }
-  if (!form.startAt || !form.endAt) {
-    ElMessage.warning('请选择活动起止时间')
-    return
-  }
-  if (new Date(form.endAt) <= new Date(form.startAt)) {
-    ElMessage.warning('结束时间必须晚于开始时间')
-    return
-  }
-
   saving.value = true
   try {
-    const activityId = await seckillApi.adminCreate({ ...form })
-    ElMessage.success(`活动已创建（编号 ${activityId}），开始前记得预热库存`)
-    dialogVisible.value = false
+    await seckillApi.adminCreate({ ...form, title: form.title.trim() })
+    ElMessage.success('活动已创建，请点击预热写入 Redis')
+    createOpen.value = false
     await load()
-  } catch (error) {
-    ElMessage.error(describeError(error))
+  } catch (e) {
+    ElMessage.error(describeError(e))
   } finally {
     saving.value = false
   }
 }
 
-async function preheat(activity: SeckillActivityView): Promise<void> {
-  if (!canPreheat(activity)) {
-    return
-  }
+async function preheat(activity: SeckillActivity): Promise<void> {
+  preheating.value = activity.id
   try {
-    await ElMessageBox.confirm(
-      `将「${activity.title}」的活动库存写入 Redis？预热后开始前不能重复执行。`,
-      '预热活动',
-      { type: 'warning', confirmButtonText: '预热', cancelButtonText: '取消' }
-    )
-  } catch {
-    return
-  }
-  preheatingId.value = activity.id
-  try {
-    const result = await seckillApi.adminPreheat(activity.id)
-    ElMessage.success(`已预热，Redis 中库存 ${result.stock}`)
+    const result = await seckillApi.preheat(activity.id)
+    ElMessage.success(`已预热，当前库存 ${result.stock}`)
     await load()
-  } catch (error) {
-    ElMessage.error(describeError(error))
+  } catch (e) {
+    ElMessage.error(describeError(e))
   } finally {
-    preheatingId.value = null
+    preheating.value = null
   }
 }
 
-onMounted(load)
+function view(activity: SeckillActivity): void {
+  void router.push({ name: 'seckill-detail', params: { id: activity.id } })
+}
+
+onMounted(() => {
+  void load()
+})
 </script>
 
 <template>
-  <div class="app-page">
-    <PageHead title="秒杀活动" meta="配置活动时间、价格与库存；开始前把库存预热到 Redis，抢购才会被受理。">
-      <template #actions>
-        <button type="button" class="btn" @click="openCreate">新建活动</button>
-      </template>
-    </PageHead>
-
-    <dl class="summary-strip" aria-label="秒杀活动概况">
+  <div>
+    <div class="admin-page-head">
       <div>
-        <dt>活动总数</dt>
-        <dd>{{ activities.length }} <span>个</span></dd>
+        <h1>秒杀活动</h1>
+        <p>活动库存独立分配。创建后必须预热，用户才能抢购。</p>
       </div>
-      <div>
-        <dt>进行中</dt>
-        <dd>{{ runningCount }} <span>个</span></dd>
+      <div class="admin-actions">
+        <button class="btn btn--primary btn--sm" type="button" @click="openCreate">创建活动</button>
+        <button class="btn btn--line btn--sm" type="button" @click="load">刷新</button>
       </div>
-      <div>
-        <dt>剩余名额</dt>
-        <dd>{{ remainingStock }} <span>件</span></dd>
-      </div>
-    </dl>
-
-    <p class="admin-hint">
-      新建活动后需在开始前预热。预热会把活动库存写入 Redis；已开始的活动不能再次预热，避免覆盖在途预扣。
-    </p>
-
-    <div v-if="loading && activities.length === 0" aria-busy="true" aria-label="正在加载秒杀活动">
-      <div class="skeleton-block skeleton-row" />
-      <div class="skeleton-block skeleton-row" />
-      <div class="skeleton-block skeleton-row" />
     </div>
 
-    <EmptyState
-      v-else-if="loadError"
-      title="秒杀活动加载失败"
-      :hint="loadError"
-    >
-      <button type="button" class="btn" @click="load">重新加载</button>
-    </EmptyState>
-
-    <EmptyState
-      v-else-if="activities.length === 0"
-      title="还没有秒杀活动"
-      hint="新建活动后，在开始前执行预热；活动开始后用户才能在秒杀排期看到可抢购状态。"
-    >
-      <button type="button" class="btn" @click="openCreate">新建活动</button>
-    </EmptyState>
-
-    <section v-else class="panel">
-      <div class="table-wrap">
+    <section class="admin-card">
+      <div v-if="loading" class="admin-empty">正在读取活动…</div>
+      <div v-else-if="error" class="error-banner" style="margin: 16px">{{ error }}</div>
+      <div v-else class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
               <th>活动</th>
-              <th class="num">秒杀价</th>
-              <th class="num">库存</th>
+              <th>商品</th>
+              <th>活动价</th>
+              <th>库存</th>
               <th>阶段</th>
-              <th>时间</th>
-              <th aria-label="操作" />
+              <th>时间窗</th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="activity in activities" :key="activity.id">
-              <td class="identity">
-                <span class="row-title">{{ activity.title }}</span>
-                <span class="row-sub">编号 {{ activity.id }} · 商品 {{ activity.skuId }}</span>
-              </td>
-              <td class="num">{{ formatYuan(activity.seckillPrice) }}</td>
-              <td class="num">{{ activity.availableStock }} / {{ activity.totalStock }}</td>
+            <tr v-for="row in rows" :key="row.id">
               <td>
-                <StatusPill
-                  :tone="phaseOf(activity) === SeckillPhase.RUNNING ? 'paid' : phaseOf(activity) === SeckillPhase.NOT_STARTED ? 'pending' : 'closed'"
-                  :label="SECKILL_PHASE_LABEL[phaseOf(activity)] ?? phaseOf(activity)"
-                />
+                <strong>{{ row.title }}</strong>
+                <div class="tiny">#{{ row.id }}</div>
               </td>
               <td>
-                <span>{{ formatDateTime(activity.startAt) }}</span>
-                <span class="row-sub">至 {{ formatDateTime(activity.endAt) }}</span>
-              </td>
-              <td>
-                <div class="row-actions">
-                  <button
-                    type="button"
-                    class="btn btn--outline btn--sm"
-                    :disabled="!canPreheat(activity) || preheatingId === activity.id"
-                    :title="canPreheat(activity) ? '把活动库存写入 Redis' : '活动已开始或已结束，不应再次预热'"
-                    @click="preheat(activity)"
-                  >
-                    {{ preheatingId === activity.id ? '预热中…' : '预热' }}
-                  </button>
+                <div class="table-product">
+                  <img :src="row.productImage" :alt="row.productTitle" />
+                  <div class="table-product__title">{{ row.productTitle }}</div>
                 </div>
               </td>
+              <td class="money">
+                {{ formatYuan(row.seckillPrice) }}
+                <div class="tiny" style="text-decoration: line-through">{{ formatYuan(row.originalPrice) }}</div>
+              </td>
+              <td>{{ row.availableStock }} / {{ row.totalStock }}</td>
+              <td><StatusBadge :status="row.phase" /></td>
+              <td class="tiny">{{ formatDateTime(row.startAt) }} – {{ formatDateTime(row.endAt) }}</td>
+              <td>
+                <div class="table-actions">
+                  <button class="btn btn--primary btn--sm" type="button" :disabled="preheating === row.id" @click="preheat(row)">
+                    {{ preheating === row.id ? '预热中' : '预热' }}
+                  </button>
+                  <button class="btn btn--ghost btn--sm" type="button" @click="view(row)">查看</button>
+                </div>
+              </td>
+            </tr>
+            <tr v-if="!rows.length">
+              <td colspan="7" class="admin-empty">还没有秒杀活动</td>
             </tr>
           </tbody>
         </table>
       </div>
     </section>
 
-    <el-dialog v-model="dialogVisible" title="新建秒杀活动" width="540px">
-      <el-form label-position="top">
-        <el-form-item label="活动名">
-          <el-input v-model="form.title" placeholder="例如：双十一整点秒杀" />
-        </el-form-item>
-        <div class="admin-form__row">
-          <el-form-item label="商品编号">
-            <el-input-number v-model="form.skuId" :min="1" style="width: 100%" />
-          </el-form-item>
-          <el-form-item label="秒杀价">
-            <el-input-number v-model="form.seckillPrice" :min="0.01" :precision="2" style="width: 100%" />
-          </el-form-item>
-        </div>
-        <div class="admin-form__row">
-          <el-form-item label="活动库存">
-            <el-input-number v-model="form.totalStock" :min="1" style="width: 100%" />
-          </el-form-item>
-          <el-form-item label="每人限购">
-            <el-input-number v-model="form.perUserLimit" :min="1" style="width: 100%" />
-          </el-form-item>
-        </div>
-        <div class="admin-form__row">
-          <el-form-item label="开始时间">
-            <el-date-picker
-              v-model="form.startAt"
-              type="datetime"
-              value-format="YYYY-MM-DDTHH:mm:ss"
-              placeholder="选择开始时间"
-              style="width: 100%"
-            />
-          </el-form-item>
-          <el-form-item label="结束时间">
-            <el-date-picker
-              v-model="form.endAt"
-              type="datetime"
-              value-format="YYYY-MM-DDTHH:mm:ss"
-              placeholder="选择结束时间"
-              style="width: 100%"
-            />
-          </el-form-item>
-        </div>
-      </el-form>
-      <template #footer>
-        <button type="button" class="btn btn--outline" @click="dialogVisible = false">取消</button>
-        <button type="button" class="btn" :disabled="saving" @click="save">
-          {{ saving ? '创建中…' : '创建' }}
+    <el-dialog v-model="createOpen" title="创建秒杀活动" width="560px">
+      <div class="form-grid">
+        <label class="field field--full">
+          <span class="field__label">活动标题</span>
+          <input v-model="form.title" class="input" maxlength="64" placeholder="如 Arc 65W 限时秒杀" />
+        </label>
+        <label class="field field--full">
+          <span class="field__label">商品 SKU</span>
+          <select v-model.number="form.skuId" class="select">
+            <option v-for="sku in skus" :key="sku.id" :value="sku.id">
+              {{ sku.title }} · {{ formatYuan(sku.price) }}
+            </option>
+          </select>
+        </label>
+        <label class="field">
+          <span class="field__label">活动价</span>
+          <input v-model.number="form.seckillPrice" type="number" min="1" class="input" />
+        </label>
+        <label class="field">
+          <span class="field__label">活动总量</span>
+          <input v-model.number="form.totalStock" type="number" min="1" class="input" />
+        </label>
+        <label class="field">
+          <span class="field__label">开始时间</span>
+          <input v-model="form.startAt" type="datetime-local" class="input" />
+        </label>
+        <label class="field">
+          <span class="field__label">结束时间</span>
+          <input v-model="form.endAt" type="datetime-local" class="input" />
+        </label>
+      </div>
+      <p class="hint" style="margin-top: 12px">当前只支持每人限购 1 件。创建后点击列表中的“预热”。</p>
+      <div class="dialog-actions">
+        <button class="btn btn--ghost" type="button" @click="createOpen = false">取消</button>
+        <button class="btn btn--primary" type="button" :disabled="saving" @click="save">
+          {{ saving ? '创建中…' : '创建活动' }}
         </button>
-      </template>
+      </div>
     </el-dialog>
   </div>
 </template>
